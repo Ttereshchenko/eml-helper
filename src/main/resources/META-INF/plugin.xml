@@ -13,14 +13,23 @@
 
         <lang.parserDefinition
                 language="EML"
-                implementationClass="org.example.EmlParserDefinition"/>
+                implementationClass="org.example.lexer.EmlParserDefinition"/>
 
         <lang.syntaxHighlighterFactory
                 language="EML"
-                implementationClass="org.example.EmlSyntaxHighlighterFactory"/>
+                implementationClass="org.example.highlighting.EmlSyntaxHighlighterFactory"/>
 
         <lang.foldingBuilder
                 language="EML"
-                implementationClass="org.example.EmlFoldingBuilder"/>
+                implementationClass="org.example.folding.EmlFoldingBuilder"/>
+
+        <applicationService serviceImplementation="org.example.settings.EmlHeaderSettings"/>
+
+        <annotator language="EML" implementationClass="org.example.highlighting.EmlHeaderAnnotator"/>
+
+        <applicationConfigurable parentId="editor" id="eml.settings"
+                displayName="EML" instance="org.example.settings.EmlHeaderSettingsConfigurable"/>
+
+        <colorSettingsPage implementation="org.example.highlighting.EmlColorSettingsPage"/>
     </extensions>
 </idea-plugin>
