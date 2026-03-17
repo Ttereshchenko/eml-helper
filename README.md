@@ -8,6 +8,7 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 - **MIME part folding** — Collapse multipart boundaries to focus on the section you care about
 - **Per-header color customization** — Assign individual colors to headers like `From`, `Subject`, `Date`, etc. via **Settings > Editor > Color Scheme > EML**
 - **Name-only highlighting** — Optionally highlight just the header name (e.g. `Subject:`) instead of the full line, configurable per header
+- **Global highlighting toggle** — Disable all EML highlighting at once via **Settings > Editor > EML**
 - **Configurable header list** — Add or remove which headers get custom highlighting via **Settings > Editor > EML**
 
 ## Requirements

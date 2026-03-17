@@ -6,6 +6,7 @@ import com.intellij.openapi.fileTypes.SyntaxHighlighterBase;
 import com.intellij.psi.tree.IElementType;
 import org.example.EmlTokenTypes;
 import org.example.lexer.EmlLexer;
+import org.example.settings.EmlHeaderSettings;
 import org.jetbrains.annotations.NotNull;
 
 import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.*;
@@ -27,6 +28,9 @@ public final class EmlSyntaxHighlighter extends SyntaxHighlighterBase {
 
     @Override
     public TextAttributesKey @NotNull [] getTokenHighlights(IElementType tokenType) {
+        if (!EmlHeaderSettings.getInstance().isHighlightingEnabled()) {
+            return EMPTY_KEYS;
+        }
         if (tokenType == EmlTokenTypes.BOUNDARY_START || tokenType == EmlTokenTypes.BOUNDARY_END) {
             return BOUNDARY_KEYS;
         }

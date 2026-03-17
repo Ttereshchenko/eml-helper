@@ -27,6 +27,14 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
         myState = state;
     }
 
+    public boolean isHighlightingEnabled() {
+        return myState.highlightingEnabled;
+    }
+
+    public void setHighlightingEnabled(boolean enabled) {
+        myState.highlightingEnabled = enabled;
+    }
+
     public List<String> getHighlightedHeaders() {
         return myState.highlightedHeaders;
     }
@@ -62,6 +70,7 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
     }
 
     public static final class MyState {
+        public boolean highlightingEnabled = true;
         public List<String> highlightedHeaders = new ArrayList<>(List.of(
                 "From", "To", "Subject", "Date", "Cc", "Bcc"
         ));

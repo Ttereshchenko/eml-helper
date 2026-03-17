@@ -12,6 +12,9 @@ import org.jetbrains.annotations.NotNull;
 public final class EmlHeaderAnnotator implements Annotator {
     @Override
     public void annotate(@NotNull PsiElement element, @NotNull AnnotationHolder holder) {
+        if (!EmlHeaderSettings.getInstance().isHighlightingEnabled()) {
+            return;
+        }
         if (element.getNode().getElementType() != EmlTokenTypes.HEADER_LINE) {
             return;
         }
