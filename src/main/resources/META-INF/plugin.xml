@@ -1,0 +1,26 @@
+<idea-plugin>
+    <id>org.example.eml-helper</id>
+    <name>EML Helper</name>
+    <vendor>org.example</vendor>
+    <description>Helper for working with EML (Email Message format) files.</description>
+    <idea-version since-build="243"/>
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType name="EML"
+                  language="EML"
+                  implementationClass="org.example.EmlFileType"
+                  fieldName="INSTANCE"
+                  extensions="eml"/>
+
+        <lang.parserDefinition
+                language="EML"
+                implementationClass="org.example.EmlParserDefinition"/>
+
+        <lang.syntaxHighlighterFactory
+                language="EML"
+                implementationClass="org.example.EmlSyntaxHighlighterFactory"/>
+
+        <lang.foldingBuilder
+                language="EML"
+                implementationClass="org.example.EmlFoldingBuilder"/>
+    </extensions>
+</idea-plugin>
