@@ -2,6 +2,7 @@
 CLAUDE.md
 .claude/
 .tmp
+.issues
 
 ### Java ###
 *.class
