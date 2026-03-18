@@ -1,0 +1,2424 @@
+Delivered-To: user@example.com
+Received: by 2002:a05:7108:8608:b0:4e7:754f:8d0f with SMTP id gn8csp186949gdb;
+        Fri, 27 Feb 2026 07:23:34 -0800 (PST)
+X-Received: by 2002:a05:6000:290d:b0:437:81b0:663d with SMTP id ffacd0b85a97d-4399dd65878mr4739543f8f.0.1772205814105;
+        Fri, 27 Feb 2026 07:23:34 -0800 (PST)
+ARC-Seal: i=1; a=rsa-sha256; t=1772205814; cv=none;
+        d=google.com; s=arc-20240605;
+        b=HpMpOI93BxovJMRiGYPoKl155QTYGoVhp0Kyb/ENyomC+tycJSTOR2xQ3zSQAxpV9h
+         z9ruBVjlWRUWX3Tq0hqJNJQNinLIkSTuJzetLKFkUfEq4SBlxRxHMYjYEoPr2PTy6B0F
+         O2NLifoxeNu8KdrsPFJRhBT9gq9jUvshbdQP0GjC7yH8fuVnNL9dxpWVtFt5/SXTjiNG
+         L3o4FNeJnmG3RLt6XN3AWmIzxUaRfF0QOEEaBzh0NDnF1NBXxp9j69t1ZUn5bmD83xCz
+         aMuB2obg2v+56oYdEZbLT62n5EWgNjpf8PdWj9HOYkLiQC+oSX7f+OhZ41vOMQ68o82p
+         wpbQ==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605;
+        h=precedence:list-id:list-unsubscribe:list-unsubscribe-post
+         :feedback-id:mime-version:subject:message-id:to:reply-to:from:date
+         :dkim-signature:dkim-signature;
+        bh=UNl/+fAooOZNKXiwJcZTABt7/CTCENqYdVZU7lW+U5E=;
+        fh=jbfC6hOhmOJm9TKnj+w2feEAElYCzQVqGLvHbR7WGCw=;
+        b=cz6ah5fyYgz09+pzvMiWF1dgOaiIwc9tnXgwp9bP+Z0wjGFbptvfns/8QNYl5g6BDi
+         22cL5jbeZXjujRHPtMza646+4WNu3wxkVzCm/vjN7aSEI92+/lvMy6TFIj/UZa3MsZjt
+         3o9Oh34qIVj3c1ogSNO3QB6SeM6mA67MwhAK2imo+T5vb82sPawuU6SxMJWd7QhbM4Cg
+         24PSRgOxzLPKpPhIE7N8oBJ0p2rFo/AgC/Fc2VrcA6IdZLneTbLBW38Bo0IR/hKR6lkN
+         t5iE0ex9QZ8ObWpX7HASoTMlLZhHy1jnSOFYa/4DoBB+UAN1A2rvwwbGcY+EvfauPmfy
+         dLEQ==;
+        dara=google.com
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@prometheus.org.ua header.s=esputnik header.b=WyIPQUKl;
+       dkim=pass header.i=@esputnik.com header.s=km2 header.b=d25u0YFG;
+       spf=pass (google.com: domain of bounce+3-user=example.com@send.prometheus.org.ua designates 195.95.245.242 as permitted sender) smtp.mailfrom="bounce+3-user=example.com@send.prometheus.org.ua";
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=prometheus.org.ua
+Return-Path: <bounce+3-user=example.com@send.prometheus.org.ua>
+Received: from m171.esputnik.com (m171.esputnik.com. [195.95.245.242])
+        by mx.google.com with ESMTPS id ffacd0b85a97d-4399c72ce49si6725114f8f.60.2026.02.27.07.23.33
+        for <user@example.com>
+        (version=TLS1_2 cipher=ECDHE-ECDSA-AES128-GCM-SHA256 bits=128/128);
+        Fri, 27 Feb 2026 07:23:34 -0800 (PST)
+Received-SPF: pass (google.com: domain of bounce+3-user=example.com@send.prometheus.org.ua designates 195.95.245.242 as permitted sender) client-ip=195.95.245.242;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@prometheus.org.ua header.s=esputnik header.b=WyIPQUKl;
+       dkim=pass header.i=@esputnik.com header.s=km2 header.b=d25u0YFG;
+       spf=pass (google.com: domain of bounce+3-user=example.com@send.prometheus.org.ua designates 195.95.245.242 as permitted sender) smtp.mailfrom="bounce+3-user=example.com@send.prometheus.org.ua";
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=prometheus.org.ua
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; s=esputnik; d=prometheus.org.ua;
+ h=X-Mailer:Date:From:Reply-To:To:Message-ID:Subject:MIME-Version:Content-Type:
+ Feedback-ID:List-Unsubscribe:List-Id:X-ES-IID; t=1772205814; x=1772207014;
+ bh=UNl/+fAooOZNKXiwJcZTABt7/CTCENqYdVZU7lW+U5E=;
+ b=WyIPQUKlXiQ5300DKQXI7UWQsG5Ek4QYrgvjJzB+NqwWRuyqGkjs+xb/Q9fVeWGOJlynQxjX1xLN
+   aOspkKuqO3/1BHvlqiK6svsXuyNJh3xo7cmhOJUe7tXPaxpUHUyc+5bJFWRHi2hQmYiVi5RUvg1Y
+   qSoRbeJISJ1pepHgwtadtf2jIm1MxvYsUNaGvoHgfkCQbOkVll7d9x5s3HnkHqbzuqGdTjYfRK3p
+   n2fvqOcvIifjOerCIGUQgm3XKbLphQPyyuykK0Sfsaz9XhdktVzckQxAJuoqMr7iFe+2N9Es5SDg
+   X3zu/s0HYsV5ud9byxFAKrjIN1zpZTdl0pfABA==
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; s=km2; d=esputnik.com;
+ h=X-Mailer:Date:From:Reply-To:To:Message-ID:Subject:MIME-Version:Content-Type:
+ Feedback-ID:List-Unsubscribe:List-Id:X-ES-IID; t=1772205814; x=1772207014;
+ bh=UNl/+fAooOZNKXiwJcZTABt7/CTCENqYdVZU7lW+U5E=;
+ b=d25u0YFG4uCaekS4CLVVMZT6I7PoMvYSyLwxKcDCzMB161iNIib6L0i/q4NyiFLJhuCefL9f9b44
+   OYPUBaEsLgEbDGSYxekVC4Q4ebe00L4D4hFO0ihswNWw2jo22t4tcWX045mb+ggd8RzuA21ugWeJ
+   9DLgdeYX/wyq561x5ijjtA98+adljCxV9VpGoImmisUx4aVjAvNyel+l7pioO+rP5P/D2TN8QJZz
+   VG+/4QlvcFeSw/tsf1EcQJFhv2NAx7ofQHvbKy1m8B0TGIY15YSjwBLAiTib4CIq9iJ4fQ6Ht7dY
+   wmi/WT3mvuzfParMC6OXcsPGpkx/Ic6CGbXdSA==
+X-Mailer: eSputnik.com Mailer (2)
+Date: Fri, 27 Feb 2026 15:23:22 +0000 (UTC)
+From: Prometheus <info@prometheus.org.ua>
+Reply-To: Prometheus <support-plus@prometheus.org.ua>
+To: user@example.com
+Message-ID: <00000000-0000-0000-0000-000000000000@ms4-fd7cbdbd7-vwhhq>
+Subject: =?UTF-8?B?0JTQvtCx0ZbRgNC60LAg0LHQtdGA0LXQt9C90Y8sIA==?=
+ =?UTF-8?B?0YnQviDQstC10LTQtSDQtNC+INGA0L7QsdC+0YLQuA==?=
+MIME-Version: 1.0
+Content-Type: multipart/alternative; 
+	boundary="----=_Part_2154391_262215134.1772205802564"
+X-Mailru-Msgtype: o103056
+Feedback-ID: b0000000:000000:broadcast:eSputnik.com
+X-Report-Abuse-To: abuse@trap.esputnik.com
+X-Complaints-To: complain@trap.esputnik.com
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+List-Unsubscribe: <https://esputnik.com/message-service/v1/unsubscribe/00000000-0000-0000-0000-000000000000>,
+ <mailto:complain@mta1.esputnik.com?subject=unsubscribe-00000000-0000-0000-0000-000000000000>
+List-Id: <103056.broadcast>
+X-Report-Abuse: Please report abuse here: abuse@trap.esputnik.com
+Precedence: bulk
+X-ES-IID: 00000000-0000-0000-0000-000000000000
+
+------=_Part_2154391_262215134.1772205802564
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+0KnQviDQvtC/0LDQvdGD0LLQsNGC0Lgg0LfQsNGA0LDQtywg0YnQvtCxINC/0ZbQtNCy0LjRidC4
+0YLQuCDQtNC+0YXRltC0INC90LDQudCx0LvQuNC20YfQuNC8INGH0LDRgdC+0LzigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfN
+jyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDigIfNjyDi
+gIfNjyDigIfNjyDigIfNjyDigIfNjyDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDCrSDC
+rSDCrSDCrSDCrSDCoAogWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhLz91dG1fc291cmNlPWVz
+cHV0bmlrJnV0bV9tZWRpdW09ZW1haWwmdXRtX2NhbXBhaWduPWVtYWlsLWRpZ2VzdC1tYXJjaC1h
+bGwgXQogWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhLz91dG1fc291cmNlPWVzcHV0bmlrJnV0
+bV9tZWRpdW09ZW1haWwmdXRtX2NhbXBhaWduPWVtYWlsLWRpZ2VzdC1tYXJjaC1hbGwgXQrQkdC1
+0YDQtdC30LXQvdGMIC0tINGB0LvRg9GI0L3QuNC5INC80L7QvNC10L3RgiDRltC90LLQtdGB0YLR
+g9Cy0LDRgtC4INGH0LDRgSDRgyDQvdCw0LLQuNGH0LrQuCwg0YnQviDQvNCw0Y7RgtGMINC/0YDQ
+uNC60LvQsNC00L3RgyDRhtGW0L3QvdGW0YHRgtGMINC90LAg0YDQuNC90LrRgyDQv9GA0LDRhtGW
+LiDQnNC4INC/0ZbQtNCz0L7RgtGD0LLQsNC70Lgg0L3QsNCy0YfQsNC70YzQvdGWINC/0YDQvtCz
+0YDQsNC80LgsINGP0LrRliDQtNC+0L/QvtC80LDQs9Cw0Y7RgtGMINGB0LjRgdGC0LXQvNC90L4g
+0L/RltC00LPQvtGC0YPQstCw0YLQuNGB0Y8g0LTQviDRgNC+0LHQvtGC0LgsINC/0L7RgdC40LvQ
+uNGC0Lgg0L/RgNC+0YTQtdGB0ZbQudC90LjQuSDQv9GA0L7RhNGW0LvRjCDRliDQstGW0LTQutGA
+0LjRgtC4INC90L7QstGWINC60LDRgCfRlNGA0L3RliDQstCw0YDRltCw0L3RgtC4LgrQntCx0LXR
+gNGW0YLRjCDQv9GA0L7Qs9GA0LDQvNGDLCDRidC+INCy0ZbQtNC/0L7QstGW0LTQsNGUINCy0LDR
+iNGW0Lkg0YbRltC70ZYsINGD0LbQtSDRhtGM0L7Qs9C+INC80ZbRgdGP0YbRjyDih6MK0JrQsNC7
+0LXQvdC00LDRgCDQv9C+0LTRltC5INGDINCx0LXRgNC10LfQvdGWCvCfn6Ag0JLQsNGIINC+0YHQ
+stGW0YLQvdGW0Lkg0L/Qu9Cw0L0g0L3QsCDQvNGW0YHRj9GG0YwKNQrQkdC10YDQtdC30L3RjwrQ
+odC40YHRgtC10LzQvdC1INGD0L/RgNCw0LLQu9GW0L3QvdGPINC60L7QvNCw0L3QtNC+0Y4K0KHR
+gtCw0YDRgiDQv9GA0L7QtNCw0LbRltCyCtCd0LDQs9Cw0LTQsNGC0Lgg0L/RgNC+INGB0YLQsNGA
+0YIgWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhL3Byb21ldGhldXMtcGx1cy9zeXN0ZW0tdGVh
+bS1tYW5hZ2VtZW50Lz91dG1fc291cmNlPWVzcHV0bmlrJnV0bV9tZWRpdW09ZW1haWwmdXRtX2Nh
+bXBhaWduPWVtYWlsLWRpZ2VzdC1tYXJjaC1hbGwgXQoxOQrQkdC10YDQtdC30L3RjwpEYXRhIEFu
+YWx5dGljczog0LLRltC0INC00LDQvdC40YUK0LTQviDQsdGW0LfQvdC10YEt0YDRltGI0LXQvdGM
+CtCh0YLQsNGA0YIg0L3QsNCy0YfQsNC90L3RjwrQn9GA0LjRlNC00L3QsNGC0LjRgdGPINC30LDR
+gNCw0LcgWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhL3Byb21ldGhldXMtcGx1cy9kYXRhLWFu
+YWx5dGljcy1iYXNpY3MvP3V0bV9zb3VyY2U9ZXNwdXRuaWsmdXRtX21lZGl1bT1lbWFpbCZ1dG1f
+Y2FtcGFpZ249ZW1haWwtZGlnZXN0LW1hcmNoLWFsbCBdCjE5CtCR0LXRgNC10LfQvdGPCtChKysg
+0YDQvtC30YDQvtCx0L3QuNC6CtCh0YLQsNGA0YIg0L/RgNC+0LTQsNC20ZbQsgrQndCw0LPQsNC0
+0LDRgtC4INC/0YDQviDRgdGC0LDRgNGCIFsgaHR0cHM6Ly9wcm9tZXRoZXVzLm9yZy51YS9wcm9t
+ZXRoZXVzLXBsdXMvcHJvZ3JhbW1pbmctYy8/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVt
+PWVtYWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0KMjQK0JHQtdGA0LXQ
+t9C90Y8K0JzQsNGA0LrQtdGC0LjQvdCz0L7QstCwINCw0L3QsNC70ZbRgtC40LrQsArQodGC0LDR
+gNGCINC/0YDQvtC00LDQttGW0LIK0J3QsNCz0LDQtNCw0YLQuCDQv9GA0L4g0YHRgtCw0YDRgiBb
+IGh0dHBzOi8vZm9ybXMuZ2xlL3pac3VHWnpzQUxCcUxhZnU5P3V0bV9zb3VyY2U9ZXNwdXRuaWsm
+dXRtX21lZGl1bT1lbWFpbCZ1dG1fY2FtcGFpZ249ZW1haWwtZGlnZXN0LW1hcmNoLWFsbCBdCjMw
+CtCR0LXRgNC10LfQvdGPCkN5YmVyU2VjdXJpdHkuCtCf0YDQsNC60YLQuNGH0L3QuNC5INC30LDR
+hdC40YHRggrQodGC0LDRgNGCINC90LDQstGH0LDQvdC90Y8K0J/RgNC40ZTQtNC90LDRgtC40YHR
+jyDQt9Cw0YDQsNC3IFsgaHR0cHM6Ly9wcm9tZXRoZXVzLm9yZy51YS9wcm9tZXRoZXVzLXBsdXMv
+Y3liZXJzZWN1cml0eS8/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVtYWlsJnV0bV9j
+YW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0KMgrQmtCy0ZbRgtC90Y8KRGV2T3BzINGC
+0LAgS3ViZXJuZXRlcy4g0J/RgNCw0LrRgtC40YfQvdC40Lkg0ZbQvdGC0LXQvdGB0LjQsisK0KDQ
+tdGU0YHRgtGA0LDRhtGW0Y8g0YLRgNC40LLQsNGUCtCf0YDQuNGU0LTQvdCw0YLQuNGB0Y8g0LfQ
+sNGA0LDQtyBbIGh0dHBzOi8vcHJvbWV0aGV1cy5vcmcudWEvcHJvbWV0aGV1cy1wbHVzL2Rldm9w
+c19hbmRfa3ViZXJuZXRlcy8/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVtYWlsJnV0
+bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0K0JHQtdGA0LXQt9C10L3RjArQmtGW
+0LHQtdGA0LHQtdC30L/QtdC60LAg0LIg0LXQv9C+0YXRgyDQqNCGOiDQvdC+0LLRliDQvNC+0LbQ
+u9C40LLQvtGB0YLRliDQuSDQt9Cw0LPRgNC+0LfQuArQktGW0LTQutGA0LjRgtC40Lkg0LLQtdCx
+0ZbQvdCw0YAK0JfQsNGA0LXRlNGB0YLRgNGD0LLQsNGC0LjRgdGPIFsgaHR0cHM6Ly9mb3Jtcy5n
+bGUvVW50dVVKRFo1ZmZjR2M5WDk/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVtYWls
+JnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0K0JPQvtC70L7QstC90LAg0L/Q
+vtC00ZbRjyDQsdC10YDQtdC30L3Rjwrwn5+gINCR0LXQt9C/0LvQsNGC0L3QsCDQv9GA0L7Qs9GA
+0LDQvNCwLCDRidC+INC/0ZbQtNGB0LjQu9C40YLRjCDQstCw0YjRliDQv9GA0L7RhNC10YHRltC5
+0L3RliDQvNC+0LbQu9C40LLQvtGB0YLRlgogWyBodHRwczovL2Zvcm1zLmZpbGxvdXQuY29tL3Qv
+M21IYkVVOVM2S3VzIF0K0JfQsNC/0YDQvtGI0YPRlNC80L4g0LTQviDCq9CS0LXRgtC10YDQsNC9
+0YHRjNC60L7Qs9C+INC60L7Qu9Cwwrs6CuKtoiDQstC10YLQtdGA0LDQvdGW0LIg0ZYg0LLQtdGC
+0LXRgNCw0L3QvtC6Owog4q2iINGH0LvQtdC90ZbQsiDRl9GF0L3RltGFINGA0L7QtNC40L07CiDi
+raIg0YfQu9C10L3RltCyINGB0ZbQvNC10Lkg0LfQsNCz0LjQsdC70LjRhSwg0L/QvtC70L7QvdC1
+0L3QuNGFINGWINC30L3QuNC60LvQuNGFINCx0LXQt9Cy0ZbRgdGC0Lgg0LfQsNGF0LjRgdC90LjQ
+utGW0LIg0YLQsCDQt9Cw0YXQuNGB0L3QuNGG0YwuCtCj0LLQsNCz0LDinZcg0J3QsCDQvtGB0L3Q
+vtCy0ZYg0LLRltC00LPRg9C60ZbQsiDRg9GH0LDRgdC90LjQutGW0LIg0L/RgNC+0LPRgNCw0LzQ
+uCDQvNC4INC+0L3QvtCy0LjQu9C4INGE0L7RgNC80YMg0LfQsNGP0LLQutC4LsKg0KLQtdC/0LXR
+gCDRhtC1INC70LjRiNC1IDUg0L/QuNGC0LDQvdGMINGWINC90LUg0LHRltC70YzRiNC1IDEg0YXQ
+stC40LvQuNC90Lgg0LLQsNGI0L7Qs9C+INGH0LDRgdGDLgrQktC4INC+0YLRgNC40LzQsNGU0YLQ
+tToK4pyTINC90L7QstGWINC/0YDQvtGE0LXRgdGW0LnQvdGWINC90LDQstC40YfQutC4OwrinJMg
+0L/RltC00LPQvtGC0YPQstC60YMg0LTQviDQv9GA0LDRhtC10LLQu9Cw0YjRgtGD0LLQsNC90L3R
+jzsK4pyTINC80L7QttC70LjQstGW0YHRgtGMINC/0L7Qt9C90LDQudC+0LzQuNGC0LjRgdGPINC3
+INGA0L7QsdC+0YLQvtC00LDQstGG0Y/QvNC4Lgrwn4aTINCj0YfQsNGB0YLRjCDRgyDQv9GA0L7Q
+s9GA0LDQvNGWINC/0L7QstC90ZbRgdGC0Y4g0LHQtdC30L/Qu9Cw0YLQvdCwLiDQntGB0YLQsNC9
+0L3RltC5INC00LXQvdGMINGA0LXRlNGB0YLRgNCw0YbRltGXIC0tCjIg0LHQtdGA0LXQt9C90Y8u
+INCf0YDQvtCz0YDQsNC80LAg0YDQtdCw0LvRltC30L7QstCw0L3QsCDQt9CwINGW0L3RhNC+0YDQ
+vNCw0YbRltC50L3QvtGXINC/0ZbQtNGC0YDQuNC80LrQuCDQnNGW0L3RltGB0YLQtdGA0YHRgtCy
+0LAg0YMg0YHQv9GA0LDQstCw0YUg0LLQtdGC0LXRgNCw0L3RltCyINCj0LrRgNCw0ZfQvdC4IPCf
+h7rwn4emCtCf0L7QtNCw0YLQuCDQt9Cw0Y/QstC60YMg0LfQsNGA0LDQtyBbIGh0dHBzOi8vZm9y
+bXMuZmlsbG91dC5jb20vdC8zbUhiRVU5UzZLdXMgXQrQndC+0LLRliDQt9Cy0LjRh9C60Lgg0LTQ
+u9GPINGB0L/QvtC60ZbQudC90L7Qs9C+INC20LjRgtGC0Y8K0L3QsCBQcm9tZXRoZXVzIFBMVVMK
+8J+foCBTZWxmLXBhY2VkINGE0L7RgNC80LDRgjog0YDQtdGU0YHRgtGA0YPQudGC0LXRgdGPINGB
+0YzQvtCz0L7QtNC90ZYgLS0g0L3QsNCy0YfQsNC50YLQtdGB0Y8sINC60L7Qu9C4CtCy0LDQvCDQ
+t9GA0YPRh9C90L4hCiBbIGh0dHBzOi8vcHJvbWV0aGV1cy5vcmcudWEvcHJvbWV0aGV1cy1wbHVz
+L3NvY2lhbC1hbnhpZXR5P3V0bV9zb3VyY2U9ZXNwdXRuaWsmdXRtX21lZGl1bT1lbWFpbCZ1dG1f
+Y2FtcGFpZ249ZW1haWwtZGlnZXN0LW1hcmNoLWFsbCBdCtCc0LXQvdGI0LUg0YLRgNC40LLQvtCz
+0LggLS0g0LHRltC70YzRiNC1INCy0L/QtdCy0L3QtdC90L7RgdGC0ZYg0LIg0YHQvtCx0ZYhCtCf
+0L7Rh9Cw0YLQuCDQt9Cw0YDQsNC3IFsgaHR0cHM6Ly9wcm9tZXRoZXVzLm9yZy51YS9wcm9tZXRo
+ZXVzLXBsdXMvc29jaWFsLWFueGlldHk/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVt
+YWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0KIFsgaHR0cHM6Ly9wcm9t
+ZXRoZXVzLm9yZy51YS9wcm9tZXRoZXVzLXBsdXMvcGF1c2VwZXJmZWN0aW9uaXNtP3V0bV9zb3Vy
+Y2U9ZXNwdXRuaWsmdXRtX21lZGl1bT1lbWFpbCZ1dG1fY2FtcGFpZ249ZW1haWwtZGlnZXN0LW1h
+cmNoLWFsbCBdCtCX0LDQu9C40YjQsNC50YLQtdGB0Y8g0LIg0LHQsNC70LDQvdGB0ZYgLS0g0LHQ
+tdC3INGC0YDQuNCy0L7Qs9C4INGC0LAg0L/QtdGA0YTQtdC60YbRltC+0L3RltC30LzRgyEK0J/Q
+vtGH0LDRgtC4INC30LDRgNCw0LcgWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhL3Byb21ldGhl
+dXMtcGx1cy9wYXVzZXBlcmZlY3Rpb25pc20/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVt
+PWVtYWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0K0J3QvtCy0LjQuSDR
+gdC10LfQvtC9INGDINCS0YHQtdGB0LLRltGC0L3RjNC+0LzRgyDRg9C90ZbQstC10YDRgdC40YLQ
+tdGC0ZYhCvCfn6Ag0JfQvdCw0L3QvdGPLCDRj9C60ZYg0L/RgNCw0YbRjtGO0YLRjCDQvdCwINCy
+0LDRgQogWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhL3Byb21ldGhldXMtZnJlZS93b3JsZHdp
+ZGUtdW5pdmVyc2l0eS8/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVtYWlsJnV0bV9j
+YW1wYWlnbj1lbWFpbC1kaWdlc3QtZmVicnVhcnktYWxsIF0K0KPQttC1INC/0L7QvdCw0LQgMjIw
+IDAwMCDRg9C60YDQsNGX0L3RhtGW0LIg0LfQsNGA0LXRlNGB0YLRgNGD0LLQsNC70LjRgdGPINC9
+0LAg0LHQtdC30LrQvtGI0YLQvtCy0L3RliDQutGD0YDRgdC4INCy0ZbQtCDQvdCw0LnQutGA0LDR
+idC40YUg0YHQstGW0YLQvtCy0LjRhSDRg9C90ZbQstC10YDRgdC40YLQtdGC0ZbQsi4K0JfQtNC+
+0LHRg9Cy0LDQudGC0LUg0Y/QutGW0YHQvdGDINC+0YHQstGW0YLRgyDRg9C60YDQsNGX0L3RgdGM
+0LrQvtGOINGWINGB0YLQsNCy0LDQudGC0LUg0YnQtSDQsdC70LjQttGH0LUg0LTQviDRgdCy0L7R
+l9GFINC80YDRltC5LgrQotC40YHQvdGW0YLRjCwg0YnQvtCxINC30LDRgNC10ZTRgdGC0YDRg9Cy
+0LDRgtC40YHRjwrih6Ig0JHRltC30L3QtdGBLdGB0YLRgNCw0YLQtdCz0ZbRjyBbIGh0dHBzOi8v
+cHJvbWV0aGV1cy5vcmcudWEvcHJvbWV0aGV1cy1mcmVlL2J1c2luZXNzLXN0cmF0ZWd5Lz91dG1f
+c291cmNlPWVzcHV0bmlrJnV0bV9tZWRpdW09ZW1haWwmdXRtX2NhbXBhaWduPWVtYWlsLWRpZ2Vz
+dC1tYXJjaC1hbGwgXQrih6Ig0J/RgNC+0ZTQutGC0YPQstCw0L3QvdGPINC+0YDQs9Cw0L3RltC3
+0LDRhtGW0LkgWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhL3Byb21ldGhldXMtZnJlZS9kZXNp
+Z25pbmctb3JnYW5pemF0aW9ucy8/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVtYWls
+JnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0K4oeiINCj0L/RgNCw0LLQu9GW
+0L3QvdGPINC+0YDQs9Cw0L3RltC30LDRhtGW0ZTRjiBbIGh0dHBzOi8vcHJvbWV0aGV1cy5vcmcu
+dWEvcHJvbWV0aGV1cy1mcmVlL21hbmFnZW1lbnQtb2YtdGhlLW9yZ2FuaXphdGlvbi8/dXRtX3Nv
+dXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVtYWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3Qt
+bWFyY2gtYWxsIF0K4oeiIENTNTA6INCS0YHRgtGD0L8g0LTQviDQsdCw0Lcg0LTQsNC90LjRhSDR
+gtCwINC80L7QstC4IFNRTCBbIGh0dHBzOi8vcHJvbWV0aGV1cy5vcmcudWEvcHJvbWV0aGV1cy1m
+cmVlL2ludHJvZHVjdGlvbi10by1kYXRhYmFzZXMtYW5kLXNxbC8/dXRtX3NvdXJjZT1lc3B1dG5p
+ayZ1dG1fbWVkaXVtPWVtYWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0K
+4oeiINCQ0L3QsNC70ZbRgtC40LrQsCDRhtC40YTRgNC+0LLQvtCz0L4g0LzQsNGA0LrQtdGC0LjQ
+vdCz0YM6INGC0LXQvtGA0LXRgtC40YfQvdGWINC+0YHQvdC+0LLQuCBbIGh0dHBzOi8vcHJvbWV0
+aGV1cy5vcmcudWEvcHJvbWV0aGV1cy1mcmVlL2RpZ2l0YWwtbWFya2V0aW5nLWFuYWx5dGljcy10
+aGVvcmV0aWNhbC1mb3VuZGF0aW9ucy8/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVt
+YWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0K4oeiINCQ0L3QsNC70ZbR
+gtC40LrQsCDRhtC40YTRgNC+0LLQvtCz0L4g0LzQsNGA0LrQtdGC0LjQvdCz0YM6INC/0YDQuNC6
+0LvQsNC00L3QtSDQt9Cw0YHRgtC+0YHRg9Cy0LDQvdC90Y8gWyBodHRwczovL3Byb21ldGhldXMu
+b3JnLnVhL3Byb21ldGhldXMtZnJlZS9hbmFseXRpY3MtZGlnaXRhbC1tYXJrZXRpbmctYXBwbGll
+ZC8/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVtYWlsJnV0bV9jYW1wYWlnbj1lbWFp
+bC1kaWdlc3QtbWFyY2gtYWxsIF0K0JLRltC00LrRgNC40YLRliDQutGD0YDRgdC4IFByb21ldGhl
+dXMK8J+foCDQndC+0LLRliDQsdC10LfQv9C70LDRgtC90ZYg0LrRg9GA0YHQuCDQsiDQsdC10YDQ
+tdC30L3RlgogWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhL3Byb21ldGhldXMtZnJlZS9zdWNj
+ZXNzLWluLXB1YmxpYy1wcm9jdXJlbWVudC1ndWlkZS1mb3ItYnVzaW5lc3MvP3V0bV9zb3VyY2U9
+ZXNwdXRuaWsmdXRtX21lZGl1bT1lbWFpbCZ1dG1fY2FtcGFpZ249ZW1haWwtZGlnZXN0LW1hcmNo
+LWFsbCBdCtCj0YHRliDRgtC+0L3QutC+0YnRliDRg9GH0LDRgdGC0ZYg0YMg0L/Rg9Cx0LvRltGH
+0L3QuNGFINC30LDQutGD0L/RltCy0LvRj9GFLCDRidC+0LEg0L/QtdGA0LXRgtCy0L7RgNC40YLQ
+uCDRgtC10L3QtNC10YDQuCDQvdCwINC80L7QttC70LjQstGW0YHRgtGMINC00LvRjyDRgNC+0LfQ
+stC40YLQutGDOiDQstGW0LQg0LvQvtC60LDQu9GM0L3QuNGFINC30LDQvNC+0LLQu9C10L3RjCDQ
+tNC+INGU0LLRgNC+0L/QtdC50YHRjNC60LjRhSDQutC+0L3RgtGA0LDQutGC0ZbQsi4K0JTRltC3
+0L3QsNGC0LjRgdGPINCx0ZbQu9GM0YjQtSDinp8gWyBodHRwczovL3Byb21ldGhldXMub3JnLnVh
+L3Byb21ldGhldXMtZnJlZS9zdWNjZXNzLWluLXB1YmxpYy1wcm9jdXJlbWVudC1ndWlkZS1mb3It
+YnVzaW5lc3MvP3V0bV9zb3VyY2U9ZXNwdXRuaWsmdXRtX21lZGl1bT1lbWFpbCZ1dG1fY2FtcGFp
+Z249ZW1haWwtZGlnZXN0LW1hcmNoLWFsbCBdCiBbIGh0dHBzOi8vcHJvbWV0aGV1cy5vcmcudWEv
+cHJvbWV0aGV1cy1mcmVlL2NvbW11bml0eS1yZWNvbnN0cnVjdGlvbi8/dXRtX3NvdXJjZT1lc3B1
+dG5payZ1dG1fbWVkaXVtPWVtYWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxs
+IF0K0J/QvtC60YDQvtC60L7QstGWINCw0LvQs9C+0YDQuNGC0LzQuCDQvdCw0LvQsNGI0YLRg9Cy
+0LDQvdC90Y8g0YHQv9GW0LLQv9GA0LDRhtGWINC3INC/0YDQtdC00YHRgtCw0LLQvdC40LrQsNC8
+0Lgg0LPRgNC+0LzQsNC00YHRjNC60L7Qs9C+INGB0LXQutGC0L7RgNGDLCDQvNGW0YHRhtC10LLQ
+uNGFINGA0LDQtCwg0LHRltC30L3QtdGB0YMg0LTQu9GPINCy0ZbQtNC90L7QstC70LXQvdC90Y8s
+INGP0LrRliDQstC20LUg0LzQvtC20YPRgtGMINCx0YPRgtC4INC30LDRgdGC0L7RgdC+0LLQsNC9
+0ZYg0YMg0LPRgNC+0LzQsNC00LDRhS4K0JTRltC30L3QsNGC0LjRgdGPINCx0ZbQu9GM0YjQtSDi
+np8gWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhL3Byb21ldGhldXMtZnJlZS9jb21tdW5pdHkt
+cmVjb25zdHJ1Y3Rpb24vP3V0bV9zb3VyY2U9ZXNwdXRuaWsmdXRtX21lZGl1bT1lbWFpbCZ1dG1f
+Y2FtcGFpZ249ZW1haWwtZGlnZXN0LW1hcmNoLWFsbCBdCtCc0LXRhdCw0L3RltC30LzQuCDQt9Cw
+0YXQuNGB0YLRgyDQsdGW0LfQvdC10YHRgyDQv9GA0Lgg0YDQvtCx0L7RgtGWINC3INGW0L3QvtC3
+0LXQvNC90LjQvNC4INC60L7QvdGC0YDQsNCz0LXQvdGC0LDQvNC4IC0tINCy0ZbQtCDQstC40LHQ
+vtGA0YMg0L/Qu9Cw0YLRltC20L3QvtCz0L4g0ZbQvdGB0YLRgNGD0LzQtdC90YLRgyDRgtCwINC+
+0YTQvtGA0LzQu9C10L3QvdGPINCz0LDRgNCw0L3RgtGW0Lkg0LTQviDQvNGW0L3RltC80ZbQt9Cw
+0YbRltGXINGA0LjQt9C40LrRltCyINC90LXQv9C70LDRgtC10LbRltCyLCDQv9GA0LDQstC40LvR
+jNC90L7Qs9C+INC+0YTQvtGA0LzQu9C10L3QvdGPINC00L7QutGD0LzQtdC90YLRltCyINGWINCy
+0L/QtdCy0L3QtdC90L7RlyDRgNC+0LHQvtGC0Lgg0LIg0LXQutGB0L/QvtGA0YLRliDRgtCwINGW
+0LzQv9C+0YDRgtGWINC90LDQstGW0YLRjCDQt9CwINGB0LrQu9Cw0LTQvdC40YUg0YPQvNC+0LIu
+CtCU0ZbQt9C90LDRgtC40YHRjyDQsdGW0LvRjNGI0LUg4p6fIFsgaHR0cHM6Ly9wcm9tZXRoZXVz
+Lm9yZy51YS9wcm9tZXRoZXVzLWZyZWUvaW50ZXJuYXRpb25hbC1zZXR0bGVtZW50cy8/dXRtX3Nv
+dXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVtYWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3Qt
+bWFyY2gtYWxsIF0KIFsgaHR0cHM6Ly9wcm9tZXRoZXVzLm9yZy51YS9wcm9tZXRoZXVzLWZyZWUv
+aW50ZXJuYXRpb25hbC1zZXR0bGVtZW50cy8/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVt
+PWVtYWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0K0J/QvtGA0LDQtNC4
+LCDRj9C6INGB0LjRgdGC0LXQvNC90L4g0L/RgNCw0YbRjtCy0LDRgtC4INGW0Lcg0LfQtdC80LvQ
+tdGOLCDRhNGW0L3QsNC90YHQsNC80LgsIHNtYXJ0LdGC0LXRhdC90L7Qu9C+0LPRltGP0LzQuCDR
+gtCwIEVTRywg0YnQvtCxINC+0L/RgtC40LzRltC30YPQstCw0YLQuCDQuSDQvNCw0YHRiNGC0LDQ
+sdGD0LLQsNGC0Lgg0LHRltC30L3QtdGBLgrQlNGW0LfQvdCw0YLQuNGB0Y8g0LHRltC70YzRiNC1
+IOKenyBbIGh0dHBzOi8vcHJvbWV0aGV1cy5vcmcudWEvcHJvbWV0aGV1cy1mcmVlL2Fncm8tMzYw
+Lz91dG1fc291cmNlPWVzcHV0bmlrJnV0bV9tZWRpdW09ZW1haWwmdXRtX2NhbXBhaWduPWVtYWls
+LWRpZ2VzdC1tYXJjaC1hbGwgXQogWyBodHRwczovL3Byb21ldGhldXMub3JnLnVhL3Byb21ldGhl
+dXMtZnJlZS9hZ3JvLTM2MC8/dXRtX3NvdXJjZT1lc3B1dG5payZ1dG1fbWVkaXVtPWVtYWlsJnV0
+bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0K0KPRgdC1INC/0YDQviDQvtGG0ZbQ
+vdC60YMg0YDQuNC30LjQutGW0LIsINGA0L7QsdC+0YLRgyDQt9CwINGB0YLQsNC90LTQsNGA0YLQ
+sNC80LggSU1BUyDRgtCwINC/0LvQsNC90YPQstCw0L3QvdGPINCx0LXQt9C/0LXRh9C90L7Qs9C+
+LCDQv9GA0LjRgNC+0LTQvtC+0YDRltGU0L3RgtC+0LLQsNC90L7Qs9C+INCy0ZbQtNC90L7QstC7
+0LXQvdC90Y8g0YLQtdGA0LjRgtC+0YDRltC5LgrQlNGW0LfQvdCw0YLQuNGB0Y8g0LHRltC70YzR
+iNC1IOKenyBbIGh0dHBzOi8vcHJvbWV0aGV1cy5vcmcudWEvcHJvbWV0aGV1cy1mcmVlL2Vudmly
+b25tZW50YWwtYXNwZWN0cy1vZi1taW5lLWNsZWFyYW5jZS8/dXRtX3NvdXJjZT1lc3B1dG5payZ1
+dG1fbWVkaXVtPWVtYWlsJnV0bV9jYW1wYWlnbj1lbWFpbC1kaWdlc3QtbWFyY2gtYWxsIF0KIFsg
+aHR0cHM6Ly9wcm9tZXRoZXVzLm9yZy51YS9wcm9tZXRoZXVzLWZyZWUvZW52aXJvbm1lbnRhbC1h
+c3BlY3RzLW9mLW1pbmUtY2xlYXJhbmNlLz91dG1fc291cmNlPWVzcHV0bmlrJnV0bV9tZWRpdW09
+ZW1haWwmdXRtX2NhbXBhaWduPWVtYWlsLWRpZ2VzdC1tYXJjaC1hbGwgXQrQqdC+INC90L7QstC+
+0LPQviDQsiDQvdCw0YjQuNGFINGB0L7RhtC80LXRgNC10LbQsNGFCiBbIGh0dHBzOi8vd3d3LmZh
+Y2Vib29rLmNvbS9wcm9tZXRoZXVzbW9vYy9wb3N0cy9wZmJpZDBxNXhwNmk4eTZSNVNZOXBTeVFD
+QmZOQnRDVnRONWp1TkFKd2JlNVM5QVhhRW13b01NUVpHWmF4WW5aWFNvaE1IbD9sb2NhbGU9dWtf
+VUEgXQogWyBodHRwczovL3QubWUvcHJvbWV0aGV1c21vb2MvMjM0MSBdCiBbIGh0dHBzOi8vd3d3
+Lmluc3RhZ3JhbS5jb20vcC9EVVJDOG9pRE9fci8/aW1nX2luZGV4PTEgXQrQn9GW0LTQv9C40YHR
+g9C50YLQtdGB0Y8g0L3QsCDQvdCw0YEg0YMgRmFjZWJvb2ssIEluc3RhZ3JhbSwgVGVsZWdyYW0g
+0ZYg0LHRg9C00YzRgtC1INCyINC60YPRgNGB0ZYg0LLRgdGM0L7Qs9C+INC90LDQudGG0ZbQutCw
+0LLRltGI0L7Qs9C+IQrQl9Cw0LvQuNGI0LDQudGC0LXRgdGMINC90LAg0LfQsifRj9C30LrRgyEK
+IFsgaHR0cHM6Ly93d3cuZmFjZWJvb2suY29tL3Byb21ldGhldXNtb29jIF0gWyBodHRwczovL3Qu
+bWUvcy9wcm9tZXRoZXVzbW9vYyBdIFsgaHR0cHM6Ly93d3cuaW5zdGFncmFtLmNvbS9wcm9tZXRo
+ZXVzLnVhLyBdIFsgaHR0cHM6Ly94LmNvbS9wcm9tZXRoZXVzbW9vYyBdIFsgaHR0cHM6Ly93d3cu
+eW91dHViZS5jb20vQFByb21ldGhldXNfVWtyYWluZS9mZWF0dXJlZCBdCtCS0Lgg0L7RgtGA0LjQ
+vNCw0LvQuCDQtNCw0L3QvtCz0L4g0LvQuNGB0YLQsCwg0LHQviDQv9GW0LTQv9C40YHQsNC90ZYg
+0L3QsCDRgNC+0LfRgdC40LvQutGDIFByb21ldGhldXMuCtCS0Lgg0LzQvtC20LXRgtC1IMKg0LLR
+ltC00L/QuNGB0LDRgtC40YHRjCDRgtGD0YIgWyBodHRwczovL2VzcHV0bmlrLmNvbS91bnN1YnNj
+cmliZSBd
+------=_Part_2154391_262215134.1772205802564
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.=
+w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html dir=3D"ltr" xmlns=3D"ht=
+tp://www.w3.org/1999/xhtml" xmlns:o=3D"urn:schemas-microsoft-com:office:off=
+ice" lang=3D"und" style=3D"padding:0;Margin:0"><head> <meta charset=3D"UTF-=
+8"> <meta content=3D"width=3Ddevice-width, initial-scale=3D1" name=3D"viewp=
+ort"> <meta name=3D"x-apple-disable-message-reformatting"> <meta http-equiv=
+=3D"X-UA-Compatible" content=3D"IE=3Dedge"> <meta content=3D"telephone=3Dno=
+" name=3D"format-detection"> <title></title><!--[if (mso 16)]><style type=
+=3D"text/css">
+    a {text-decoration: none;}
+    </style><![endif]--><!--[if gte mso 9]><style>sup { font-size: 100% !im=
+portant; }</style><![endif]--><!--[if gte mso 9]><noscript> <xml> <o:Office=
+DocumentSettings> <o:AllowPNG></o:AllowPNG> <o:PixelsPerInch>96</o:PixelsPe=
+rInch> </o:OfficeDocumentSettings> </xml> </noscript><![endif]--><!--[if ms=
+o]><xml> <w:WordDocument xmlns:w=3D"urn:schemas-microsoft-com:office:word">=
+ <w:DontUseAdvancedTypographyReadingMail/> </w:WordDocument> </xml><![endif=
+]--> <style type=3D"text/css">
+#outlook a {
+=09padding:0;
+}
+.ExternalClass {
+=09width:100%;
+}
+.ExternalClass,
+.ExternalClass p,
+.ExternalClass span,
+.ExternalClass font,
+.ExternalClass td,
+.ExternalClass div {
+=09line-height:100%;
+}
+.es-button {
+=09mso-style-priority:100!important;
+=09text-decoration:none!important;
+}
+a[x-apple-data-detectors] {
+=09color:inherit!important;
+=09text-decoration:none!important;
+=09font-size:inherit!important;
+=09font-family:inherit!important;
+=09font-weight:inherit!important;
+=09line-height:inherit!important;
+}
+.es-desk-hidden {
+=09display:none;
+=09float:left;
+=09overflow:hidden;
+=09width:0;
+=09max-height:0;
+=09line-height:0;
+=09mso-hide:all;
+}
+.es-button-border:hover a.es-button, .es-button-border:hover button.es-butt=
+on {
+=09background:#e96f0b!important;
+}
+.es-button-border:hover {
+=09border-color:#42d159 #42d159 #42d159 #42d159!important;
+=09background:#e96f0b!important;
+}
+td .es-button-border:hover a.es-button-1750509954830 {
+=09background:#265273!important;
+}
+td .es-button-border-1750509954830:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1767605097718 {
+=09background:#265273!important;
+}
+td .es-button-border-1767605097718:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1769768578023 {
+=09background:#265273!important;
+}
+td .es-button-border-1769768578023:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1769779210452 {
+=09background:#265273!important;
+}
+td .es-button-border-1769779210452:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1769779163293 {
+=09background:#265273!important;
+}
+td .es-button-border-1769779163293:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1769766992240 {
+=09background:#265273!important;
+}
+td .es-button-border-1769766992240:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1769767082156 {
+=09background:#265273!important;
+}
+td .es-button-border-1769767082156:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1750511222761 {
+=09background:#265273!important;
+}
+td .es-button-border-1750511222761:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1750511255471 {
+=09background:#265273!important;
+}
+td .es-button-border-1750511255471:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1769777424563 {
+=09background:#265273!important;
+}
+td .es-button-border-1769777424563:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1750511298174 {
+=09background:#265273!important;
+}
+td .es-button-border-1750511298174:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1772198119058 {
+=09background:#265273!important;
+}
+td .es-button-border-1772198119058:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1772198232509 {
+=09background:#265273!important;
+}
+td .es-button-border-1772198232509:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1772198332496 {
+=09background:#265273!important;
+}
+td .es-button-border-1772198332496:hover {
+=09background:#265273!important;
+}
+td .es-button-border:hover a.es-button-1772201338427 {
+=09background:#265273!important;
+}
+td .es-button-border-1772201338427:hover {
+=09background:#265273!important;
+}
+@media only screen and (max-width:600px) {p, ul li, ol li, a { line-height:=
+150%!important } h1, h2, h3, h1 a, h2 a, h3 a { line-height:150%!important =
+} h1 { font-size:18px!important; text-align:center } h2 { font-size:16px!im=
+portant; text-align:center } h3 { font-size:14px!important; text-align:cent=
+er } .es-m-txt-r img, .es-m-txt-c img, .es-m-txt-l img { display:inline!imp=
+ortant } .es-header-body h1 a, .es-content-body h1 a, .es-footer-body h1 a =
+{ font-size:18px!important } .es-header-body h2 a, .es-content-body h2 a, .=
+es-footer-body h2 a { font-size:16px!important } .es-header-body h3 a, .es-=
+content-body h3 a, .es-footer-body h3 a { font-size:14px!important } .es-me=
+nu td a { font-size:16px!important } .es-header-body p, .es-header-body ul =
+li, .es-header-body ol li, .es-header-body a { font-size:16px!important } .=
+es-content-body p, .es-content-body ul li, .es-content-body ol li, .es-cont=
+ent-body a { font-size:16px!important } .es-footer-body p, .es-footer-body =
+ul li, .es-footer-body ol li, .es-footer-body a { font-size:16px!important =
+} .es-infoblock p, .es-infoblock ul li, .es-infoblock ol li, .es-infoblock =
+a { font-size:12px!important } *[class=3D"gmail-fix"] { display:none!import=
+ant } .es-m-txt-c, .es-m-txt-c h1, .es-m-txt-c h2, .es-m-txt-c h3 { text-al=
+ign:center!important } .es-m-txt-r, .es-m-txt-r h1, .es-m-txt-r h2, .es-m-t=
+xt-r h3 { text-align:right!important } .es-m-txt-l, .es-m-txt-l h1, .es-m-t=
+xt-l h2, .es-m-txt-l h3 { text-align:left!important } .es-m-txt-r a img, .e=
+s-m-txt-c a img, .es-m-txt-l a img { display:inline!important } .es-button-=
+border { display:inline-block!important } a.es-button, button.es-button { f=
+ont-size:16px!important; display:inline-block!important } .es-btn-fw { bord=
+er-width:10px 0px!important; text-align:center!important } .es-adaptive tab=
+le, .es-btn-fw, .es-btn-fw-brdr, .es-left, .es-right { width:100%!important=
+ } .es-content table, .es-header table, .es-footer table, .es-content, .es-=
+footer, .es-header { width:100%!important; max-width:600px!important } .es-=
+adapt-td { display:block!important; width:100%!important } .adapt-img { wid=
+th:100%!important; height:auto!important } .es-m-p0 { padding:0!important }=
+ .es-m-p0r { padding-right:0!important } .es-m-p0l { padding-left:0!importa=
+nt } .es-m-p0t { padding-top:0!important } .es-m-p0b { padding-bottom:0!imp=
+ortant } .es-m-p20b { padding-bottom:20px!important } .es-mobile-hidden, .e=
+s-hidden { display:none!important } .es-desk-hidden { display:table-row!imp=
+ortant; width:auto!important; overflow:visible!important; float:none!import=
+ant; max-height:inherit!important; line-height:inherit!important } .es-desk=
+-menu-hidden { display:table-cell!important } table.es-table-not-adapt, .es=
+d-block-html table { width:auto!important } table.es-social { display:inlin=
+e-block!important } table.es-social td { display:inline-block!important } .=
+es-m-p5 { padding:5px!important } .es-m-p5t { padding-top:5px!important } .=
+es-m-p5b { padding-bottom:5px!important } .es-m-p5r { padding-right:5px!imp=
+ortant } .es-m-p5l { padding-left:5px!important } .es-m-p10 { padding:10px!=
+important } .es-m-p10t { padding-top:10px!important } .es-m-p10b { padding-=
+bottom:10px!important } .es-m-p10r { padding-right:10px!important } .es-m-p=
+10l { padding-left:10px!important } .es-m-p15 { padding:15px!important } .e=
+s-m-p15t { padding-top:15px!important } .es-m-p15b { padding-bottom:15px!im=
+portant } .es-m-p15r { padding-right:15px!important } .es-m-p15l { padding-=
+left:15px!important } .es-m-p20 { padding:20px!important } .es-m-p20t { pad=
+ding-top:20px!important } .es-m-p20r { padding-right:20px!important } .es-m=
+-p20l { padding-left:20px!important } .es-m-p25 { padding:25px!important } =
+.es-m-p25t { padding-top:25px!important } .es-m-p25b { padding-bottom:25px!=
+important } .es-m-p25r { padding-right:25px!important } .es-m-p25l { paddin=
+g-left:25px!important } .es-m-p30 { padding:30px!important } .es-m-p30t { p=
+adding-top:30px!important } .es-m-p30b { padding-bottom:30px!important } .e=
+s-m-p30r { padding-right:30px!important } .es-m-p30l { padding-left:30px!im=
+portant } .es-m-p35 { padding:35px!important } .es-m-p35t { padding-top:35p=
+x!important } .es-m-p35b { padding-bottom:35px!important } .es-m-p35r { pad=
+ding-right:35px!important } .es-m-p35l { padding-left:35px!important } .es-=
+m-p40 { padding:40px!important } .es-m-p40t { padding-top:40px!important } =
+.es-m-p40b { padding-bottom:40px!important } .es-m-p40r { padding-right:40p=
+x!important } .es-m-p40l { padding-left:40px!important } .es-m-margin { pad=
+ding-left:5px!important; padding-right:5px!important; padding-top:0px!impor=
+tant; padding-bottom:0px!important } }
+@media screen and (max-width:384px) {.mail-message-content { width:414px!im=
+portant } }
+</style> <style> #mshidden { mso-hide: all; display: none; width: 0px; heig=
+ht: 0px; float: none; opacity: 0.0; border: 0px solid; margin: 0px;} </styl=
+e> </head> <body data-new-gr-c-s-loaded=3D"14.1275.0" style=3D"width:100%;f=
+ont-family:arial, 'helvetica neue', helvetica, sans-serif;-webkit-text-size=
+-adjust:100%;-ms-text-size-adjust:100%;padding:0;Margin:0"> <span style=3D"=
+display:none !important;font-size:0px;line-height:0;color:#ffffff;visibilit=
+y:hidden;opacity:0;height:0;width:0;mso-hide:all">=D0=A9=D0=BE =D0=BE=D0=BF=
+=D0=B0=D0=BD=D1=83=D0=B2=D0=B0=D1=82=D0=B8 =D0=B7=D0=B0=D1=80=D0=B0=D0=B7, =
+=D1=89=D0=BE=D0=B1 =D0=BF=D1=96=D0=B4=D0=B2=D0=B8=D1=89=D0=B8=D1=82=D0=B8 =
+=D0=B4=D0=BE=D1=85=D1=96=D0=B4 =D0=BD=D0=B0=D0=B9=D0=B1=D0=BB=D0=B8=D0=B6=
+=D1=87=D0=B8=D0=BC =D1=87=D0=B0=D1=81=D0=BE=D0=BC=E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =
+=E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =
+=E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =
+=E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =
+=E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =
+=E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =
+=E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =
+=E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =
+=E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =
+=E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=
+=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=
+=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=
+=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=87=CD=8F =E2=80=
+=87=CD=8F =E2=80=87=CD=8F =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=
+=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =
+=C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD =C2=AD &nbsp;</span><img id=3D"ms=
+hidden" src=3D"https://esputnik.com/repository/applications/commons/hidden.=
+png?iid=3D00000000-0000-0000-0000-000000000000" alt=3D"" style=3D"display: =
+block; width: 0px; height: 0px; visibility:hidden; float: none; opacity:0.0=
+; filter:alpha(opacity=3D0);border: 0px solid; margin: 0px"> <div lang=3D"u=
+nd" style=3D"background-color:#F9F9F9"> <!--[if gte mso 9]><v:background xm=
+lns:v=3D"urn:schemas-microsoft-com:vml" fill=3D"t"> <v:fill type=3D"tile" c=
+olor=3D"#f9f9f9"></v:fill> </v:background><![endif]--> <table width=3D"100%=
+" cellspacing=3D"0" cellpadding=3D"0" role=3D"none" style=3D"mso-table-lspa=
+ce:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;pad=
+ding:0;Margin:0;width:100%;height:100%;background-repeat:repeat;background-=
+position:center top;background-color:#F9F9F9">  <tr style=3D"border-collaps=
+e:collapse"> <td class=3D"es-m-margin" valign=3D"top" style=3D"padding:0;Ma=
+rgin:0"> <table class=3D"es-content" cellspacing=3D"0" cellpadding=3D"0" al=
+ign=3D"center" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace=
+:0pt;border-collapse:collapse;border-spacing:0px;table-layout:fixed !import=
+ant;width:100%">  <tr style=3D"border-collapse:collapse"> <td align=3D"cent=
+er" bgcolor=3D"#ffffff" style=3D"padding:0;Margin:0;background-color:#fffff=
+f"> <table class=3D"es-content-body" cellspacing=3D"0" cellpadding=3D"0" al=
+ign=3D"center" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-co=
+llapse:collapse;border-spacing:0px;background-color:transparent;width:600px=
+" role=3D"none">  <tr style=3D"border-collapse:collapse"> <td align=3D"left=
+" style=3D"padding:20px;Margin:0;background-color:#ffffff" bgcolor=3D"#ffff=
+ff"> <table width=3D"100%" cellspacing=3D"0" cellpadding=3D"0" role=3D"none=
+" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collap=
+se;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td valign=
+=3D"top" align=3D"center" style=3D"padding:0;Margin:0;width:560px"> <table =
+width=3D"100%" cellspacing=3D"0" cellpadding=3D"0" role=3D"presentation" st=
+yle=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;b=
+order-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"c=
+enter" style=3D"padding:0;Margin:0;font-size:0px"><a target=3D"_blank" href=
+=3D"https://prometheusor.esclick.me/1qYFPZNjyIju4L5TWk" style=3D"-webkit-te=
+xt-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;=
+text-decoration:underline;color:#2CB543;font-size:14px"><img src=3D"https:/=
+/picscdn.io/repository/home/103056/images/msg/39205982/1741771555097.png" a=
+lt=3D"=D0=9E=D0=B1=D1=80=D0=B0=D1=82=D0=B8 =D1=81=D0=BE=D0=B1=D1=96 =D0=BD=
+=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F" style=3D"display:block;border:0=
+;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic" width=3D=
+"203" title=3D"=D0=9E=D0=B1=D1=80=D0=B0=D1=82=D0=B8 =D1=81=D0=BE=D0=B1=D1=
+=96 =D0=BD=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F"></a></td> </tr>  </ta=
+ble></td> </tr>  </table></td> </tr> <tr style=3D"border-collapse:collapse"=
+> <td align=3D"left" bgcolor=3D"#ffffff" style=3D"padding:0;Margin:0;paddin=
+g-left:10px;padding-right:10px;background-color:#ffffff"> <table cellpaddin=
+g=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-l=
+space:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px"=
+>  <tr style=3D"border-collapse:collapse"> <td align=3D"center" valign=3D"t=
+op" style=3D"padding:0;Margin:0;width:580px"> <table cellpadding=3D"0" cell=
+spacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table-lspac=
+e:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <=
+tr style=3D"border-collapse:collapse"> <td align=3D"center" style=3D"paddin=
+g:0;Margin:0;font-size:0px"><a target=3D"_blank" href=3D"https://prometheus=
+or.esclick.me/1qYFPvMQFsl0EcdjWk" style=3D"-webkit-text-size-adjust:none;-m=
+s-text-size-adjust:none;mso-line-height-rule:exactly;text-decoration:underl=
+ine;color:#2CB543;font-size:14px"><img class=3D"adapt-img" src=3D"https://p=
+ics.esputnik.com/repository/home/103056/images/msg/39205982/1772198014110.j=
+pg" alt=3D"=D0=A9=D0=BE =D0=BD=D0=BE=D0=B2=D0=BE=D0=B3=D0=BE =D0=BD=D0=B0 P=
+rometheus?" style=3D"display:block;border:0;outline:none;text-decoration:no=
+ne;-ms-interpolation-mode:bicubic;border-radius:15px" width=3D"580" title=
+=3D"=D0=A9=D0=BE =D0=BD=D0=BE=D0=B2=D0=BE=D0=B3=D0=BE =D0=BD=D0=B0 Promethe=
+us?"></a></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"l=
+eft" class=3D"es-m-txt-l" style=3D"padding:0;Margin:0;padding-bottom:10px;p=
+adding-top:15px"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-te=
+xt-size-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'helvet=
+ica neue', helvetica, sans-serif;line-height:24px;color:#333333;font-size:1=
+6px">=D0=91=D0=B5=D1=80=D0=B5=D0=B7=D0=B5=D0=BD=D1=8C =E2=80=94 =D1=81=D0=
+=BB=D1=83=D1=88=D0=BD=D0=B8=D0=B9 =D0=BC=D0=BE=D0=BC=D0=B5=D0=BD=D1=82 =D1=
+=96=D0=BD=D0=B2=D0=B5=D1=81=D1=82=D1=83=D0=B2=D0=B0=D1=82=D0=B8 =D1=87=D0=
+=B0=D1=81 =D1=83 =D0=BD=D0=B0=D0=B2=D0=B8=D1=87=D0=BA=D0=B8, =D1=89=D0=BE =
+=D0=BC=D0=B0=D1=8E=D1=82=D1=8C =D0=BF=D1=80=D0=B8=D0=BA=D0=BB=D0=B0=D0=B4=
+=D0=BD=D1=83 =D1=86=D1=96=D0=BD=D0=BD=D1=96=D1=81=D1=82=D1=8C =D0=BD=D0=B0 =
+=D1=80=D0=B8=D0=BD=D0=BA=D1=83 =D0=BF=D1=80=D0=B0=D1=86=D1=96. =D0=9C=D0=B8=
+ =D0=BF=D1=96=D0=B4=D0=B3=D0=BE=D1=82=D1=83=D0=B2=D0=B0=D0=BB=D0=B8 =D0=BD=
+=D0=B0=D0=B2=D1=87=D0=B0=D0=BB=D1=8C=D0=BD=D1=96 =D0=BF=D1=80=D0=BE=D0=B3=
+=D1=80=D0=B0=D0=BC=D0=B8, =D1=8F=D0=BA=D1=96 =D0=B4=D0=BE=D0=BF=D0=BE=D0=BC=
+=D0=B0=D0=B3=D0=B0=D1=8E=D1=82=D1=8C =D1=81=D0=B8=D1=81=D1=82=D0=B5=D0=BC=
+=D0=BD=D0=BE =D0=BF=D1=96=D0=B4=D0=B3=D0=BE=D1=82=D1=83=D0=B2=D0=B0=D1=82=
+=D0=B8=D1=81=D1=8F =D0=B4=D0=BE =D1=80=D0=BE=D0=B1=D0=BE=D1=82=D0=B8, =D0=
+=BF=D0=BE=D1=81=D0=B8=D0=BB=D0=B8=D1=82=D0=B8 =D0=BF=D1=80=D0=BE=D1=84=D0=
+=B5=D1=81=D1=96=D0=B9=D0=BD=D0=B8=D0=B9 =D0=BF=D1=80=D0=BE=D1=84=D1=96=D0=
+=BB=D1=8C =D1=96 =D0=B2=D1=96=D0=B4=D0=BA=D1=80=D0=B8=D1=82=D0=B8 =D0=BD=D0=
+=BE=D0=B2=D1=96 =D0=BA=D0=B0=D1=80=E2=80=99=D1=94=D1=80=D0=BD=D1=96 =D0=B2=
+=D0=B0=D1=80=D1=96=D0=B0=D0=BD=D1=82=D0=B8.</p> <p style=3D"Margin:0;-webki=
+t-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exac=
+tly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:=
+24px;color:#180c02;font-size:16px;display:none"><br></p> <p style=3D"Margin=
+:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-=
+rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;lin=
+e-height:24px;color:#180c02;font-size:16px;display:none"><br></p></td> </tr=
+> <tr style=3D"border-collapse:collapse"> <td align=3D"left" class=3D"es-m-=
+txt-l" style=3D"padding:0;Margin:0;padding-top:5px;padding-bottom:10px"> <p=
+ style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;=
+mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica=
+, sans-serif;line-height:24px;color:#333333;font-size:16px">=D0=9E=D0=B1=D0=
+=B5=D1=80=D1=96=D1=82=D1=8C =D0=BF=D1=80=D0=BE=D0=B3=D1=80=D0=B0=D0=BC=D1=
+=83, =D1=89=D0=BE =D0=B2=D1=96=D0=B4=D0=BF=D0=BE=D0=B2=D1=96=D0=B4=D0=B0=D1=
+=94 =D0=B2=D0=B0=D1=88=D1=96=D0=B9 =D1=86=D1=96=D0=BB=D1=96, =D1=83=D0=B6=
+=D0=B5 =D1=86=D1=8C=D0=BE=D0=B3=D0=BE =D0=BC=D1=96=D1=81=D1=8F=D1=86=D1=8F =
+=E2=87=A3</p> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-s=
+ize-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'helvetica =
+neue', helvetica, sans-serif;line-height:24px;color:#180c02;font-size:16px;=
+display:none"><br></p> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-=
+ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'h=
+elvetica neue', helvetica, sans-serif;line-height:24px;color:#180c02;font-s=
+ize:16px;display:none"><br></p></td> </tr>  </table></td> </tr>  </table></=
+td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=
+=3D"Margin:0;padding-top:5px;padding-left:10px;padding-right:10px;padding-b=
+ottom:15px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=
+=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collaps=
+e:collapse;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <t=
+d class=3D"es-m-p0r es-m-p20b" valign=3D"top" align=3D"center" style=3D"pad=
+ding:0;Margin:0;width:580px"> <table width=3D"100%" cellspacing=3D"0" cellp=
+adding=3D"0" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-coll=
+apse:separate;border-spacing:0px;border-left:2px solid #e67d2d;border-right=
+:2px solid #e67d2d;border-top:2px solid #e67d2d;border-bottom:2px solid #e6=
+7d2d;border-radius:30px" role=3D"presentation">  <tr style=3D"border-collap=
+se:collapse"> <td align=3D"center" class=3D"es-m-txt-c" style=3D"padding:10=
+px;Margin:0"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-s=
+ize-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'helvetica =
+neue', helvetica, sans-serif;line-height:30px;color:#f58932;font-size:20px"=
+><b>=D0=9A=D0=B0=D0=BB=D0=B5=D0=BD=D0=B4=D0=B0=D1=80 =D0=BF=D0=BE=D0=B4=D1=
+=96=D0=B9 =D1=83 =D0=B1=D0=B5=D1=80=D0=B5=D0=B7=D0=BD=D1=96</b></p></td> </=
+tr>  </table></td> </tr>  </table></td> </tr> <tr style=3D"border-collapse:=
+collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-left:10px=
+;padding-right:10px;padding-bottom:15px"> <table cellpadding=3D"0" cellspac=
+ing=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-lspace:0pt;mso-ta=
+ble-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"=
+border-collapse:collapse"> <td align=3D"center" valign=3D"top" style=3D"pad=
+ding:0;Margin:0;width:580px"> <table cellpadding=3D"0" cellspacing=3D"0" wi=
+dth=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-=
+rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bord=
+er-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0"> <p =
+style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;m=
+so-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica,=
+ sans-serif;line-height:24px;color:#333333;font-size:16px"><b>=F0=9F=9F=A0 =
+=D0=92=D0=B0=D1=88 =D0=BE=D1=81=D0=B2=D1=96=D1=82=D0=BD=D1=96=D0=B9 =D0=BF=
+=D0=BB=D0=B0=D0=BD =D0=BD=D0=B0 =D0=BC=D1=96=D1=81=D1=8F=D1=86=D1=8C</b></p=
+> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:n=
+one;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helve=
+tica, sans-serif;line-height:21px;color:#333333;font-size:14px;display:none=
+"><br></p></td> </tr>  </table></td> </tr>  </table></td> </tr> <tr style=
+=3D"border-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin=
+:0;border-radius:15px 15px 0px 0px"> <table cellpadding=3D"0" cellspacing=
+=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table=
+-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bor=
+der-collapse:collapse"> <td align=3D"center" valign=3D"top" style=3D"paddin=
+g:0;Margin:0;width:600px"> <table cellpadding=3D"0" cellspacing=3D"0" width=
+=3D"100%" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collaps=
+e:collapse;border-spacing:0px;border-radius:15px 15px 0px 0px" role=3D"pres=
+entation">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" clas=
+s=3D"es-m-p20r es-m-p20l" style=3D"Margin:0;padding-top:15px;padding-bottom=
+:15px;padding-left:40px;padding-right:40px;background-color:#fff3ed;font-si=
+ze:0px;border-radius:10px 10px 0px 0px" bgcolor=3D"#fff3ed"><!--[if mso]><t=
+able style=3D"width:520px" cellpadding=3D"0" cellspacing=3D"0"><tr><td styl=
+e=3D"width:111px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cell=
+spacing=3D"0" class=3D"es-left" align=3D"left" role=3D"presentation" style=
+=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;bord=
+er-spacing:0px;float:left">  <tr style=3D"border-collapse:collapse"> <td al=
+ign=3D"left" style=3D"padding:0;Margin:0;border-radius:30px 30px 0px;overfl=
+ow:hidden;width:91px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"=
+100%" bgcolor=3D"#B1BABD" style=3D"mso-table-lspace:0pt;mso-table-rspace:0p=
+t;border-collapse:separate;border-spacing:0px;border-left:1px solid #333333=
+;border-right:1px solid #333333;border-top:1px solid #333333;border-bottom:=
+1px solid #333333;background-color:#b1babd;border-radius:30px 30px 0px;back=
+ground-image:url(https://pics.esputnik.com/repository/home/1/common/images/=
+1677369688875.png);background-repeat:no-repeat;background-position:right bo=
+ttom" background=3D"https://pics.esputnik.com/repository/home/1/common/imag=
+es/1677369688875.png" role=3D"presentation">  <tr style=3D"border-collapse:=
+collapse"> <td align=3D"center" class=3D"es-m-txt-c es-m-p5t" style=3D"padd=
+ing:0;Margin:0;padding-top:10px"> <h2 style=3D"Margin:0;line-height:24px;ms=
+o-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, =
+sans-serif;font-size:16px;font-style:normal;font-weight:normal;color:#33333=
+3">5</h2></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"c=
+enter" style=3D"padding:0;Margin:0;font-size:0"> <table border=3D"0" width=
+=3D"45%" height=3D"100%" cellpadding=3D"0" cellspacing=3D"0" style=3D"mso-t=
+able-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacin=
+g:0px;width:45% !important;display:inline-table" role=3D"presentation">  <t=
+r style=3D"border-collapse:collapse"> <td style=3D"padding:0;Margin:0;borde=
+r-bottom:1px solid #9fc5e8;background:unset;height:0px;width:100%;margin:0p=
+x"></td> </tr>  </table></td> </tr> <tr style=3D"border-collapse:collapse">=
+ <td align=3D"center" class=3D"es-m-txt-c" style=3D"padding:0;Margin:0;padd=
+ing-top:5px;padding-bottom:10px"> <h3 style=3D"Margin:0;line-height:21px;ms=
+o-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, =
+sans-serif;font-size:14px;font-style:normal;font-weight:normal;color:#33333=
+3">=D0=91=D0=B5=D1=80=D0=B5=D0=B7=D0=BD=D1=8F</h3></td> </tr>  </table></td=
+> <td class=3D"es-hidden" style=3D"padding:0;Margin:0;width:20px"></td> </t=
+r>  </table><!--[if mso]></td><td style=3D"width:236px" valign=3D"top"><![e=
+ndif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-left" align=
+=3D"left" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rsp=
+ace:0pt;border-collapse:collapse;border-spacing:0px;float:left">  <tr style=
+=3D"border-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin=
+:0;width:236px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" =
+role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bo=
+rder-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:c=
+ollapse"> <td align=3D"left" class=3D"es-m-p15t" style=3D"padding:0;Margin:=
+0;padding-top:5px"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-=
+text-size-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'helv=
+etica neue', helvetica, sans-serif;line-height:24px;color:#333333;font-size=
+:16px"><b>=D0=A1=D0=B8=D1=81=D1=82=D0=B5=D0=BC=D0=BD=D0=B5 =D1=83=D0=BF=D1=
+=80=D0=B0=D0=B2=D0=BB=D1=96=D0=BD=D0=BD=D1=8F =D0=BA=D0=BE=D0=BC=D0=B0=D0=
+=BD=D0=B4=D0=BE=D1=8E</b></p></td> </tr> <tr style=3D"border-collapse:colla=
+pse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-top:5px"> <p s=
+tyle=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;ms=
+o-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, =
+sans-serif;line-height:21px;color:#333333;font-size:14px">=D0=A1=D1=82=D0=
+=B0=D1=80=D1=82 =D0=BF=D1=80=D0=BE=D0=B4=D0=B0=D0=B6=D1=96=D0=B2</p></td> <=
+/tr>  </table></td> </tr>  </table><!--[if mso]></td><td style=3D"width:20p=
+x"></td><td style=3D"width:153px" valign=3D"top"><![endif]--> <table cellpa=
+dding=3D"0" cellspacing=3D"0" class=3D"es-right" align=3D"right" role=3D"pr=
+esentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-colla=
+pse:collapse;border-spacing:0px;float:right">  <tr style=3D"border-collapse=
+:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;width:153px"> <t=
+able cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentatio=
+n" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:colla=
+pse;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=
+=3D"right" class=3D"es-m-txt-l" style=3D"padding:0;Margin:0;padding-top:5px=
+"><span class=3D"es-button-border-1772198119058 es-button-border" style=3D"=
+border-style:solid;border-color:#e69138;background:#e67e2d;border-width:0px=
+;display:inline-block;border-radius:8px;width:auto"><a href=3D"https://prom=
+etheusor.esclick.me/1qYFTp7vNGx63jiZ8k" class=3D"es-button es-button-177219=
+8119058" target=3D"_blank" style=3D"mso-style-priority:100 !important;text-=
+decoration:none;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso=
+-line-height-rule:exactly;color:#ffffff;font-size:16px;display:inline-block=
+;background:#e67e2d;border-radius:8px;font-family:arial, 'helvetica neue', =
+helvetica, sans-serif;font-weight:normal;font-style:normal;line-height:19.2=
+px;width:auto;text-align:center;padding:10px 15px;mso-padding-alt:0;mso-bor=
+der-alt:10px solid #e67e2d">=D0=9D=D0=B0=D0=B3=D0=B0=D0=B4=D0=B0=D1=82=D0=
+=B8 =D0=BF=D1=80=D0=BE =D1=81=D1=82=D0=B0=D1=80=D1=82</a></span></td> </tr>=
+  </table></td> </tr>  </table><!--[if mso]></td></tr></table><![endif]--><=
+/td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"left" class=
+=3D"es-m-p20r es-m-p20l" style=3D"Margin:0;padding-top:5px;padding-bottom:1=
+5px;padding-left:40px;padding-right:40px;background-color:#fff3ed;font-size=
+:0px" bgcolor=3D"#fff3ed"><!--[if mso]><table style=3D"width:520px" cellpad=
+ding=3D"0" cellspacing=3D"0"><tr><td style=3D"width:111px" valign=3D"top"><=
+![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-left" al=
+ign=3D"left" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-=
+rspace:0pt;border-collapse:collapse;border-spacing:0px;float:left">  <tr st=
+yle=3D"border-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Mar=
+gin:0;border-radius:30px 30px 0px;overflow:hidden;width:91px"> <table cellp=
+adding=3D"0" cellspacing=3D"0" width=3D"100%" bgcolor=3D"#B1BABD" style=3D"=
+mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:separate;border-s=
+pacing:0px;border-left:1px solid #333333;border-right:1px solid #333333;bor=
+der-top:1px solid #333333;border-bottom:1px solid #333333;background-color:=
+#b1babd;border-radius:30px 30px 0px;background-image:url(https://pics.esput=
+nik.com/repository/home/1/common/images/1677369688875.png);background-repea=
+t:no-repeat;background-position:right bottom" background=3D"https://pics.es=
+putnik.com/repository/home/1/common/images/1677369688875.png" role=3D"prese=
+ntation">  <tr style=3D"border-collapse:collapse"> <td align=3D"center" cla=
+ss=3D"es-m-txt-c es-m-p5t" style=3D"padding:0;Margin:0;padding-top:10px"> <=
+h2 style=3D"Margin:0;line-height:24px;mso-line-height-rule:exactly;font-fam=
+ily:arial, 'helvetica neue', helvetica, sans-serif;font-size:16px;font-styl=
+e:normal;font-weight:normal;color:#333333">19</h2></td> </tr> <tr style=3D"=
+border-collapse:collapse"> <td align=3D"center" style=3D"padding:0;Margin:0=
+;font-size:0"> <table border=3D"0" width=3D"45%" height=3D"100%" cellpaddin=
+g=3D"0" cellspacing=3D"0" style=3D"mso-table-lspace:0pt;mso-table-rspace:0p=
+t;border-collapse:collapse;border-spacing:0px;width:45% !important;display:=
+inline-table" role=3D"presentation">  <tr style=3D"border-collapse:collapse=
+"> <td style=3D"padding:0;Margin:0;border-bottom:1px solid #9fc5e8;backgrou=
+nd:unset;height:0px;width:100%;margin:0px"></td> </tr>  </table></td> </tr>=
+ <tr style=3D"border-collapse:collapse"> <td align=3D"center" class=3D"es-m=
+-txt-c" style=3D"padding:0;Margin:0;padding-top:5px;padding-bottom:10px"> <=
+h3 style=3D"Margin:0;line-height:21px;mso-line-height-rule:exactly;font-fam=
+ily:arial, 'helvetica neue', helvetica, sans-serif;font-size:14px;font-styl=
+e:normal;font-weight:normal;color:#333333">=D0=91=D0=B5=D1=80=D0=B5=D0=B7=
+=D0=BD=D1=8F</h3></td> </tr>  </table></td> <td class=3D"es-hidden" style=
+=3D"padding:0;Margin:0;width:20px"></td> </tr>  </table><!--[if mso]></td><=
+td style=3D"width:236px" valign=3D"top"><![endif]--> <table cellpadding=3D"=
+0" cellspacing=3D"0" class=3D"es-left" align=3D"left" role=3D"presentation"=
+ style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collaps=
+e;border-spacing:0px;float:left">  <tr style=3D"border-collapse:collapse"> =
+<td align=3D"left" style=3D"padding:0;Margin:0;width:236px"> <table cellpad=
+ding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"=
+mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-s=
+pacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" cl=
+ass=3D"es-m-p15t" style=3D"padding:0;Margin:0;padding-top:5px"> <p style=3D=
+"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-=
+height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-se=
+rif;line-height:24px;color:#333333;font-size:16px"><b>Data Analytics: =D0=
+=B2=D1=96=D0=B4 =D0=B4=D0=B0=D0=BD=D0=B8=D1=85 </b><br></p> <p style=3D"Mar=
+gin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-heig=
+ht-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;=
+line-height:24px;color:#333333;font-size:16px"><b>=D0=B4=D0=BE =D0=B1=D1=96=
+=D0=B7=D0=BD=D0=B5=D1=81-=D1=80=D1=96=D1=88=D0=B5=D0=BD=D1=8C</b></p></td> =
+</tr> <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"p=
+adding:0;Margin:0;padding-top:5px"> <p style=3D"Margin:0;-webkit-text-size-=
+adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-fam=
+ily:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;color:#=
+333333;font-size:14px">=D0=A1=D1=82=D0=B0=D1=80=D1=82 =D0=BD=D0=B0=D0=B2=D1=
+=87=D0=B0=D0=BD=D0=BD=D1=8F</p></td> </tr>  </table></td> </tr>  </table><!=
+--[if mso]></td><td style=3D"width:20px"></td><td style=3D"width:153px" val=
+ign=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=
+=3D"es-right" align=3D"right" role=3D"presentation" style=3D"mso-table-lspa=
+ce:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;flo=
+at:right">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" styl=
+e=3D"padding:0;Margin:0;width:153px"> <table cellpadding=3D"0" cellspacing=
+=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;m=
+so-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr styl=
+e=3D"border-collapse:collapse"> <td align=3D"right" class=3D"es-m-txt-l" st=
+yle=3D"padding:0;Margin:0;padding-top:5px"><span class=3D"es-button-border-=
+1769779210452 es-button-border" style=3D"border-style:solid;border-color:#e=
+69138;background:#e67e2d;border-width:0px;display:inline-block;border-radiu=
+s:8px;width:auto"><a href=3D"https://prometheusor.esclick.me/1qYFXitQUf9Bsq=
+nPOk" class=3D"es-button es-button-1769779210452" target=3D"_blank" style=
+=3D"mso-style-priority:100 !important;text-decoration:none;-webkit-text-siz=
+e-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;color:=
+#ffffff;font-size:16px;display:inline-block;background:#e67e2d;border-radiu=
+s:8px;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weigh=
+t:normal;font-style:normal;line-height:19.2px;width:auto;text-align:center;=
+padding:10px 15px;mso-padding-alt:0;mso-border-alt:10px solid #e67e2d">=D0=
+=9F=D1=80=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B7=D0=
+=B0=D1=80=D0=B0=D0=B7</a></span></td> </tr>  </table></td> </tr>  </table><=
+!--[if mso]></td></tr></table><![endif]--></td> </tr> <tr style=3D"border-c=
+ollapse:collapse"> <td align=3D"left" class=3D"es-m-p20r es-m-p20l" style=
+=3D"Margin:0;padding-top:5px;padding-bottom:15px;padding-left:40px;padding-=
+right:40px;background-color:#fff3ed;font-size:0px" bgcolor=3D"#fff3ed"><!--=
+[if mso]><table style=3D"width:520px" cellpadding=3D"0" cellspacing=3D"0"><=
+tr><td style=3D"width:111px" valign=3D"top"><![endif]--> <table cellpadding=
+=3D"0" cellspacing=3D"0" class=3D"es-left" align=3D"left" role=3D"presentat=
+ion" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:col=
+lapse;border-spacing:0px;float:left">  <tr style=3D"border-collapse:collaps=
+e"> <td align=3D"left" style=3D"padding:0;Margin:0;border-radius:30px 30px =
+0px;overflow:hidden;width:91px"> <table cellpadding=3D"0" cellspacing=3D"0"=
+ width=3D"100%" bgcolor=3D"#B1BABD" style=3D"mso-table-lspace:0pt;mso-table=
+-rspace:0pt;border-collapse:separate;border-spacing:0px;border-left:1px sol=
+id #333333;border-right:1px solid #333333;border-top:1px solid #333333;bord=
+er-bottom:1px solid #333333;background-color:#b1babd;border-radius:30px 30p=
+x 0px;background-image:url(https://pics.esputnik.com/repository/home/1/comm=
+on/images/1677369688875.png);background-repeat:no-repeat;background-positio=
+n:right bottom" background=3D"https://pics.esputnik.com/repository/home/1/c=
+ommon/images/1677369688875.png" role=3D"presentation">  <tr style=3D"border=
+-collapse:collapse"> <td align=3D"center" class=3D"es-m-txt-c es-m-p5t" sty=
+le=3D"padding:0;Margin:0;padding-top:10px"> <h2 style=3D"Margin:0;line-heig=
+ht:24px;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', h=
+elvetica, sans-serif;font-size:16px;font-style:normal;font-weight:normal;co=
+lor:#333333">19</h2></td> </tr> <tr style=3D"border-collapse:collapse"> <td=
+ align=3D"center" style=3D"padding:0;Margin:0;font-size:0"> <table border=
+=3D"0" width=3D"45%" height=3D"100%" cellpadding=3D"0" cellspacing=3D"0" st=
+yle=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;b=
+order-spacing:0px;width:45% !important;display:inline-table" role=3D"presen=
+tation">  <tr style=3D"border-collapse:collapse"> <td style=3D"padding:0;Ma=
+rgin:0;border-bottom:1px solid #9fc5e8;background:unset;height:0px;width:10=
+0%;margin:0px"></td> </tr>  </table></td> </tr> <tr style=3D"border-collaps=
+e:collapse"> <td align=3D"center" class=3D"es-m-txt-c" style=3D"padding:0;M=
+argin:0;padding-top:5px;padding-bottom:10px"> <h3 style=3D"Margin:0;line-he=
+ight:21px;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue',=
+ helvetica, sans-serif;font-size:14px;font-style:normal;font-weight:normal;=
+color:#333333">=D0=91=D0=B5=D1=80=D0=B5=D0=B7=D0=BD=D1=8F</h3></td> </tr>  =
+</table></td> <td class=3D"es-hidden" style=3D"padding:0;Margin:0;width:20p=
+x"></td> </tr>  </table><!--[if mso]></td><td style=3D"width:236px" valign=
+=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"e=
+s-left" align=3D"left" role=3D"presentation" style=3D"mso-table-lspace:0pt;=
+mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float:left=
+">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"pad=
+ding:0;Margin:0;width:236px"> <table cellpadding=3D"0" cellspacing=3D"0" wi=
+dth=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-=
+rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bord=
+er-collapse:collapse"> <td align=3D"left" class=3D"es-m-p15t" style=3D"padd=
+ing:0;Margin:0;padding-top:5px"> <p style=3D"Margin:0;-webkit-text-size-adj=
+ust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family=
+:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;color:#333=
+333;font-size:16px"><b>=D0=A1++ =D1=80=D0=BE=D0=B7=D1=80=D0=BE=D0=B1=D0=BD=
+=D0=B8=D0=BA</b></p></td> </tr> <tr style=3D"border-collapse:collapse"> <td=
+ align=3D"left" style=3D"padding:0;Margin:0;padding-top:5px"> <p style=3D"M=
+argin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-he=
+ight-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-seri=
+f;line-height:21px;color:#333333;font-size:14px">=D0=A1=D1=82=D0=B0=D1=80=
+=D1=82 =D0=BF=D1=80=D0=BE=D0=B4=D0=B0=D0=B6=D1=96=D0=B2</p></td> </tr>  </t=
+able></td> </tr>  </table><!--[if mso]></td><td style=3D"width:20px"></td><=
+td style=3D"width:153px" valign=3D"top"><![endif]--> <table cellpadding=3D"=
+0" cellspacing=3D"0" class=3D"es-right" align=3D"right" role=3D"presentatio=
+n" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:colla=
+pse;border-spacing:0px;float:right">  <tr style=3D"border-collapse:collapse=
+"> <td align=3D"left" style=3D"padding:0;Margin:0;width:153px"> <table cell=
+padding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=
+=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;bord=
+er-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"righ=
+t" class=3D"es-m-txt-l" style=3D"padding:0;Margin:0;padding-top:5px"><span =
+class=3D"es-button-border-1769779163293 es-button-border" style=3D"border-s=
+tyle:solid;border-color:#e69138;background:#e67e2d;border-width:0px;display=
+:inline-block;border-radius:8px;width:auto"><a href=3D"https://prometheusor=
+.esclick.me/1qYFbcevc3LHhxsF0k" class=3D"es-button es-button-1769779163293"=
+ target=3D"_blank" style=3D"mso-style-priority:100 !important;text-decorati=
+on:none;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-he=
+ight-rule:exactly;color:#ffffff;font-size:16px;display:inline-block;backgro=
+und:#e67e2d;border-radius:8px;font-family:arial, 'helvetica neue', helvetic=
+a, sans-serif;font-weight:normal;font-style:normal;line-height:19.2px;width=
+:auto;text-align:center;padding:10px 15px;mso-padding-alt:0;mso-border-alt:=
+10px solid #e67e2d">=D0=9D=D0=B0=D0=B3=D0=B0=D0=B4=D0=B0=D1=82=D0=B8 =D0=BF=
+=D1=80=D0=BE =D1=81=D1=82=D0=B0=D1=80=D1=82</a></span></td> </tr>  </table>=
+</td> </tr>  </table><!--[if mso]></td></tr></table><![endif]--></td> </tr>=
+ <tr style=3D"border-collapse:collapse"> <td align=3D"left" class=3D"es-m-p=
+20r es-m-p20l" style=3D"Margin:0;padding-top:5px;padding-bottom:15px;paddin=
+g-left:40px;padding-right:40px;background-color:#fff3ed;font-size:0px" bgco=
+lor=3D"#fff3ed"><!--[if mso]><table style=3D"width:520px" cellpadding=3D"0"=
+ cellspacing=3D"0"><tr><td style=3D"width:111px" valign=3D"top"><![endif]--=
+> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-left" align=3D"lef=
+t" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt=
+;border-collapse:collapse;border-spacing:0px;float:left">  <tr style=3D"bor=
+der-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;bord=
+er-radius:30px 30px 0px;overflow:hidden;width:91px"> <table cellpadding=3D"=
+0" cellspacing=3D"0" width=3D"100%" bgcolor=3D"#B1BABD" style=3D"mso-table-=
+lspace:0pt;mso-table-rspace:0pt;border-collapse:separate;border-spacing:0px=
+;border-left:1px solid #333333;border-right:1px solid #333333;border-top:1p=
+x solid #333333;border-bottom:1px solid #333333;background-color:#b1babd;bo=
+rder-radius:30px 30px 0px;background-image:url(https://pics.esputnik.com/re=
+pository/home/1/common/images/1677369688875.png);background-repeat:no-repea=
+t;background-position:right bottom" background=3D"https://pics.esputnik.com=
+/repository/home/1/common/images/1677369688875.png" role=3D"presentation"> =
+ <tr style=3D"border-collapse:collapse"> <td align=3D"center" class=3D"es-m=
+-txt-c es-m-p5t" style=3D"padding:0;Margin:0;padding-top:10px"> <h2 style=
+=3D"Margin:0;line-height:24px;mso-line-height-rule:exactly;font-family:aria=
+l, 'helvetica neue', helvetica, sans-serif;font-size:16px;font-style:normal=
+;font-weight:normal;color:#333333">24</h2></td> </tr> <tr style=3D"border-c=
+ollapse:collapse"> <td align=3D"center" style=3D"padding:0;Margin:0;font-si=
+ze:0"> <table border=3D"0" width=3D"45%" height=3D"100%" cellpadding=3D"0" =
+cellspacing=3D"0" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border=
+-collapse:collapse;border-spacing:0px;width:45% !important;display:inline-t=
+able" role=3D"presentation">  <tr style=3D"border-collapse:collapse"> <td s=
+tyle=3D"padding:0;Margin:0;border-bottom:1px solid #9fc5e8;background:unset=
+;height:0px;width:100%;margin:0px"></td> </tr>  </table></td> </tr> <tr sty=
+le=3D"border-collapse:collapse"> <td align=3D"center" class=3D"es-m-txt-c" =
+style=3D"padding:0;Margin:0;padding-top:5px;padding-bottom:10px"> <h3 style=
+=3D"Margin:0;line-height:21px;mso-line-height-rule:exactly;font-family:aria=
+l, 'helvetica neue', helvetica, sans-serif;font-size:14px;font-style:normal=
+;font-weight:normal;color:#333333">=D0=91=D0=B5=D1=80=D0=B5=D0=B7=D0=BD=D1=
+=8F</h3></td> </tr>  </table></td> <td class=3D"es-hidden" style=3D"padding=
+:0;Margin:0;width:20px"></td> </tr>  </table><!--[if mso]></td><td style=3D=
+"width:236px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cellspac=
+ing=3D"0" class=3D"es-left" align=3D"left" role=3D"presentation" style=3D"m=
+so-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-sp=
+acing:0px;float:left">  <tr style=3D"border-collapse:collapse"> <td align=
+=3D"left" style=3D"padding:0;Margin:0;width:236px"> <table cellpadding=3D"0=
+" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table=
+-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0p=
+x">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" class=3D"es=
+-m-p15t" style=3D"padding:0;Margin:0;padding-top:5px"> <p style=3D"Margin:0=
+;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-ru=
+le:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-=
+height:24px;color:#333333;font-size:16px"><strong>=D0=9C=D0=B0=D1=80=D0=BA=
+=D0=B5=D1=82=D0=B8=D0=BD=D0=B3=D0=BE=D0=B2=D0=B0 =D0=B0=D0=BD=D0=B0=D0=BB=
+=D1=96=D1=82=D0=B8=D0=BA=D0=B0</strong></p></td> </tr> <tr style=3D"border-=
+collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-=
+top:5px"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-=
+adjust:none;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue=
+', helvetica, sans-serif;line-height:21px;color:#333333;font-size:14px">=D0=
+=A1=D1=82=D0=B0=D1=80=D1=82 =D0=BF=D1=80=D0=BE=D0=B4=D0=B0=D0=B6=D1=96=D0=
+=B2</p></td> </tr>  </table></td> </tr>  </table><!--[if mso]></td><td styl=
+e=3D"width:20px"></td><td style=3D"width:153px" valign=3D"top"><![endif]-->=
+ <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-right" align=3D"rig=
+ht" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0p=
+t;border-collapse:collapse;border-spacing:0px;float:right">  <tr style=3D"b=
+order-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;wi=
+dth:153px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=
+=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border=
+-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:colla=
+pse"> <td align=3D"right" class=3D"es-m-txt-l" style=3D"padding:0;Margin:0;=
+padding-top:5px"><span class=3D"es-button-border-1772198232509 es-button-bo=
+rder" style=3D"border-style:solid;border-color:#e69138;background:#e67e2d;b=
+order-width:0px;display:inline-block;border-radius:8px;width:auto"><a href=
+=3D"https://prometheusor.esclick.me/1qYFcKcIBDNU2Wyl8k" class=3D"es-button =
+es-button-1772198232509" target=3D"_blank" style=3D"mso-style-priority:100 =
+!important;text-decoration:none;-webkit-text-size-adjust:none;-ms-text-size=
+-adjust:none;mso-line-height-rule:exactly;color:#ffffff;font-size:16px;disp=
+lay:inline-block;background:#e67e2d;border-radius:8px;font-family:arial, 'h=
+elvetica neue', helvetica, sans-serif;font-weight:normal;font-style:normal;=
+line-height:19.2px;width:auto;text-align:center;padding:10px 15px;mso-paddi=
+ng-alt:0;mso-border-alt:10px solid #e67e2d">=D0=9D=D0=B0=D0=B3=D0=B0=D0=B4=
+=D0=B0=D1=82=D0=B8 =D0=BF=D1=80=D0=BE =D1=81=D1=82=D0=B0=D1=80=D1=82</a></s=
+pan></td> </tr>  </table></td> </tr>  </table><!--[if mso]></td></tr></tabl=
+e><![endif]--></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=
+=3D"left" class=3D"es-m-p20r es-m-p20l" style=3D"Margin:0;padding-top:5px;p=
+adding-bottom:15px;padding-left:40px;padding-right:40px;background-color:#f=
+ff3ed;font-size:0px" bgcolor=3D"#fff3ed"><!--[if mso]><table style=3D"width=
+:520px" cellpadding=3D"0" cellspacing=3D"0"><tr><td style=3D"width:111px" v=
+align=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=
+=3D"es-left" align=3D"left" role=3D"presentation" style=3D"mso-table-lspace=
+:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float=
+:left">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=
+=3D"padding:0;Margin:0;border-radius:30px 30px 0px;overflow:hidden;width:91=
+px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" bgcolor=3D"#=
+B1BABD" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:=
+separate;border-spacing:0px;border-left:1px solid #333333;border-right:1px =
+solid #333333;border-top:1px solid #333333;border-bottom:1px solid #333333;=
+background-color:#b1babd;border-radius:30px 30px 0px;background-image:url(h=
+ttps://pics.esputnik.com/repository/home/1/common/images/1677369688875.png)=
+;background-repeat:no-repeat;background-position:right bottom" background=
+=3D"https://pics.esputnik.com/repository/home/1/common/images/1677369688875=
+.png" role=3D"presentation">  <tr style=3D"border-collapse:collapse"> <td a=
+lign=3D"center" class=3D"es-m-txt-c es-m-p5t" style=3D"padding:0;Margin:0;p=
+adding-top:10px"> <h2 style=3D"Margin:0;line-height:24px;mso-line-height-ru=
+le:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-=
+size:16px;font-style:normal;font-weight:normal;color:#333333">30</h2></td> =
+</tr> <tr style=3D"border-collapse:collapse"> <td align=3D"center" style=3D=
+"padding:0;Margin:0;font-size:0"> <table border=3D"0" width=3D"45%" height=
+=3D"100%" cellpadding=3D"0" cellspacing=3D"0" style=3D"mso-table-lspace:0pt=
+;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:45%=
+ !important;display:inline-table" role=3D"presentation">  <tr style=3D"bord=
+er-collapse:collapse"> <td style=3D"padding:0;Margin:0;border-bottom:1px so=
+lid #9fc5e8;background:unset;height:0px;width:100%;margin:0px"></td> </tr> =
+ </table></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"c=
+enter" class=3D"es-m-txt-c" style=3D"padding:0;Margin:0;padding-top:5px;pad=
+ding-bottom:10px"> <h3 style=3D"Margin:0;line-height:21px;mso-line-height-r=
+ule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;font=
+-size:14px;font-style:normal;font-weight:normal;color:#333333">=D0=91=D0=B5=
+=D1=80=D0=B5=D0=B7=D0=BD=D1=8F</h3></td> </tr>  </table></td> <td class=3D"=
+es-hidden" style=3D"padding:0;Margin:0;width:20px"></td> </tr>  </table><!-=
+-[if mso]></td><td style=3D"width:236px" valign=3D"top"><![endif]--> <table=
+ cellpadding=3D"0" cellspacing=3D"0" class=3D"es-left" align=3D"left" role=
+=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border=
+-collapse:collapse;border-spacing:0px;float:left">  <tr style=3D"border-col=
+lapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;width:236px=
+"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presen=
+tation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:=
+collapse;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td =
+align=3D"left" class=3D"es-m-p15t" style=3D"padding:0;Margin:0;padding-top:=
+5px"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adju=
+st:none;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', h=
+elvetica, sans-serif;line-height:24px;color:#333333;font-size:16px"><strong=
+>CyberSecurity. </strong><br></p> <p style=3D"Margin:0;-webkit-text-size-ad=
+just:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-famil=
+y:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;color:#33=
+3333;font-size:16px"><strong>=D0=9F=D1=80=D0=B0=D0=BA=D1=82=D0=B8=D1=87=D0=
+=BD=D0=B8=D0=B9 =D0=B7=D0=B0=D1=85=D0=B8=D1=81=D1=82</strong></p></td> </tr=
+> <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"paddi=
+ng:0;Margin:0;padding-top:5px"> <p style=3D"Margin:0;-webkit-text-size-adju=
+st:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:=
+arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;color:#3333=
+33;font-size:14px">=D0=A1=D1=82=D0=B0=D1=80=D1=82 =D0=BD=D0=B0=D0=B2=D1=87=
+=D0=B0=D0=BD=D0=BD=D1=8F</p></td> </tr>  </table></td> </tr>  </table><!--[=
+if mso]></td><td style=3D"width:20px"></td><td style=3D"width:153px" valign=
+=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"e=
+s-right" align=3D"right" role=3D"presentation" style=3D"mso-table-lspace:0p=
+t;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float:ri=
+ght">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"=
+padding:0;Margin:0;width:153px"> <table cellpadding=3D"0" cellspacing=3D"0"=
+ width=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-tab=
+le-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"b=
+order-collapse:collapse"> <td align=3D"right" class=3D"es-m-txt-l" style=3D=
+"padding:0;Margin:0;padding-top:5px"><span class=3D"es-button-border-176976=
+6992240 es-button-border" style=3D"border-style:solid;border-color:#e69138;=
+background:#e67e2d;border-width:0px;display:inline-block;border-radius:8px;=
+width:auto"><a href=3D"https://prometheusor.esclick.me/1qYFcgaySnOaCoX1Wk" =
+class=3D"es-button es-button-1769766992240" target=3D"_blank" style=3D"mso-=
+style-priority:100 !important;text-decoration:none;-webkit-text-size-adjust=
+:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;color:#ffffff;=
+font-size:16px;display:inline-block;background:#e67e2d;border-radius:8px;fo=
+nt-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal=
+;font-style:normal;line-height:19.2px;width:auto;text-align:center;padding:=
+10px 15px;mso-padding-alt:0;mso-border-alt:10px solid #e67e2d">=D0=9F=D1=80=
+=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B7=D0=B0=D1=80=
+=D0=B0=D0=B7</a></span></td> </tr>  </table></td> </tr>  </table><!--[if ms=
+o]></td></tr></table><![endif]--></td> </tr> <tr style=3D"border-collapse:c=
+ollapse"> <td align=3D"left" class=3D"es-m-p20r es-m-p20l" style=3D"Margin:=
+0;padding-top:5px;padding-bottom:15px;padding-left:40px;padding-right:40px;=
+background-color:#fff3ed;font-size:0px" bgcolor=3D"#fff3ed"><!--[if mso]><t=
+able style=3D"width:520px" cellpadding=3D"0" cellspacing=3D"0"><tr><td styl=
+e=3D"width:111px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cell=
+spacing=3D"0" class=3D"es-left" align=3D"left" role=3D"presentation" style=
+=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;bord=
+er-spacing:0px;float:left">  <tr style=3D"border-collapse:collapse"> <td al=
+ign=3D"left" style=3D"padding:0;Margin:0;border-radius:30px 30px 0px;overfl=
+ow:hidden;width:91px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"=
+100%" bgcolor=3D"#B1BABD" style=3D"mso-table-lspace:0pt;mso-table-rspace:0p=
+t;border-collapse:separate;border-spacing:0px;border-left:1px solid #333333=
+;border-right:1px solid #333333;border-top:1px solid #333333;border-bottom:=
+1px solid #333333;background-color:#b1babd;border-radius:30px 30px 0px;back=
+ground-image:url(https://pics.esputnik.com/repository/home/1/common/images/=
+1677369688875.png);background-repeat:no-repeat;background-position:right bo=
+ttom" background=3D"https://pics.esputnik.com/repository/home/1/common/imag=
+es/1677369688875.png" role=3D"presentation">  <tr style=3D"border-collapse:=
+collapse"> <td align=3D"center" class=3D"es-m-txt-c es-m-p5t" style=3D"padd=
+ing:0;Margin:0;padding-top:10px"> <h2 style=3D"Margin:0;line-height:24px;ms=
+o-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, =
+sans-serif;font-size:16px;font-style:normal;font-weight:normal;color:#33333=
+3">2</h2></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"c=
+enter" style=3D"padding:0;Margin:0;font-size:0"> <table border=3D"0" width=
+=3D"45%" height=3D"100%" cellpadding=3D"0" cellspacing=3D"0" style=3D"mso-t=
+able-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacin=
+g:0px;width:45% !important;display:inline-table" role=3D"presentation">  <t=
+r style=3D"border-collapse:collapse"> <td style=3D"padding:0;Margin:0;borde=
+r-bottom:1px solid #9fc5e8;background:unset;height:0px;width:100%;margin:0p=
+x"></td> </tr>  </table></td> </tr> <tr style=3D"border-collapse:collapse">=
+ <td align=3D"center" class=3D"es-m-txt-c" style=3D"padding:0;Margin:0;padd=
+ing-top:5px;padding-bottom:10px"> <h3 style=3D"Margin:0;line-height:21px;ms=
+o-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, =
+sans-serif;font-size:14px;font-style:normal;font-weight:normal;color:#33333=
+3">=D0=9A=D0=B2=D1=96=D1=82=D0=BD=D1=8F</h3></td> </tr>  </table></td> <td =
+class=3D"es-hidden" style=3D"padding:0;Margin:0;width:20px"></td> </tr>  </=
+table><!--[if mso]></td><td style=3D"width:236px" valign=3D"top"><![endif]-=
+-> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-left" align=3D"le=
+ft" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0p=
+t;border-collapse:collapse;border-spacing:0px;float:left">  <tr style=3D"bo=
+rder-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;wid=
+th:236px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=
+=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border=
+-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:colla=
+pse"> <td align=3D"left" class=3D"es-m-p15t" style=3D"padding:0;Margin:0;pa=
+dding-top:5px"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text=
+-size-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'helvetic=
+a neue', helvetica, sans-serif;line-height:24px;color:#333333;font-size:16p=
+x"><strong>DevOps =D1=82=D0=B0 Kubernetes. =D0=9F=D1=80=D0=B0=D0=BA=D1=82=
+=D0=B8=D1=87=D0=BD=D0=B8=D0=B9 =D1=96=D0=BD=D1=82=D0=B5=D0=BD=D1=81=D0=B8=
+=D0=B2+</strong></p></td> </tr> <tr style=3D"border-collapse:collapse"> <td=
+ align=3D"left" style=3D"padding:0;Margin:0;padding-top:5px"> <p style=3D"M=
+argin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-he=
+ight-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-seri=
+f;line-height:21px;color:#333333;font-size:14px">=D0=A0=D0=B5=D1=94=D1=81=
+=D1=82=D1=80=D0=B0=D1=86=D1=96=D1=8F =D1=82=D1=80=D0=B8=D0=B2=D0=B0=D1=94</=
+p></td> </tr>  </table></td> </tr>  </table><!--[if mso]></td><td style=3D"=
+width:20px"></td><td style=3D"width:153px" valign=3D"top"><![endif]--> <tab=
+le cellpadding=3D"0" cellspacing=3D"0" class=3D"es-right" align=3D"right" r=
+ole=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bor=
+der-collapse:collapse;border-spacing:0px;float:right">  <tr style=3D"border=
+-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;width:1=
+53px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"pr=
+esentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-colla=
+pse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> =
+<td align=3D"right" class=3D"es-m-txt-l" style=3D"padding:0;Margin:0;paddin=
+g-top:5px"><span class=3D"es-button-border-1772198332496 es-button-border" =
+style=3D"border-style:solid;border-color:#e69138;background:#e67e2d;border-=
+width:0px;display:inline-block;border-radius:8px;width:auto"><a href=3D"htt=
+ps://prometheusor.esclick.me/1qYFd2ZekNPgN65Huk" class=3D"es-button es-butt=
+on-1772198332496" target=3D"_blank" style=3D"mso-style-priority:100 !import=
+ant;text-decoration:none;-webkit-text-size-adjust:none;-ms-text-size-adjust=
+:none;mso-line-height-rule:exactly;color:#ffffff;font-size:16px;display:inl=
+ine-block;background:#e67e2d;border-radius:8px;font-family:arial, 'helvetic=
+a neue', helvetica, sans-serif;font-weight:normal;font-style:normal;line-he=
+ight:19.2px;width:auto;text-align:center;padding:10px 15px;mso-padding-alt:=
+0;mso-border-alt:10px solid #e67e2d">=D0=9F=D1=80=D0=B8=D1=94=D0=B4=D0=BD=
+=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B7=D0=B0=D1=80=D0=B0=D0=B7</a></span></t=
+d> </tr>  </table></td> </tr>  </table><!--[if mso]></td></tr></table><![en=
+dif]--></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"lef=
+t" class=3D"es-m-p20r es-m-p20l" style=3D"Margin:0;padding-top:5px;padding-=
+bottom:15px;padding-left:40px;padding-right:40px;background-color:#fff3ed;f=
+ont-size:0px;border-radius:0px 0px 15px 15px" bgcolor=3D"#fff3ed"><!--[if m=
+so]><table style=3D"width:520px" cellpadding=3D"0" cellspacing=3D"0"><tr><t=
+d style=3D"width:111px" valign=3D"top"><![endif]--> <table cellpadding=3D"0=
+" cellspacing=3D"0" class=3D"es-left" align=3D"left" role=3D"presentation" =
+style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse=
+;border-spacing:0px;float:left">  <tr style=3D"border-collapse:collapse"> <=
+td align=3D"left" style=3D"padding:0;Margin:0;border-radius:30px 30px 0px;o=
+verflow:hidden;width:91px"> <table cellpadding=3D"0" cellspacing=3D"0" widt=
+h=3D"100%" bgcolor=3D"#B1BABD" style=3D"mso-table-lspace:0pt;mso-table-rspa=
+ce:0pt;border-collapse:separate;border-spacing:0px;border-left:1px solid #3=
+33333;border-right:1px solid #333333;border-top:1px solid #333333;border-bo=
+ttom:1px solid #333333;background-color:#b1babd;border-radius:30px 30px 0px=
+;background-image:url(https://pics.esputnik.com/repository/home/1/common/im=
+ages/1677369688875.png);background-repeat:no-repeat;background-position:rig=
+ht bottom" background=3D"https://pics.esputnik.com/repository/home/1/common=
+/images/1677369688875.png" role=3D"presentation">  <tr style=3D"border-coll=
+apse:collapse"> <td align=3D"center" class=3D"es-m-txt-c es-m-p5t" style=3D=
+"padding:0;Margin:0;padding-top:10px"> <h2 style=3D"Margin:0;line-height:24=
+px;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvet=
+ica, sans-serif;font-size:16px;font-style:normal;font-weight:normal;color:#=
+333333"><br></h2></td> </tr> <tr style=3D"border-collapse:collapse"> <td al=
+ign=3D"center" style=3D"padding:0;Margin:0;font-size:0"> <table border=3D"0=
+" width=3D"45%" height=3D"100%" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;bord=
+er-spacing:0px;width:45% !important;display:inline-table" role=3D"presentat=
+ion">  <tr style=3D"border-collapse:collapse"> <td style=3D"padding:0;Margi=
+n:0;border-bottom:1px solid #9fc5e8;background:unset;height:0px;width:100%;=
+margin:0px"></td> </tr>  </table></td> </tr> <tr style=3D"border-collapse:c=
+ollapse"> <td align=3D"center" class=3D"es-m-txt-c" style=3D"padding:0;Marg=
+in:0;padding-top:5px;padding-bottom:10px"> <h3 style=3D"Margin:0;line-heigh=
+t:21px;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', he=
+lvetica, sans-serif;font-size:14px;font-style:normal;font-weight:normal;col=
+or:#333333">=D0=91=D0=B5=D1=80=D0=B5=D0=B7=D0=B5=D0=BD=D1=8C</h3></td> </tr=
+>  </table></td> <td class=3D"es-hidden" style=3D"padding:0;Margin:0;width:=
+20px"></td> </tr>  </table><!--[if mso]></td><td style=3D"width:236px" vali=
+gn=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D=
+"es-left" align=3D"left" role=3D"presentation" style=3D"mso-table-lspace:0p=
+t;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float:le=
+ft">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"p=
+adding:0;Margin:0;width:236px"> <table cellpadding=3D"0" cellspacing=3D"0" =
+width=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-tabl=
+e-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bo=
+rder-collapse:collapse"> <td align=3D"left" class=3D"es-m-p15t" style=3D"pa=
+dding:0;Margin:0;padding-top:5px"> <p style=3D"Margin:0;-webkit-text-size-a=
+djust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-fami=
+ly:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;color:#3=
+33333;font-size:16px"><strong>=D0=9A=D1=96=D0=B1=D0=B5=D1=80=D0=B1=D0=B5=D0=
+=B7=D0=BF=D0=B5=D0=BA=D0=B0 =D0=B2 =D0=B5=D0=BF=D0=BE=D1=85=D1=83 =D0=A8=D0=
+=86: =D0=BD=D0=BE=D0=B2=D1=96 =D0=BC=D0=BE=D0=B6=D0=BB=D0=B8=D0=B2=D0=BE=D1=
+=81=D1=82=D1=96 =D0=B9 =D0=B7=D0=B0=D0=B3=D1=80=D0=BE=D0=B7=D0=B8</strong><=
+strong></strong></p></td> </tr> <tr style=3D"border-collapse:collapse"> <td=
+ align=3D"left" style=3D"padding:0;Margin:0;padding-top:5px"> <p style=3D"M=
+argin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-he=
+ight-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-seri=
+f;line-height:21px;color:#333333;font-size:14px">=D0=92=D1=96=D0=B4=D0=BA=
+=D1=80=D0=B8=D1=82=D0=B8=D0=B9 =D0=B2=D0=B5=D0=B1=D1=96=D0=BD=D0=B0=D1=80</=
+p></td> </tr>  </table></td> </tr>  </table><!--[if mso]></td><td style=3D"=
+width:20px"></td><td style=3D"width:153px" valign=3D"top"><![endif]--> <tab=
+le cellpadding=3D"0" cellspacing=3D"0" class=3D"es-right" align=3D"right" r=
+ole=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bor=
+der-collapse:collapse;border-spacing:0px;float:right">  <tr style=3D"border=
+-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;width:1=
+53px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"pr=
+esentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-colla=
+pse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> =
+<td align=3D"right" class=3D"es-m-txt-l" style=3D"padding:0;Margin:0;paddin=
+g-top:10px"><span class=3D"es-button-border-1769767082156 es-button-border"=
+ style=3D"border-style:solid;border-color:#e69138;background:#e67e2d;border=
+-width:0px;display:inline-block;border-radius:8px;width:auto"><a href=3D"ht=
+tps://prometheusor.esclick.me/1qYFdOYL1xQmXNdXOk" class=3D"es-button es-but=
+ton-1769767082156" target=3D"_blank" style=3D"mso-style-priority:100 !impor=
+tant;text-decoration:none;-webkit-text-size-adjust:none;-ms-text-size-adjus=
+t:none;mso-line-height-rule:exactly;color:#ffffff;font-size:16px;display:in=
+line-block;background:#e67e2d;border-radius:8px;font-family:arial, 'helveti=
+ca neue', helvetica, sans-serif;font-weight:normal;font-style:normal;line-h=
+eight:19.2px;width:auto;text-align:center;padding:20px 15px;mso-padding-alt=
+:0;mso-border-alt:10px solid #e67e2d">=D0=97=D0=B0=D1=80=D0=B5=D1=94=D1=81=
+=D1=82=D1=80=D1=83=D0=B2=D0=B0=D1=82=D0=B8=D1=81=D1=8F</a></span></td> </tr=
+>  </table></td> </tr>  </table><!--[if mso]></td></tr></table><![endif]-->=
+</td> </tr>  </table></td> </tr> <tr style=3D"border-collapse:collapse"> <t=
+d align=3D"left" style=3D"padding:0;Margin:0;padding-right:10px;padding-lef=
+t:20px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"=
+none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:co=
+llapse;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td al=
+ign=3D"center" valign=3D"top" style=3D"padding:0;Margin:0;width:570px"> <ta=
+ble cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation=
+" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collap=
+se;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=
+=3D"left" style=3D"padding:0;Margin:0"> <p style=3D"Margin:0;-webkit-text-s=
+ize-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font=
+-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;col=
+or:#333333;font-size:14px"><br></p></td> </tr>  </table></td> </tr>  </tabl=
+e></td> </tr> <tr style=3D"border-collapse:collapse"> <td class=3D"es-m-p10=
+b" align=3D"left" style=3D"padding:0;Margin:0;padding-left:20px;padding-rig=
+ht:20px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D=
+"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:c=
+ollapse;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td c=
+lass=3D"es-m-p0r es-m-p20b" valign=3D"top" align=3D"center" style=3D"paddin=
+g:0;Margin:0;width:560px"> <table width=3D"100%" cellspacing=3D"0" cellpadd=
+ing=3D"0" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collaps=
+e:separate;border-spacing:0px;border-left:2px solid #e67d2d;border-right:2p=
+x solid #e67d2d;border-top:2px solid #e67d2d;border-bottom:2px solid #e67d2=
+d;border-radius:30px" role=3D"presentation">  <tr style=3D"border-collapse:=
+collapse"> <td align=3D"center" class=3D"es-m-txt-c" style=3D"padding:10px;=
+Margin:0"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size=
+-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'helvetica neu=
+e', helvetica, sans-serif;line-height:30px;color:#f58932;font-size:20px"><b=
+>=D0=93=D0=BE=D0=BB=D0=BE=D0=B2=D0=BD=D0=B0 =D0=BF=D0=BE=D0=B4=D1=96=D1=8F =
+=D0=B1=D0=B5=D1=80=D0=B5=D0=B7=D0=BD=D1=8F</b></p></td> </tr>  </table></td=
+> </tr>  </table></td> </tr> <tr style=3D"border-collapse:collapse"> <td al=
+ign=3D"left" style=3D"padding:0;Margin:0"> <table cellpadding=3D"0" cellspa=
+cing=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-lspace:0pt;mso-t=
+able-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D=
+"border-collapse:collapse"> <td align=3D"center" valign=3D"top" style=3D"pa=
+dding:0;Margin:0;width:600px"> <table cellpadding=3D"0" cellspacing=3D"0" w=
+idth=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table=
+-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bor=
+der-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0"> <p=
+ style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;=
+mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica=
+, sans-serif;line-height:21px;color:#333333;font-size:14px"><br></p></td> <=
+/tr> <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"pa=
+dding:0;Margin:0;padding-bottom:15px"> <p style=3D"Margin:0;-webkit-text-si=
+ze-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-=
+family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;colo=
+r:#333333;font-size:16px"><b>=F0=9F=9F=A0 =D0=91=D0=B5=D0=B7=D0=BF=D0=BB=D0=
+=B0=D1=82=D0=BD=D0=B0 =D0=BF=D1=80=D0=BE=D0=B3=D1=80=D0=B0=D0=BC=D0=B0, =D1=
+=89=D0=BE =D0=BF=D1=96=D0=B4=D1=81=D0=B8=D0=BB=D0=B8=D1=82=D1=8C =D0=B2=D0=
+=B0=D1=88=D1=96 =D0=BF=D1=80=D0=BE=D1=84=D0=B5=D1=81=D1=96=D0=B9=D0=BD=D1=
+=96 =D0=BC=D0=BE=D0=B6=D0=BB=D0=B8=D0=B2=D0=BE=D1=81=D1=82=D1=96</b><br></p=
+> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:n=
+one;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helve=
+tica, sans-serif;line-height:21px;color:#333333;font-size:14px;display:none=
+"><br></p></td> </tr>  </table></td> </tr>  </table></td> </tr> <tr style=
+=3D"border-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin=
+:0;padding-top:5px;padding-right:20px;background-color:#ffffff" bgcolor=3D"=
+#ffffff"><!--[if mso]><table style=3D"width:580px" cellpadding=3D"0" cellsp=
+acing=3D"0"><tr><td style=3D"width:248px" valign=3D"top"><![endif]--> <tabl=
+e cellpadding=3D"0" cellspacing=3D"0" class=3D"es-left" align=3D"left" role=
+=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collaps=
+e:collapse;border-spacing:0px;float:left">  <tr style=3D"border-collapse:co=
+llapse"> <td class=3D"es-m-p20b" align=3D"left" style=3D"padding:0;Margin:0=
+;width:248px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" ro=
+le=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bord=
+er-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:col=
+lapse"> <td align=3D"center" style=3D"padding:0;Margin:0;font-size:0px"><a =
+target=3D"_blank" href=3D"https://prometheusor.esclick.me/1qYFdkX1JXRshfBnm=
+k" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-lin=
+e-height-rule:exactly;text-decoration:underline;color:#2CB543;font-size:14p=
+x"><img class=3D"adapt-img" src=3D"https://pics.esputnik.com/repository/hom=
+e/103056/images/msg/39205982/1772198805972.jpg" alt=3D"=D0=9E=D1=82=D1=80=
+=D0=B8=D0=BC=D0=B0=D1=82=D0=B8 =D0=BD=D0=BE=D0=B2=D1=83 =D0=BF=D1=80=D0=BE=
+=D1=84=D0=B5=D1=81=D1=96=D1=8E =D0=B7 =D0=BD=D1=83=D0=BB=D1=8F" style=3D"di=
+splay:block;border:0;outline:none;text-decoration:none;-ms-interpolation-mo=
+de:bicubic;border-radius:5px" width=3D"234" title=3D"=D0=9E=D1=82=D1=80=D0=
+=B8=D0=BC=D0=B0=D1=82=D0=B8 =D0=BD=D0=BE=D0=B2=D1=83 =D0=BF=D1=80=D0=BE=D1=
+=84=D0=B5=D1=81=D1=96=D1=8E =D0=B7 =D0=BD=D1=83=D0=BB=D1=8F"></a></td> </tr=
+>  </table></td> </tr>  </table><!--[if mso]></td><td style=3D"width:15px">=
+</td><td style=3D"width:317px" valign=3D"top"><![endif]--> <table cellpaddi=
+ng=3D"0" cellspacing=3D"0" class=3D"es-right" align=3D"right" role=3D"none"=
+ style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collaps=
+e;border-spacing:0px;float:right">  <tr style=3D"border-collapse:collapse">=
+ <td align=3D"left" style=3D"padding:0;Margin:0;width:317px"> <table cellpa=
+dding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D=
+"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-=
+spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" c=
+lass=3D"es-m-p20l" style=3D"padding:0;Margin:0"> <p style=3D"Margin:0;-webk=
+it-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exa=
+ctly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height=
+:24px;color:#333333;font-size:16px"><b>=D0=97=D0=B0=D0=BF=D1=80=D0=BE=D1=88=
+=D1=83=D1=94=D0=BC=D0=BE =D0=B4=D0=BE =C2=AB=D0=92=D0=B5=D1=82=D0=B5=D1=80=
+=D0=B0=D0=BD=D1=81=D1=8C=D0=BA=D0=BE=D0=B3=D0=BE =D0=BA=D0=BE=D0=BB=D0=B0=
+=C2=BB:</b></p></td> </tr> <tr style=3D"border-collapse:collapse"> <td alig=
+n=3D"left" class=3D"es-m-p20l" style=3D"padding:0;Margin:0;padding-top:5px"=
+> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:n=
+one;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helve=
+tica, sans-serif;line-height:24px;color:#333333;font-size:16px">=E2=AD=A2 =
+=D0=B2=D0=B5=D1=82=D0=B5=D1=80=D0=B0=D0=BD=D1=96=D0=B2 =D1=96 =D0=B2=D0=B5=
+=D1=82=D0=B5=D1=80=D0=B0=D0=BD=D0=BE=D0=BA;<br> =E2=AD=A2 =D1=87=D0=BB=D0=
+=B5=D0=BD=D1=96=D0=B2 =D1=97=D1=85=D0=BD=D1=96=D1=85 =D1=80=D0=BE=D0=B4=D0=
+=B8=D0=BD;<br> =E2=AD=A2 =D1=87=D0=BB=D0=B5=D0=BD=D1=96=D0=B2 =D1=81=D1=96=
+=D0=BC=D0=B5=D0=B9 =D0=B7=D0=B0=D0=B3=D0=B8=D0=B1=D0=BB=D0=B8=D1=85, =D0=BF=
+=D0=BE=D0=BB=D0=BE=D0=BD=D0=B5=D0=BD=D0=B8=D1=85 =D1=96 =D0=B7=D0=BD=D0=B8=
+=D0=BA=D0=BB=D0=B8=D1=85 =D0=B1=D0=B5=D0=B7=D0=B2=D1=96=D1=81=D1=82=D0=B8 =
+=D0=B7=D0=B0=D1=85=D0=B8=D1=81=D0=BD=D0=B8=D0=BA=D1=96=D0=B2 =D1=82=D0=B0 =
+=D0=B7=D0=B0=D1=85=D0=B8=D1=81=D0=BD=D0=B8=D1=86=D1=8C.</p></td> </tr>  </t=
+able></td> </tr>  </table><!--[if mso]></td></tr></table><![endif]--></td> =
+</tr> <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"p=
+adding:0;Margin:0;padding-top:5px;padding-left:10px;padding-right:10px"> <t=
+able cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"none" style=
+=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;bord=
+er-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"cent=
+er" valign=3D"top" style=3D"padding:0;Margin:0;width:580px"> <table cellpad=
+ding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"=
+mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-s=
+pacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" st=
+yle=3D"padding:0;Margin:0"> <p style=3D"Margin:0;-webkit-text-size-adjust:n=
+one;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:aria=
+l, 'helvetica neue', helvetica, sans-serif;line-height:24px;color:#333333;f=
+ont-size:16px"><b>=D0=A3=D0=B2=D0=B0=D0=B3=D0=B0=E2=9D=97 =D0=9D=D0=B0 =D0=
+=BE=D1=81=D0=BD=D0=BE=D0=B2=D1=96 =D0=B2=D1=96=D0=B4=D0=B3=D1=83=D0=BA=D1=
+=96=D0=B2 =D1=83=D1=87=D0=B0=D1=81=D0=BD=D0=B8=D0=BA=D1=96=D0=B2 =D0=BF=D1=
+=80=D0=BE=D0=B3=D1=80=D0=B0=D0=BC=D0=B8 =D0=BC=D0=B8 =D0=BE=D0=BD=D0=BE=D0=
+=B2=D0=B8=D0=BB=D0=B8 =D1=84=D0=BE=D1=80=D0=BC=D1=83 =D0=B7=D0=B0=D1=8F=D0=
+=B2=D0=BA=D0=B8.&nbsp;</b>=D0=A2=D0=B5=D0=BF=D0=B5=D1=80 =D1=86=D0=B5 =D0=
+=BB=D0=B8=D1=88=D0=B5 <b>5 =D0=BF=D0=B8=D1=82=D0=B0=D0=BD=D1=8C</b> =D1=96 =
+=D0=BD=D0=B5 =D0=B1=D1=96=D0=BB=D1=8C=D1=88=D0=B5 <b>1 =D1=85=D0=B2=D0=B8=
+=D0=BB=D0=B8=D0=BD=D0=B8</b> =D0=B2=D0=B0=D1=88=D0=BE=D0=B3=D0=BE =D1=87=D0=
+=B0=D1=81=D1=83.</p> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms=
+-text-size-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'hel=
+vetica neue', helvetica, sans-serif;line-height:24px;color:#333333;font-siz=
+e:16px"><b></b><b></b></p> <p style=3D"Margin:0;-webkit-text-size-adjust:no=
+ne;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:arial=
+, 'helvetica neue', helvetica, sans-serif;line-height:21px;color:#333333;fo=
+nt-size:14px;display:none"><br></p></td> </tr> <tr style=3D"border-collapse=
+:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-top:10px=
+"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:=
+none;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helv=
+etica, sans-serif;line-height:24px;color:#333333;font-size:16px"><b>=D0=92=
+=D0=B8 =D0=BE=D1=82=D1=80=D0=B8=D0=BC=D0=B0=D1=94=D1=82=D0=B5:</b></p> <p s=
+tyle=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;ms=
+o-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, =
+sans-serif;line-height:21px;color:#333333;font-size:14px;display:none"><br>=
+</p></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"left" =
+style=3D"padding:0;Margin:0;padding-top:5px"> <p style=3D"Margin:0;-webkit-=
+text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactl=
+y;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24=
+px;color:#333333;font-size:16px"><span style=3D"color:#FFA500">=E2=9C=93</s=
+pan> =D0=BD=D0=BE=D0=B2=D1=96 =D0=BF=D1=80=D0=BE=D1=84=D0=B5=D1=81=D1=96=D0=
+=B9=D0=BD=D1=96 =D0=BD=D0=B0=D0=B2=D0=B8=D1=87=D0=BA=D0=B8;</p> <p style=3D=
+"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-=
+height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-se=
+rif;line-height:24px;color:#333333;font-size:16px"><span style=3D"backgroun=
+d-color:transparent;color:#e67d2d">=E2=9C=93</span><span style=3D"backgroun=
+d-color:transparent"> =D0=BF=D1=96=D0=B4=D0=B3=D0=BE=D1=82=D1=83=D0=B2=D0=
+=BA=D1=83 =D0=B4=D0=BE =D0=BF=D1=80=D0=B0=D1=86=D0=B5=D0=B2=D0=BB=D0=B0=D1=
+=88=D1=82=D1=83=D0=B2=D0=B0=D0=BD=D0=BD=D1=8F;</span></p> <p style=3D"Margi=
+n:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height=
+-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;li=
+ne-height:24px;color:#333333;font-size:16px"><span style=3D"color:#e67d2d">=
+=E2=9C=93</span> =D0=BC=D0=BE=D0=B6=D0=BB=D0=B8=D0=B2=D1=96=D1=81=D1=82=D1=
+=8C =D0=BF=D0=BE=D0=B7=D0=BD=D0=B0=D0=B9=D0=BE=D0=BC=D0=B8=D1=82=D0=B8=D1=
+=81=D1=8F =D0=B7 =D1=80=D0=BE=D0=B1=D0=BE=D1=82=D0=BE=D0=B4=D0=B0=D0=B2=D1=
+=86=D1=8F=D0=BC=D0=B8.</p></td> </tr>  </table></td> </tr>  </table></td> <=
+/tr>  </table></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=
+=3D"left" style=3D"Margin:0;padding-top:5px;padding-bottom:5px;padding-left=
+:10px;padding-right:10px"> <table cellpadding=3D"0" cellspacing=3D"0" width=
+=3D"100%" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;=
+border-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse=
+:collapse"> <td align=3D"center" valign=3D"top" style=3D"padding:0;Margin:0=
+;width:580px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" ro=
+le=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bord=
+er-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:col=
+lapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-top:5px"> <p=
+ style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;=
+mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica=
+, sans-serif;line-height:24px;color:#333333;font-size:16px">=F0=9F=86=93 =
+=D0=A3=D1=87=D0=B0=D1=81=D1=82=D1=8C =D1=83 =D0=BF=D1=80=D0=BE=D0=B3=D1=80=
+=D0=B0=D0=BC=D1=96 =D0=BF=D0=BE=D0=B2=D0=BD=D1=96=D1=81=D1=82=D1=8E <b>=D0=
+=B1=D0=B5=D0=B7=D0=BF=D0=BB=D0=B0=D1=82=D0=BD=D0=B0</b>. =D0=9E=D1=81=D1=82=
+=D0=B0=D0=BD=D0=BD=D1=96=D0=B9 =D0=B4=D0=B5=D0=BD=D1=8C =D1=80=D0=B5=D1=94=
+=D1=81=D1=82=D1=80=D0=B0=D1=86=D1=96=D1=97 =E2=80=94</p> <p style=3D"Margin=
+:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-=
+rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;lin=
+e-height:24px;color:#333333;font-size:16px"><b>2 =D0=B1=D0=B5=D1=80=D0=B5=
+=D0=B7=D0=BD=D1=8F.</b> =D0=9F=D1=80=D0=BE=D0=B3=D1=80=D0=B0=D0=BC=D0=B0 =
+=D1=80=D0=B5=D0=B0=D0=BB=D1=96=D0=B7=D0=BE=D0=B2=D0=B0=D0=BD=D0=B0 =D0=B7=
+=D0=B0 =D1=96=D0=BD=D1=84=D0=BE=D1=80=D0=BC=D0=B0=D1=86=D1=96=D0=B9=D0=BD=
+=D0=BE=D1=97 =D0=BF=D1=96=D0=B4=D1=82=D1=80=D0=B8=D0=BC=D0=BA=D0=B8 =D0=9C=
+=D1=96=D0=BD=D1=96=D1=81=D1=82=D0=B5=D1=80=D1=81=D1=82=D0=B2=D0=B0 =D1=83 =
+=D1=81=D0=BF=D1=80=D0=B0=D0=B2=D0=B0=D1=85 =D0=B2=D0=B5=D1=82=D0=B5=D1=80=
+=D0=B0=D0=BD=D1=96=D0=B2 =D0=A3=D0=BA=D1=80=D0=B0=D1=97=D0=BD=D0=B8 =F0=9F=
+=87=BA=F0=9F=87=A6</p></td> </tr> <tr style=3D"border-collapse:collapse"> <=
+td align=3D"center" class=3D"es-m-p20l" style=3D"padding:10px;Margin:0"><sp=
+an class=3D"es-button-border-1750509954830 es-button-border" style=3D"borde=
+r-style:solid;border-color:#2CB543;background:#e67d2d;border-width:0px;disp=
+lay:inline-block;border-radius:8px;width:auto"><a href=3D"https://prometheu=
+sor.esclick.me/1qYFQHL6XSm6OuBzmk" class=3D"es-button es-button-17505099548=
+30" target=3D"_blank" style=3D"mso-style-priority:100 !important;text-decor=
+ation:none;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line=
+-height-rule:exactly;color:#ffffff;font-size:16px;display:inline-block;back=
+ground:#e67d2d;border-radius:8px;font-family:arial, 'helvetica neue', helve=
+tica, sans-serif;font-weight:bold;font-style:normal;line-height:19.2px;widt=
+h:auto;text-align:center;padding:15px;mso-padding-alt:0;mso-border-alt:10px=
+ solid #e67d2d">=D0=9F=D0=BE=D0=B4=D0=B0=D1=82=D0=B8 =D0=B7=D0=B0=D1=8F=D0=
+=B2=D0=BA=D1=83 =D0=B7=D0=B0=D1=80=D0=B0=D0=B7</a></span></td> </tr>  </tab=
+le></td> </tr>  </table></td> </tr> <tr style=3D"border-collapse:collapse">=
+ <td class=3D"es-m-p10b" align=3D"left" style=3D"Margin:0;padding-top:10px;=
+padding-bottom:20px;padding-left:20px;padding-right:20px"> <table cellpaddi=
+ng=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-=
+lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px=
+">  <tr style=3D"border-collapse:collapse"> <td class=3D"es-m-p0r es-m-p20b=
+" valign=3D"top" align=3D"center" style=3D"padding:0;Margin:0;width:560px">=
+ <table width=3D"100%" cellspacing=3D"0" cellpadding=3D"0" style=3D"mso-tab=
+le-lspace:0pt;mso-table-rspace:0pt;border-collapse:separate;border-spacing:=
+0px;border-left:2px solid #e67d2d;border-right:2px solid #e67d2d;border-top=
+:2px solid #e67d2d;border-bottom:2px solid #e67d2d;border-radius:30px" role=
+=3D"presentation">  <tr style=3D"border-collapse:collapse"> <td align=3D"ce=
+nter" class=3D"es-m-txt-c" style=3D"padding:10px;Margin:0"> <p style=3D"Mar=
+gin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-heig=
+ht-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;=
+line-height:30px;color:#f58932;font-size:20px"><b>=D0=9D=D0=BE=D0=B2=D1=96 =
+=D0=B7=D0=B2=D0=B8=D1=87=D0=BA=D0=B8 =D0=B4=D0=BB=D1=8F =D1=81=D0=BF=D0=BE=
+=D0=BA=D1=96=D0=B9=D0=BD=D0=BE=D0=B3=D0=BE =D0=B6=D0=B8=D1=82=D1=82=D1=8F <=
+/b><br></p> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-siz=
+e-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'helvetica ne=
+ue', helvetica, sans-serif;line-height:30px;color:#f58932;font-size:20px"><=
+b>=D0=BD=D0=B0 Prometheus PLUS</b></p></td> </tr>  </table></td> </tr>  </t=
+able></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"left"=
+ style=3D"padding:0;Margin:0;padding-left:10px;padding-right:10px"> <table =
+cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"none" style=3D"m=
+so-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-sp=
+acing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"center" v=
+align=3D"top" style=3D"padding:0;Margin:0;width:580px"> <table cellpadding=
+=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-=
+table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spaci=
+ng:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=
+=3D"padding:0;Margin:0"> <p style=3D"Margin:0;-webkit-text-size-adjust:none=
+;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:arial, =
+'helvetica neue', helvetica, sans-serif;line-height:24px;color:#333333;font=
+-size:16px"><b>=F0=9F=9F=A0 Self-paced =D1=84=D0=BE=D1=80=D0=BC=D0=B0=D1=82=
+: =D1=80=D0=B5=D1=94=D1=81=D1=82=D1=80=D1=83=D0=B9=D1=82=D0=B5=D1=81=D1=8F =
+=D1=81=D1=8C=D0=BE=D0=B3=D0=BE=D0=B4=D0=BD=D1=96 =E2=80=94 =D0=BD=D0=B0=D0=
+=B2=D1=87=D0=B0=D0=B9=D1=82=D0=B5=D1=81=D1=8F, =D0=BA=D0=BE=D0=BB=D0=B8 </b=
+><br></p> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-=
+adjust:none;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue=
+', helvetica, sans-serif;line-height:24px;color:#333333;font-size:16px"><b>=
+=D0=B2=D0=B0=D0=BC =D0=B7=D1=80=D1=83=D1=87=D0=BD=D0=BE!</b></p> <p style=
+=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-li=
+ne-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans=
+-serif;line-height:21px;color:#333333;font-size:14px;display:none"><br></p>=
+</td> </tr>  </table></td> </tr>  </table></td> </tr> <tr style=3D"border-c=
+ollapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-t=
+op:20px;padding-left:20px;padding-right:20px"><!--[if mso]><table style=3D"=
+width:560px" cellpadding=3D"0" cellspacing=3D"0"><tr><td style=3D"width:270=
+px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" =
+class=3D"es-left" align=3D"left" role=3D"none" style=3D"mso-table-lspace:0p=
+t;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float:le=
+ft">  <tr style=3D"border-collapse:collapse"> <td class=3D"es-m-p20b" align=
+=3D"left" style=3D"padding:0;Margin:0;width:270px"> <table cellpadding=3D"0=
+" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table=
+-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0p=
+x">  <tr style=3D"border-collapse:collapse"> <td align=3D"center" style=3D"=
+padding:0;Margin:0;font-size:0px"><a target=3D"_blank" href=3D"https://prom=
+etheusor.esclick.me/1qYFQdJmp2nCZBkF0k" style=3D"-webkit-text-size-adjust:n=
+one;-ms-text-size-adjust:none;mso-line-height-rule:exactly;text-decoration:=
+underline;color:#2CB543;font-size:14px"><img class=3D"adapt-img" src=3D"htt=
+ps://pics.esputnik.com/repository/home/103056/images/msg/39205982/177219896=
+7119.png" alt=3D"=D0=9F=D0=BE=D1=87=D0=B0=D1=82=D0=B8 =D0=BD=D0=B0=D0=B2=D1=
+=87=D0=B0=D0=BD=D0=BD=D1=8F =D0=B7=D0=B0=D1=80=D0=B0=D0=B7" style=3D"displa=
+y:block;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:b=
+icubic" width=3D"270" title=3D"=D0=9F=D0=BE=D1=87=D0=B0=D1=82=D0=B8 =D0=BD=
+=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F =D0=B7=D0=B0=D1=80=D0=B0=D0=B7">=
+</a></td> </tr>  </table></td> </tr>  </table><!--[if mso]></td><td style=
+=3D"width:20px"></td><td style=3D"width:270px" valign=3D"top"><![endif]--> =
+<table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-right" align=3D"righ=
+t" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-=
+collapse:collapse;border-spacing:0px;float:right">  <tr style=3D"border-col=
+lapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;width:270px=
+"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presen=
+tation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:=
+collapse;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td =
+align=3D"left" class=3D"es-m-p20r" style=3D"Margin:0;padding-bottom:5px;pad=
+ding-top:10px;padding-left:10px;padding-right:10px"> <p style=3D"Margin:0;-=
+webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule=
+:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-he=
+ight:24px;color:#333333;font-size:16px">=D0=9C=D0=B5=D0=BD=D1=88=D0=B5 =D1=
+=82=D1=80=D0=B8=D0=B2=D0=BE=D0=B3=D0=B8 =E2=80=94 =D0=B1=D1=96=D0=BB=D1=8C=
+=D1=88=D0=B5 =D0=B2=D0=BF=D0=B5=D0=B2=D0=BD=D0=B5=D0=BD=D0=BE=D1=81=D1=82=
+=D1=96 =D0=B2 =D1=81=D0=BE=D0=B1=D1=96!</p></td> </tr> <tr style=3D"border-=
+collapse:collapse"> <td align=3D"center" class=3D"es-m-p20l" style=3D"Margi=
+n:0;padding-top:5px;padding-bottom:10px;padding-left:10px;padding-right:10p=
+x"><span class=3D"es-button-border-1767605097718 es-button-border" style=3D=
+"border-style:solid;border-color:#2CB543;background:#e67d2d;border-width:0p=
+x;display:inline-block;border-radius:8px;width:auto"><a href=3D"https://pro=
+metheusor.esclick.me/1qYFQzIT6coIjTIVmk" class=3D"es-button es-button-17676=
+05097718" target=3D"_blank" style=3D"mso-style-priority:100 !important;text=
+-decoration:none;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;ms=
+o-line-height-rule:exactly;color:#ffffff;font-size:16px;display:inline-bloc=
+k;background:#e67d2d;border-radius:8px;font-family:arial, 'helvetica neue',=
+ helvetica, sans-serif;font-weight:normal;font-style:normal;line-height:19.=
+2px;width:auto;text-align:center;padding:15px;mso-padding-alt:0;mso-border-=
+alt:10px solid #e67d2d">=D0=9F=D0=BE=D1=87=D0=B0=D1=82=D0=B8 =D0=B7=D0=B0=
+=D1=80=D0=B0=D0=B7</a></span></td> </tr>  </table></td> </tr>  </table><!--=
+[if mso]></td></tr></table><![endif]--></td> </tr> <tr style=3D"border-coll=
+apse:collapse"> <td align=3D"left" style=3D"Margin:0;padding-bottom:10px;pa=
+dding-top:15px;padding-left:15px;padding-right:15px;border-radius:15px 15px=
+ 0px 0px"><!--[if mso]><table dir=3D"ltr" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td><table dir=3D"rtl" style=3D"width:570px" cellpadding=3D"0" cells=
+pacing=3D"0"><tr><td dir=3D"ltr" style=3D"width:275px" valign=3D"top"><![en=
+dif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-right" align=
+=3D"right" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt=
+;border-collapse:collapse;border-spacing:0px;float:right">  <tr style=3D"bo=
+rder-collapse:collapse"> <td align=3D"left" class=3D"es-m-p20b" style=3D"pa=
+dding:0;Margin:0;width:275px"> <table cellpadding=3D"0" cellspacing=3D"0" w=
+idth=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table=
+-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bor=
+der-collapse:collapse"> <td align=3D"center" style=3D"padding:0;Margin:0;fo=
+nt-size:0px"><a target=3D"_blank" href=3D"https://prometheusor.esclick.me/1=
+qYFRLH9OCpOtkqlGk" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adj=
+ust:none;mso-line-height-rule:exactly;text-decoration:underline;color:#2CB5=
+43;font-size:14px"><img class=3D"adapt-img" src=3D"https://pics.esputnik.co=
+m/repository/home/103056/images/msg/39205982/1772199013661.png" alt=3D"=D0=
+=9F=D1=80=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B4=D0=
+=BE =D0=BD=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F" style=3D"display:bloc=
+k;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic=
+;border-radius:10px" width=3D"275" title=3D"=D0=9F=D1=80=D0=B8=D1=94=D0=B4=
+=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B4=D0=BE =D0=BD=D0=B0=D0=B2=D1=87=
+=D0=B0=D0=BD=D0=BD=D1=8F"></a></td> </tr>  </table></td> </tr>  </table><!-=
+-[if mso]></td><td dir=3D"ltr" style=3D"width:20px"></td><td dir=3D"ltr" st=
+yle=3D"width:275px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" ce=
+llspacing=3D"0" class=3D"es-left" align=3D"left" role=3D"none" style=3D"mso=
+-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spac=
+ing:0px;float:left">  <tr style=3D"border-collapse:collapse"> <td align=3D"=
+left" style=3D"padding:0;Margin:0;width:275px"> <table cellpadding=3D"0" ce=
+llspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table-lsp=
+ace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px"> =
+ <tr style=3D"border-collapse:collapse"> <td align=3D"left" class=3D"es-m-p=
+20r" style=3D"Margin:0;padding-bottom:5px;padding-top:10px;padding-left:10p=
+x;padding-right:10px"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-=
+ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'h=
+elvetica neue', helvetica, sans-serif;line-height:24px;color:#333333;font-s=
+ize:16px">=D0=97=D0=B0=D0=BB=D0=B8=D1=88=D0=B0=D0=B9=D1=82=D0=B5=D1=81=D1=
+=8F =D0=B2 =D0=B1=D0=B0=D0=BB=D0=B0=D0=BD=D1=81=D1=96 =E2=80=94 =D0=B1=D0=
+=B5=D0=B7 =D1=82=D1=80=D0=B8=D0=B2=D0=BE=D0=B3=D0=B8 =D1=82=D0=B0 =D0=BF=D0=
+=B5=D1=80=D1=84=D0=B5=D0=BA=D1=86=D1=96=D0=BE=D0=BD=D1=96=D0=B7=D0=BC=D1=83=
+!</p></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"cente=
+r" class=3D"es-m-p20l" style=3D"Margin:0;padding-top:5px;padding-bottom:10p=
+x;padding-left:10px;padding-right:10px"><span class=3D"es-button-border-176=
+9768578023 es-button-border" style=3D"border-style:solid;border-color:#2CB5=
+43;background:#e67d2d;border-width:0px;display:inline-block;border-radius:8=
+px;width:auto"><a href=3D"https://prometheusor.esclick.me/1qYFRhFpfmqV42P10=
+k" class=3D"es-button es-button-1769768578023" target=3D"_blank" style=3D"m=
+so-style-priority:100 !important;text-decoration:none;-webkit-text-size-adj=
+ust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;color:#ffff=
+ff;font-size:16px;display:inline-block;background:#e67d2d;border-radius:8px=
+;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:nor=
+mal;font-style:normal;line-height:19.2px;width:auto;text-align:center;paddi=
+ng:15px;mso-padding-alt:0;mso-border-alt:10px solid #e67d2d">=D0=9F=D0=BE=
+=D1=87=D0=B0=D1=82=D0=B8 =D0=B7=D0=B0=D1=80=D0=B0=D0=B7</a></span></td> </t=
+r>  </table></td> </tr>  </table><!--[if mso]></td></tr></table></td></tr><=
+/table><![endif]--></td> </tr> <tr style=3D"border-collapse:collapse"> <td =
+class=3D"es-m-p10b" align=3D"left" style=3D"Margin:0;padding-top:5px;paddin=
+g-bottom:20px;padding-left:20px;padding-right:20px"> <table cellpadding=3D"=
+0" cellspacing=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-lspace=
+:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <t=
+r style=3D"border-collapse:collapse"> <td class=3D"es-m-p0r es-m-p20b" vali=
+gn=3D"top" align=3D"center" style=3D"padding:0;Margin:0;width:560px"> <tabl=
+e width=3D"100%" cellspacing=3D"0" cellpadding=3D"0" style=3D"mso-table-lsp=
+ace:0pt;mso-table-rspace:0pt;border-collapse:separate;border-spacing:0px;bo=
+rder-left:2px solid #e67d2d;border-right:2px solid #e67d2d;border-top:2px s=
+olid #e67d2d;border-bottom:2px solid #e67d2d;border-radius:30px" role=3D"pr=
+esentation">  <tr style=3D"border-collapse:collapse"> <td align=3D"center" =
+class=3D"es-m-txt-c" style=3D"padding:10px;Margin:0"> <p style=3D"Margin:0;=
+-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rul=
+e:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-h=
+eight:30px;color:#f58932;font-size:20px"><b>=D0=9D=D0=BE=D0=B2=D0=B8=D0=B9 =
+=D1=81=D0=B5=D0=B7=D0=BE=D0=BD =D1=83 =D0=92=D1=81=D0=B5=D1=81=D0=B2=D1=96=
+=D1=82=D0=BD=D1=8C=D0=BE=D0=BC=D1=83 =D1=83=D0=BD=D1=96=D0=B2=D0=B5=D1=80=
+=D1=81=D0=B8=D1=82=D0=B5=D1=82=D1=96!</b></p></td> </tr>  </table></td> </t=
+r>  </table></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=
+=3D"left" style=3D"padding:0;Margin:0;padding-left:10px;padding-right:10px"=
+> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"none" s=
+tyle=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;=
+border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"=
+center" valign=3D"top" style=3D"padding:0;Margin:0;width:580px"> <table cel=
+lpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=
+=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;bord=
+er-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"left=
+" style=3D"padding:0;Margin:0"> <p style=3D"Margin:0;-webkit-text-size-adju=
+st:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:=
+arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;color:#3333=
+33;font-size:16px"><b>=F0=9F=9F=A0 =D0=97=D0=BD=D0=B0=D0=BD=D0=BD=D1=8F, =
+=D1=8F=D0=BA=D1=96 =D0=BF=D1=80=D0=B0=D1=86=D1=8E=D1=8E=D1=82=D1=8C =D0=BD=
+=D0=B0 =D0=B2=D0=B0=D1=81</b><br><b></b></p> <p style=3D"Margin:0;-webkit-t=
+ext-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly=
+;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21p=
+x;color:#333333;font-size:14px;display:none"><br></p></td> </tr>  </table><=
+/td> </tr>  </table></td> </tr> <tr style=3D"border-collapse:collapse"> <td=
+ align=3D"left" style=3D"padding:0;Margin:0;padding-top:15px;padding-left:1=
+5px;padding-right:15px"><!--[if mso]><table style=3D"width:570px" cellpaddi=
+ng=3D"0" cellspacing=3D"0"><tr><td style=3D"width:230px" valign=3D"top"><![=
+endif]--> <table cellpadding=3D"0" cellspacing=3D"0" align=3D"left" class=
+=3D"es-left" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0=
+pt;border-collapse:collapse;border-spacing:0px;float:left">  <tr style=3D"b=
+order-collapse:collapse"> <td align=3D"left" class=3D"es-m-p20b" style=3D"p=
+adding:0;Margin:0;width:230px"> <table cellpadding=3D"0" cellspacing=3D"0" =
+width=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-tabl=
+e-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bo=
+rder-collapse:collapse"> <td align=3D"center" style=3D"padding:0;Margin:0;f=
+ont-size:0px"><a target=3D"_blank" href=3D"https://prometheusor.esclick.me/=
+1qYFS3EVxMrbEJxHek" style=3D"-webkit-text-size-adjust:none;-ms-text-size-ad=
+just:none;mso-line-height-rule:exactly;text-decoration:underline;color:#2CB=
+543;font-size:14px"><img class=3D"adapt-img" src=3D"https://pics.esputnik.c=
+om/repository/home/103056/images/base64/1772199196251.png" alt=3D"=D0=9F=D0=
+=B5=D1=80=D0=B5=D0=B9=D1=82=D0=B8 =D0=B4=D0=BE =D0=BA=D1=80=D1=83=D1=81=D1=
+=96=D0=B2" style=3D"display:block;border:0;outline:none;text-decoration:non=
+e;-ms-interpolation-mode:bicubic;border-radius:10px" width=3D"230" title=3D=
+"=D0=9F=D0=B5=D1=80=D0=B5=D0=B9=D1=82=D0=B8 =D0=B4=D0=BE =D0=BA=D1=80=D1=83=
+=D1=81=D1=96=D0=B2"></a></td> </tr>  </table></td> </tr>  </table><!--[if m=
+so]></td><td style=3D"width:15px"></td><td style=3D"width:325px" valign=3D"=
+top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-ri=
+ght" align=3D"right" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-=
+rspace:0pt;border-collapse:collapse;border-spacing:0px;float:right">  <tr s=
+tyle=3D"border-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Ma=
+rgin:0;width:325px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"10=
+0%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0p=
+t;border-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collap=
+se:collapse"> <td align=3D"left" class=3D"es-m-p20r" style=3D"padding:0;Mar=
+gin:0;padding-bottom:5px;padding-top:10px"> <p style=3D"Margin:0;-webkit-te=
+xt-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;=
+font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px=
+;color:#333333;font-size:16px">=D0=A3=D0=B6=D0=B5 =D0=BF=D0=BE=D0=BD=D0=B0=
+=D0=B4 220 000 =D1=83=D0=BA=D1=80=D0=B0=D1=97=D0=BD=D1=86=D1=96=D0=B2 =D0=
+=B7=D0=B0=D1=80=D0=B5=D1=94=D1=81=D1=82=D1=80=D1=83=D0=B2=D0=B0=D0=BB=D0=B8=
+=D1=81=D1=8F =D0=BD=D0=B0 =D0=B1=D0=B5=D0=B7=D0=BA=D0=BE=D1=88=D1=82=D0=BE=
+=D0=B2=D0=BD=D1=96 =D0=BA=D1=83=D1=80=D1=81=D0=B8 =D0=B2=D1=96=D0=B4 =D0=BD=
+=D0=B0=D0=B9=D0=BA=D1=80=D0=B0=D1=89=D0=B8=D1=85 =D1=81=D0=B2=D1=96=D1=82=
+=D0=BE=D0=B2=D0=B8=D1=85 =D1=83=D0=BD=D1=96=D0=B2=D0=B5=D1=80=D1=81=D0=B8=
+=D1=82=D0=B5=D1=82=D1=96=D0=B2.</p></td> </tr> <tr style=3D"border-collapse=
+:collapse"> <td align=3D"left" class=3D"es-m-p20r" style=3D"padding:0;Margi=
+n:0;padding-bottom:5px"> <p style=3D"Margin:0;-webkit-text-size-adjust:none=
+;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:arial, =
+'helvetica neue', helvetica, sans-serif;line-height:24px;color:#333333;font=
+-size:16px">=D0=97=D0=B4=D0=BE=D0=B1=D1=83=D0=B2=D0=B0=D0=B9=D1=82=D0=B5 =
+=D1=8F=D0=BA=D1=96=D1=81=D0=BD=D1=83 =D0=BE=D1=81=D0=B2=D1=96=D1=82=D1=83 =
+=D1=83=D0=BA=D1=80=D0=B0=D1=97=D0=BD=D1=81=D1=8C=D0=BA=D0=BE=D1=8E =D1=96 =
+=D1=81=D1=82=D0=B0=D0=B2=D0=B0=D0=B9=D1=82=D0=B5 =D1=89=D0=B5 =D0=B1=D0=BB=
+=D0=B8=D0=B6=D1=87=D0=B5 =D0=B4=D0=BE =D1=81=D0=B2=D0=BE=D1=97=D1=85 =D0=BC=
+=D1=80=D1=96=D0=B9.</p></td> </tr>  </table></td> </tr>  </table><!--[if ms=
+o]></td></tr></table><![endif]--></td> </tr> <tr style=3D"border-collapse:c=
+ollapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-top:15px;p=
+adding-left:20px;padding-right:20px"> <table cellpadding=3D"0" cellspacing=
+=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table=
+-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bor=
+der-collapse:collapse"> <td align=3D"center" valign=3D"top" style=3D"paddin=
+g:0;Margin:0;width:560px"> <table cellpadding=3D"0" cellspacing=3D"0" width=
+=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rsp=
+ace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"border-=
+collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0"> <p sty=
+le=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-=
+line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sa=
+ns-serif;line-height:24px;color:#333333;font-size:16px"><strong>=D0=A2=D0=
+=B8=D1=81=D0=BD=D1=96=D1=82=D1=8C, =D1=89=D0=BE=D0=B1 =D0=B7=D0=B0=D1=80=D0=
+=B5=D1=94=D1=81=D1=82=D1=80=D1=83=D0=B2=D0=B0=D1=82=D0=B8=D1=81=D1=8F</stro=
+ng></p></td> </tr>  </table></td> </tr>  </table></td> </tr> <tr style=3D"b=
+order-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;pa=
+dding-top:5px;padding-left:10px;padding-right:10px"> <table cellpadding=3D"=
+0" cellspacing=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-lspace=
+:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <t=
+r style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"padding:0=
+;Margin:0;width:580px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D=
+"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace=
+:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"border-col=
+lapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-top=
+:10px;padding-left:10px;padding-right:10px"> <p style=3D"Margin:0;-webkit-t=
+ext-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly=
+;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24p=
+x;color:#333333;font-size:16px">=E2=87=A2 <a target=3D"_blank" style=3D"-we=
+bkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:e=
+xactly;text-decoration:underline;color:#0b5394;font-size:16px" href=3D"http=
+s://prometheusor.esclick.me/1qYFSPDCEwshObVXuk">=D0=91=D1=96=D0=B7=D0=BD=D0=
+=B5=D1=81-=D1=81=D1=82=D1=80=D0=B0=D1=82=D0=B5=D0=B3=D1=96=D1=8F</a></p> <p=
+ style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;=
+mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica=
+, sans-serif;line-height:24px;color:#333333;font-size:16px">=E2=87=A2 <a ta=
+rget=3D"_blank" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adjust=
+:none;mso-line-height-rule:exactly;text-decoration:underline;color:#0b5394;=
+font-size:16px" href=3D"https://prometheusor.esclick.me/1qYFSlBsWWtnYt3n0k"=
+>=D0=9F=D1=80=D0=BE=D1=94=D0=BA=D1=82=D1=83=D0=B2=D0=B0=D0=BD=D0=BD=D1=8F =
+=D0=BE=D1=80=D0=B3=D0=B0=D0=BD=D1=96=D0=B7=D0=B0=D1=86=D1=96=D0=B9</a></p> =
+<p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:non=
+e;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helveti=
+ca, sans-serif;line-height:24px;color:#333333;font-size:16px">=E2=87=A2 <a =
+target=3D"_blank" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adju=
+st:none;mso-line-height-rule:exactly;text-decoration:underline;color:#0b539=
+4;font-size:16px" href=3D"https://prometheusor.esclick.me/1qYFT7AYo6utjAc3e=
+k">=D0=A3=D0=BF=D1=80=D0=B0=D0=B2=D0=BB=D1=96=D0=BD=D0=BD=D1=8F =D0=BE=D1=
+=80=D0=B3=D0=B0=D0=BD=D1=96=D0=B7=D0=B0=D1=86=D1=96=D1=94=D1=8E</a></p> <p =
+style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;m=
+so-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica,=
+ sans-serif;line-height:24px;color:#333333;font-size:16px">=E2=87=A2 <a tar=
+get=3D"_blank" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adjust:=
+none;mso-line-height-rule:exactly;text-decoration:underline;color:#0b5394;f=
+ont-size:16px" href=3D"https://prometheusor.esclick.me/1qYFTT9F5gvztSAJGk">=
+CS50: =D0=92=D1=81=D1=82=D1=83=D0=BF =D0=B4=D0=BE =D0=B1=D0=B0=D0=B7 =D0=B4=
+=D0=B0=D0=BD=D0=B8=D1=85 =D1=82=D0=B0 =D0=BC=D0=BE=D0=B2=D0=B8 SQL</a></p> =
+<p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:non=
+e;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helveti=
+ca, sans-serif;line-height:24px;color:#333333;font-size:16px">=E2=87=A2 <a =
+target=3D"_blank" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adju=
+st:none;mso-line-height-rule:exactly;text-decoration:underline;color:#0b539=
+4;font-size:16px" href=3D"https://prometheusor.esclick.me/1qYFUB6beqyCE1GpW=
+k">=D0=90=D0=BD=D0=B0=D0=BB=D1=96=D1=82=D0=B8=D0=BA=D0=B0 =D1=86=D0=B8=D1=
+=84=D1=80=D0=BE=D0=B2=D0=BE=D0=B3=D0=BE =D0=BC=D0=B0=D1=80=D0=BA=D0=B5=D1=
+=82=D0=B8=D0=BD=D0=B3=D1=83: =D1=82=D0=B5=D0=BE=D1=80=D0=B5=D1=82=D0=B8=D1=
+=87=D0=BD=D1=96 =D0=BE=D1=81=D0=BD=D0=BE=D0=B2=D0=B8</a></p> <p style=3D"Ma=
+rgin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-hei=
+ght-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif=
+;line-height:24px;color:#333333;font-size:16px">=E2=87=A2 <a target=3D"_bla=
+nk" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-li=
+ne-height-rule:exactly;text-decoration:underline;color:#0b5394;font-size:16=
+px" href=3D"https://prometheusor.esclick.me/1qYFUX5HwQzIOIp5Ok">=D0=90=D0=
+=BD=D0=B0=D0=BB=D1=96=D1=82=D0=B8=D0=BA=D0=B0 =D1=86=D0=B8=D1=84=D1=80=D0=
+=BE=D0=B2=D0=BE=D0=B3=D0=BE =D0=BC=D0=B0=D1=80=D0=BA=D0=B5=D1=82=D0=B8=D0=
+=BD=D0=B3=D1=83: =D0=BF=D1=80=D0=B8=D0=BA=D0=BB=D0=B0=D0=B4=D0=BD=D0=B5 =D0=
+=B7=D0=B0=D1=81=D1=82=D0=BE=D1=81=D1=83=D0=B2=D0=B0=D0=BD=D0=BD=D1=8F</a></=
+p></td> </tr>  </table></td> </tr>  </table></td> </tr> <tr style=3D"border=
+-collapse:collapse"> <td class=3D"es-m-p10b" align=3D"left" style=3D"Margin=
+:0;padding-top:15px;padding-bottom:15px;padding-left:20px;padding-right:20p=
+x"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"none"=
+ style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collaps=
+e;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td class=
+=3D"es-m-p0r es-m-p20b" valign=3D"top" align=3D"center" style=3D"padding:0;=
+Margin:0;width:560px"> <table width=3D"100%" cellspacing=3D"0" cellpadding=
+=3D"0" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:s=
+eparate;border-spacing:0px;border-left:2px solid #e67d2d;border-right:2px s=
+olid #e67d2d;border-top:2px solid #e67d2d;border-bottom:2px solid #e67d2d;b=
+order-radius:30px" role=3D"presentation">  <tr style=3D"border-collapse:col=
+lapse"> <td align=3D"center" class=3D"es-m-txt-c" style=3D"padding:10px;Mar=
+gin:0"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-ad=
+just:none;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue',=
+ helvetica, sans-serif;line-height:30px;color:#f58932;font-size:20px"><b>=
+=D0=92=D1=96=D0=B4=D0=BA=D1=80=D0=B8=D1=82=D1=96 =D0=BA=D1=83=D1=80=D1=81=
+=D0=B8 Prometheus</b></p></td> </tr>  </table></td> </tr>  </table></td> </=
+tr> <tr style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"pad=
+ding:0;Margin:0;padding-left:10px;padding-right:10px"> <table cellpadding=
+=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-ls=
+pace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">=
+  <tr style=3D"border-collapse:collapse"> <td align=3D"center" valign=3D"to=
+p" style=3D"padding:0;Margin:0;width:580px"> <table cellpadding=3D"0" cells=
+pacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table-lspace=
+:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <t=
+r style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"padding:0=
+;Margin:0;padding-bottom:15px"> <p style=3D"Margin:0;-webkit-text-size-adju=
+st:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:=
+arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;color:#3333=
+33;font-size:16px"><b>=F0=9F=9F=A0 =D0=9D=D0=BE=D0=B2=D1=96 =D0=B1=D0=B5=D0=
+=B7=D0=BF=D0=BB=D0=B0=D1=82=D0=BD=D1=96 =D0=BA=D1=83=D1=80=D1=81=D0=B8 =D0=
+=B2 =D0=B1=D0=B5=D1=80=D0=B5=D0=B7=D0=BD=D1=96</b></p> <p style=3D"Margin:0=
+;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-ru=
+le:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-=
+height:21px;color:#333333;font-size:14px;display:none"><br></p></td> </tr> =
+ </table></td> </tr>  </table></td> </tr> <tr style=3D"border-collapse:coll=
+apse"> <td align=3D"left" bgcolor=3D"#fff3ed" style=3D"Margin:0;padding-bot=
+tom:10px;padding-left:10px;padding-right:10px;padding-top:20px;border-radiu=
+s:15px 15px 1px 1px;background-color:#fff3ed"><!--[if mso]><table style=3D"=
+width:580px" cellpadding=3D"0" cellspacing=3D"0"><tr><td style=3D"width:271=
+px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" =
+class=3D"es-left" align=3D"left" role=3D"none" style=3D"mso-table-lspace:0p=
+t;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float:le=
+ft">  <tr style=3D"border-collapse:collapse"> <td class=3D"es-m-p20b" align=
+=3D"left" style=3D"padding:0;Margin:0;width:271px"> <table cellpadding=3D"0=
+" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table=
+-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0p=
+x">  <tr style=3D"border-collapse:collapse"> <td align=3D"center" style=3D"=
+padding:0;Margin:0;font-size:0px"><a target=3D"_blank" href=3D"https://prom=
+etheusor.esclick.me/1qYFUt3yE10OYaNLOk" style=3D"-webkit-text-size-adjust:n=
+one;-ms-text-size-adjust:none;mso-line-height-rule:exactly;text-decoration:=
+underline;color:#2CB543;font-size:14px"><img class=3D"adapt-img" src=3D"htt=
+ps://pics.esputnik.com/repository/home/103056/images/base64/1772201166649.p=
+ng" alt=3D"=D0=9F=D1=80=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=
+=8F =D0=B4=D0=BE =D0=BD=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F" style=3D=
+"display:block;border:0;outline:none;text-decoration:none;-ms-interpolation=
+-mode:bicubic;border-radius:10px" width=3D"271" title=3D"=D0=9F=D1=80=D0=B8=
+=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B4=D0=BE =D0=BD=D0=B0=
+=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F"></a></td> </tr>  </table></td> </tr> =
+ </table><!--[if mso]></td><td style=3D"width:20px"></td><td style=3D"width=
+:289px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D=
+"0" class=3D"es-right" align=3D"right" role=3D"none" style=3D"mso-table-lsp=
+ace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;fl=
+oat:right">  <tr style=3D"border-collapse:collapse"> <td class=3D"es-m-p20b=
+" align=3D"left" style=3D"padding:0;Margin:0;width:289px"> <table cellpaddi=
+ng=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"ms=
+o-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spa=
+cing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"left" styl=
+e=3D"padding:0;Margin:0"> <p style=3D"Margin:0;-webkit-text-size-adjust:non=
+e;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:arial,=
+ 'helvetica neue', helvetica, sans-serif;line-height:24px;color:#333333;fon=
+t-size:16px">=D0=A3=D1=81=D1=96 =D1=82=D0=BE=D0=BD=D0=BA=D0=BE=D1=89=D1=96 =
+=D1=83=D1=87=D0=B0=D1=81=D1=82=D1=96 =D1=83 =D0=BF=D1=83=D0=B1=D0=BB=D1=96=
+=D1=87=D0=BD=D0=B8=D1=85 =D0=B7=D0=B0=D0=BA=D1=83=D0=BF=D1=96=D0=B2=D0=BB=
+=D1=8F=D1=85, =D1=89=D0=BE=D0=B1 =D0=BF=D0=B5=D1=80=D0=B5=D1=82=D0=B2=D0=BE=
+=D1=80=D0=B8=D1=82=D0=B8 =D1=82=D0=B5=D0=BD=D0=B4=D0=B5=D1=80=D0=B8 =D0=BD=
+=D0=B0 =D0=BC=D0=BE=D0=B6=D0=BB=D0=B8=D0=B2=D1=96=D1=81=D1=82=D1=8C =D0=B4=
+=D0=BB=D1=8F =D1=80=D0=BE=D0=B7=D0=B2=D0=B8=D1=82=D0=BA=D1=83: =D0=B2=D1=96=
+=D0=B4 =D0=BB=D0=BE=D0=BA=D0=B0=D0=BB=D1=8C=D0=BD=D0=B8=D1=85 =D0=B7=D0=B0=
+=D0=BC=D0=BE=D0=B2=D0=BB=D0=B5=D0=BD=D1=8C =D0=B4=D0=BE =D1=94=D0=B2=D1=80=
+=D0=BE=D0=BF=D0=B5=D0=B9=D1=81=D1=8C=D0=BA=D0=B8=D1=85 =D0=BA=D0=BE=D0=BD=
+=D1=82=D1=80=D0=B0=D0=BA=D1=82=D1=96=D0=B2.</p> <p style=3D"Margin:0;-webki=
+t-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exac=
+tly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:=
+21px;color:#333333;font-size:14px;display:none"><br></p></td> </tr> <tr sty=
+le=3D"border-collapse:collapse"> <td align=3D"center" class=3D"es-m-p20l" s=
+tyle=3D"padding:10px;Margin:0"><span class=3D"es-button-border-175051122276=
+1 es-button-border" style=3D"border-style:solid;border-color:#2CB543;backgr=
+ound:#e67e2d;border-width:0px;display:inline-block;border-radius:8px;width:=
+auto"><a href=3D"https://prometheusor.esclick.me/1qYFVF2eVb1Uirvb0k" class=
+=3D"es-button es-button-1750511222761" target=3D"_blank" style=3D"mso-style=
+-priority:100 !important;text-decoration:none;-webkit-text-size-adjust:none=
+;-ms-text-size-adjust:none;mso-line-height-rule:exactly;color:#ffffff;font-=
+size:16px;display:inline-block;background:#e67e2d;border-radius:8px;font-fa=
+mily:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal;font=
+-style:normal;line-height:19.2px;width:auto;text-align:center;padding:15px;=
+mso-padding-alt:0;mso-border-alt:10px solid #e67e2d">=D0=94=D1=96=D0=B7=D0=
+=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B1=D1=96=D0=BB=D1=8C=D1=88=D0=B5 =E2=
+=9E=9F</a></span></td> </tr>  </table></td> </tr>  </table><!--[if mso]></t=
+d></tr></table><![endif]--></td> </tr> <tr style=3D"border-collapse:collaps=
+e"> <td align=3D"left" style=3D"padding:10px;Margin:0;background-color:#fff=
+3ed" bgcolor=3D"#fff3ed"><!--[if mso]><table dir=3D"rtl" style=3D"width:580=
+px" cellpadding=3D"0" cellspacing=3D"0"><tr><td dir=3D"ltr" style=3D"width:=
+265px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"=
+0" class=3D"es-right" align=3D"right" role=3D"none" style=3D"mso-table-lspa=
+ce:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;flo=
+at:right">  <tr style=3D"border-collapse:collapse"> <td class=3D"es-m-p20b"=
+ align=3D"left" style=3D"padding:0;Margin:0;width:265px"> <table cellpaddin=
+g=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso=
+-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spac=
+ing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"center" sty=
+le=3D"padding:0;Margin:0;font-size:0px"><a target=3D"_blank" href=3D"https:=
+//prometheusor.esclick.me/1qYFVb1KnB2at9Trmk" style=3D"-webkit-text-size-ad=
+just:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;text-decor=
+ation:underline;color:#2CB543;font-size:14px"><img class=3D"adapt-img" src=
+=3D"https://pics.esputnik.com/repository/home/103056/images/base64/17722012=
+07273.png" alt=3D"=D0=9F=D1=80=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=
+=81=D1=8F =D0=B4=D0=BE =D0=BD=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F" st=
+yle=3D"display:block;border:0;outline:none;text-decoration:none;-ms-interpo=
+lation-mode:bicubic;border-radius:10px" width=3D"265" title=3D"=D0=9F=D1=80=
+=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B4=D0=BE =D0=BD=
+=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F"></a></td> </tr>  </table></td> =
+</tr>  </table><!--[if mso]></td><td dir=3D"ltr" style=3D"width:20px"></td>=
+<td dir=3D"ltr" style=3D"width:295px" valign=3D"top"><![endif]--> <table ce=
+llpadding=3D"0" cellspacing=3D"0" class=3D"es-left" align=3D"left" role=3D"=
+none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:co=
+llapse;border-spacing:0px;float:left">  <tr style=3D"border-collapse:collap=
+se"> <td align=3D"left" style=3D"padding:0;Margin:0;width:295px"> <table ce=
+llpadding=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" styl=
+e=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;bor=
+der-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"lef=
+t" style=3D"padding:5px;Margin:0"> <p style=3D"Margin:0;-webkit-text-size-a=
+djust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-fami=
+ly:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;color:#3=
+33333;font-size:16px">=D0=9F=D0=BE=D0=BA=D1=80=D0=BE=D0=BA=D0=BE=D0=B2=D1=
+=96 =D0=B0=D0=BB=D0=B3=D0=BE=D1=80=D0=B8=D1=82=D0=BC=D0=B8 =D0=BD=D0=B0=D0=
+=BB=D0=B0=D1=88=D1=82=D1=83=D0=B2=D0=B0=D0=BD=D0=BD=D1=8F =D1=81=D0=BF=D1=
+=96=D0=B2=D0=BF=D1=80=D0=B0=D1=86=D1=96 =D0=B7 =D0=BF=D1=80=D0=B5=D0=B4=D1=
+=81=D1=82=D0=B0=D0=B2=D0=BD=D0=B8=D0=BA=D0=B0=D0=BC=D0=B8 =D0=B3=D1=80=D0=
+=BE=D0=BC=D0=B0=D0=B4=D1=81=D1=8C=D0=BA=D0=BE=D0=B3=D0=BE =D1=81=D0=B5=D0=
+=BA=D1=82=D0=BE=D1=80=D1=83, =D0=BC=D1=96=D1=81=D1=86=D0=B5=D0=B2=D0=B8=D1=
+=85 =D1=80=D0=B0=D0=B4, =D0=B1=D1=96=D0=B7=D0=BD=D0=B5=D1=81=D1=83 =D0=B4=
+=D0=BB=D1=8F =D0=B2=D1=96=D0=B4=D0=BD=D0=BE=D0=B2=D0=BB=D0=B5=D0=BD=D0=BD=
+=D1=8F, =D1=8F=D0=BA=D1=96 =D0=B2=D0=B6=D0=B5 =D0=BC=D0=BE=D0=B6=D1=83=D1=
+=82=D1=8C =D0=B1=D1=83=D1=82=D0=B8 =D0=B7=D0=B0=D1=81=D1=82=D0=BE=D1=81=D0=
+=BE=D0=B2=D0=B0=D0=BD=D1=96 =D1=83 =D0=B3=D1=80=D0=BE=D0=BC=D0=B0=D0=B4=D0=
+=B0=D1=85.</p></td> </tr> <tr style=3D"border-collapse:collapse"> <td align=
+=3D"center" class=3D"es-m-p20l" style=3D"padding:10px;Margin:0"><span class=
+=3D"es-button-border-1750511255471 es-button-border" style=3D"border-style:=
+solid;border-color:#2CB543;background:#e67e2d;border-width:0px;display:inli=
+ne-block;border-radius:8px;width:auto"><a href=3D"https://prometheusor.escl=
+ick.me/1qYFVx014l3h3R27ek" class=3D"es-button es-button-1750511255471" targ=
+et=3D"_blank" style=3D"mso-style-priority:100 !important;text-decoration:no=
+ne;-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-=
+rule:exactly;color:#ffffff;font-size:16px;display:inline-block;background:#=
+e67e2d;border-radius:8px;font-family:arial, 'helvetica neue', helvetica, sa=
+ns-serif;font-weight:normal;font-style:normal;line-height:19.2px;width:auto=
+;text-align:center;padding:15px;mso-padding-alt:0;mso-border-alt:10px solid=
+ #e67e2d">=D0=94=D1=96=D0=B7=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B1=D1=
+=96=D0=BB=D1=8C=D1=88=D0=B5 =E2=9E=9F</a></span></td> </tr>  </table></td> =
+</tr>  </table><!--[if mso]></td></tr></table><![endif]--></td> </tr> <tr s=
+tyle=3D"border-collapse:collapse"> <td align=3D"left" style=3D"padding:10px=
+;Margin:0;background-color:#fff3ed" bgcolor=3D"#fff3ed"><!--[if mso]><table=
+ dir=3D"rtl" style=3D"width:580px" cellpadding=3D"0" cellspacing=3D"0"><tr>=
+<td dir=3D"ltr" style=3D"width:290px" valign=3D"top"><![endif]--> <table ce=
+llpadding=3D"0" cellspacing=3D"0" class=3D"es-right" align=3D"right" role=
+=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collaps=
+e:collapse;border-spacing:0px;float:right">  <tr style=3D"border-collapse:c=
+ollapse"> <td class=3D"es-m-p20b" align=3D"left" style=3D"padding:0;Margin:=
+0;width:290px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" r=
+ole=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bor=
+der-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:co=
+llapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-bottom:5px;=
+padding-left:5px;padding-right:5px"> <p style=3D"Margin:0;-webkit-text-size=
+-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-fa=
+mily:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;color:=
+#333333;font-size:16px">=D0=9C=D0=B5=D1=85=D0=B0=D0=BD=D1=96=D0=B7=D0=BC=D0=
+=B8 =D0=B7=D0=B0=D1=85=D0=B8=D1=81=D1=82=D1=83 =D0=B1=D1=96=D0=B7=D0=BD=D0=
+=B5=D1=81=D1=83 =D0=BF=D1=80=D0=B8 =D1=80=D0=BE=D0=B1=D0=BE=D1=82=D1=96 =D0=
+=B7 =D1=96=D0=BD=D0=BE=D0=B7=D0=B5=D0=BC=D0=BD=D0=B8=D0=BC=D0=B8 =D0=BA=D0=
+=BE=D0=BD=D1=82=D1=80=D0=B0=D0=B3=D0=B5=D0=BD=D1=82=D0=B0=D0=BC=D0=B8 =E2=
+=80=94 =D0=B2=D1=96=D0=B4 =D0=B2=D0=B8=D0=B1=D0=BE=D1=80=D1=83 =D0=BF=D0=BB=
+=D0=B0=D1=82=D1=96=D0=B6=D0=BD=D0=BE=D0=B3=D0=BE =D1=96=D0=BD=D1=81=D1=82=
+=D1=80=D1=83=D0=BC=D0=B5=D0=BD=D1=82=D1=83 =D1=82=D0=B0 =D0=BE=D1=84=D0=BE=
+=D1=80=D0=BC=D0=BB=D0=B5=D0=BD=D0=BD=D1=8F =D0=B3=D0=B0=D1=80=D0=B0=D0=BD=
+=D1=82=D1=96=D0=B9 =D0=B4=D0=BE =D0=BC=D1=96=D0=BD=D1=96=D0=BC=D1=96=D0=B7=
+=D0=B0=D1=86=D1=96=D1=97 =D1=80=D0=B8=D0=B7=D0=B8=D0=BA=D1=96=D0=B2 =D0=BD=
+=D0=B5=D0=BF=D0=BB=D0=B0=D1=82=D0=B5=D0=B6=D1=96=D0=B2, =D0=BF=D1=80=D0=B0=
+=D0=B2=D0=B8=D0=BB=D1=8C=D0=BD=D0=BE=D0=B3=D0=BE =D0=BE=D1=84=D0=BE=D1=80=
+=D0=BC=D0=BB=D0=B5=D0=BD=D0=BD=D1=8F =D0=B4=D0=BE=D0=BA=D1=83=D0=BC=D0=B5=
+=D0=BD=D1=82=D1=96=D0=B2 =D1=96 =D0=B2=D0=BF=D0=B5=D0=B2=D0=BD=D0=B5=D0=BD=
+=D0=BE=D1=97 =D1=80=D0=BE=D0=B1=D0=BE=D1=82=D0=B8 =D0=B2 =D0=B5=D0=BA=D1=81=
+=D0=BF=D0=BE=D1=80=D1=82=D1=96 =D1=82=D0=B0 =D1=96=D0=BC=D0=BF=D0=BE=D1=80=
+=D1=82=D1=96 =D0=BD=D0=B0=D0=B2=D1=96=D1=82=D1=8C =D0=B7=D0=B0 =D1=81=D0=BA=
+=D0=BB=D0=B0=D0=B4=D0=BD=D0=B8=D1=85 =D1=83=D0=BC=D0=BE=D0=B2.</p></td> </t=
+r> <tr style=3D"border-collapse:collapse"> <td align=3D"center" class=3D"es=
+-m-p20l" style=3D"padding:10px;Margin:0"><span class=3D"es-button-border-17=
+69777424563 es-button-border" style=3D"border-style:solid;border-color:#2CB=
+543;background:#e67e2d;border-width:0px;display:inline-block;border-radius:=
+8px;width:auto"><a href=3D"https://prometheusor.esclick.me/1qYFWIyhML4nDiaN=
+Ok" class=3D"es-button es-button-1769777424563" target=3D"_blank" style=3D"=
+mso-style-priority:100 !important;text-decoration:none;-webkit-text-size-ad=
+just:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;color:#fff=
+fff;font-size:16px;display:inline-block;background:#e67e2d;border-radius:8p=
+x;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:no=
+rmal;font-style:normal;line-height:19.2px;width:auto;text-align:center;padd=
+ing:15px;mso-padding-alt:0;mso-border-alt:10px solid #e67e2d">=D0=94=D1=96=
+=D0=B7=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B1=D1=96=D0=BB=D1=8C=D1=88=
+=D0=B5 =E2=9E=9F</a></span></td> </tr>  </table></td> </tr>  </table><!--[i=
+f mso]></td><td dir=3D"ltr" style=3D"width:20px"></td><td dir=3D"ltr" style=
+=3D"width:270px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cells=
+pacing=3D"0" class=3D"es-left" align=3D"left" role=3D"none" style=3D"mso-ta=
+ble-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing=
+:0px;float:left">  <tr style=3D"border-collapse:collapse"> <td align=3D"lef=
+t" style=3D"padding:0;Margin:0;width:270px"> <table cellpadding=3D"0" cells=
+pacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table-lspace=
+:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <t=
+r style=3D"border-collapse:collapse"> <td align=3D"center" style=3D"padding=
+:0;Margin:0;font-size:0px"><a target=3D"_blank" href=3D"https://prometheuso=
+r.esclick.me/1qYFWexNdv5tO08dek" style=3D"-webkit-text-size-adjust:none;-ms=
+-text-size-adjust:none;mso-line-height-rule:exactly;text-decoration:underli=
+ne;color:#2CB543;font-size:14px"><img class=3D"adapt-img" src=3D"https://pi=
+cs.esputnik.com/repository/home/103056/images/base64/1772201242856.png" alt=
+=3D"=D0=9F=D1=80=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=
+=B4=D0=BE =D0=BD=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F" style=3D"displa=
+y:block;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:b=
+icubic;border-radius:10px" width=3D"270" title=3D"=D0=9F=D1=80=D0=B8=D1=94=
+=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B4=D0=BE =D0=BD=D0=B0=D0=B2=
+=D1=87=D0=B0=D0=BD=D0=BD=D1=8F"></a></td> </tr>  </table></td> </tr>  </tab=
+le><!--[if mso]></td></tr></table><![endif]--></td> </tr> <tr style=3D"bord=
+er-collapse:collapse"> <td align=3D"left" style=3D"Margin:0;padding-bottom:=
+5px;padding-top:10px;padding-left:10px;padding-right:10px;background-color:=
+#fff3ed" bgcolor=3D"#fff3ed"><!--[if mso]><table style=3D"width:580px" cell=
+padding=3D"0" cellspacing=3D"0"><tr><td style=3D"width:292px" valign=3D"top=
+"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-left"=
+ align=3D"left" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspac=
+e:0pt;border-collapse:collapse;border-spacing:0px;float:left">  <tr style=
+=3D"border-collapse:collapse"> <td class=3D"es-m-p20b" align=3D"left" style=
+=3D"padding:0;Margin:0;width:292px"> <table cellpadding=3D"0" cellspacing=
+=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;m=
+so-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr styl=
+e=3D"border-collapse:collapse"> <td align=3D"left" style=3D"padding:5px;Mar=
+gin:0"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-ad=
+just:none;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue',=
+ helvetica, sans-serif;line-height:24px;color:#180c02;font-size:16px">=D0=
+=9F=D0=BE=D1=80=D0=B0=D0=B4=D0=B8, =D1=8F=D0=BA =D1=81=D0=B8=D1=81=D1=82=D0=
+=B5=D0=BC=D0=BD=D0=BE =D0=BF=D1=80=D0=B0=D1=86=D1=8E=D0=B2=D0=B0=D1=82=D0=
+=B8 =D1=96=D0=B7 =D0=B7=D0=B5=D0=BC=D0=BB=D0=B5=D1=8E, =D1=84=D1=96=D0=BD=
+=D0=B0=D0=BD=D1=81=D0=B0=D0=BC=D0=B8, smart-=D1=82=D0=B5=D1=85=D0=BD=D0=BE=
+=D0=BB=D0=BE=D0=B3=D1=96=D1=8F=D0=BC=D0=B8 =D1=82=D0=B0 ESG, =D1=89=D0=BE=
+=D0=B1 =D0=BE=D0=BF=D1=82=D0=B8=D0=BC=D1=96=D0=B7=D1=83=D0=B2=D0=B0=D1=82=
+=D0=B8 =D0=B9 =D0=BC=D0=B0=D1=81=D1=88=D1=82=D0=B0=D0=B1=D1=83=D0=B2=D0=B0=
+=D1=82=D0=B8 =D0=B1=D1=96=D0=B7=D0=BD=D0=B5=D1=81.</p></td> </tr> <tr style=
+=3D"border-collapse:collapse"> <td align=3D"center" class=3D"es-m-p20l" sty=
+le=3D"padding:10px;Margin:0"><span class=3D"es-button-border-1750511298174 =
+es-button-border" style=3D"border-style:solid;border-color:#2CB543;backgrou=
+nd:#e67e2d;border-width:0px;display:inline-block;border-radius:8px;width:au=
+to"><a href=3D"https://prometheusor.esclick.me/1qYFX0w3vV6zYHgtGk" class=3D=
+"es-button es-button-1750511298174" target=3D"_blank" style=3D"mso-style-pr=
+iority:100 !important;text-decoration:none;-webkit-text-size-adjust:none;-m=
+s-text-size-adjust:none;mso-line-height-rule:exactly;color:#ffffff;font-siz=
+e:16px;display:inline-block;background:#e67e2d;border-radius:8px;font-famil=
+y:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal;font-st=
+yle:normal;line-height:19.2px;width:auto;text-align:center;padding:15px;mso=
+-padding-alt:0;mso-border-alt:10px solid #e67e2d">=D0=94=D1=96=D0=B7=D0=BD=
+=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B1=D1=96=D0=BB=D1=8C=D1=88=D0=B5 =E2=9E=
+=9F</a></span></td> </tr>  </table></td> </tr>  </table><!--[if mso]></td><=
+td style=3D"width:20px"></td><td style=3D"width:268px" valign=3D"top"><![en=
+dif]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-right" align=
+=3D"right" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt=
+;border-collapse:collapse;border-spacing:0px;float:right">  <tr style=3D"bo=
+rder-collapse:collapse"> <td class=3D"es-m-p20b" align=3D"left" style=3D"pa=
+dding:0;Margin:0;width:268px"> <table cellpadding=3D"0" cellspacing=3D"0" w=
+idth=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table=
+-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bor=
+der-collapse:collapse"> <td align=3D"center" style=3D"padding:0;Margin:0;fo=
+nt-size:0px"><a target=3D"_blank" href=3D"https://prometheusor.esclick.me/1=
+qYFXMukD585iZF9Ok" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adj=
+ust:none;mso-line-height-rule:exactly;text-decoration:underline;color:#2CB5=
+43;font-size:14px"><img class=3D"adapt-img" src=3D"https://pics.esputnik.co=
+m/repository/home/103056/images/msg/39205982/1772201302011.png" alt=3D"=D0=
+=9F=D1=80=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B4=D0=
+=BE =D0=BD=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F" style=3D"display:bloc=
+k;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic=
+;border-radius:15px" width=3D"268" title=3D"=D0=9F=D1=80=D0=B8=D1=94=D0=B4=
+=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B4=D0=BE =D0=BD=D0=B0=D0=B2=D1=87=
+=D0=B0=D0=BD=D0=BD=D1=8F"></a></td> </tr>  </table></td> </tr>  </table><!-=
+-[if mso]></td></tr></table><![endif]--></td> </tr> <tr style=3D"border-col=
+lapse:collapse"> <td align=3D"left" style=3D"padding:10px;Margin:0;backgrou=
+nd-color:#fff3ed;border-radius:0px 0px 15px 15px" bgcolor=3D"#fff3ed"><!--[=
+if mso]><table dir=3D"rtl" style=3D"width:580px" cellpadding=3D"0" cellspac=
+ing=3D"0"><tr><td dir=3D"ltr" style=3D"width:290px" valign=3D"top"><![endif=
+]--> <table cellpadding=3D"0" cellspacing=3D"0" class=3D"es-right" align=3D=
+"right" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bo=
+rder-collapse:collapse;border-spacing:0px;float:right">  <tr style=3D"borde=
+r-collapse:collapse"> <td class=3D"es-m-p20b" align=3D"left" style=3D"paddi=
+ng:0;Margin:0;width:290px"> <table cellpadding=3D"0" cellspacing=3D"0" widt=
+h=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rs=
+pace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"border=
+-collapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding=
+-bottom:5px;padding-left:5px;padding-right:5px"> <p style=3D"Margin:0;-webk=
+it-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exa=
+ctly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height=
+:24px;color:#333333;font-size:16px">=D0=A3=D1=81=D0=B5 =D0=BF=D1=80=D0=BE =
+=D0=BE=D1=86=D1=96=D0=BD=D0=BA=D1=83 =D1=80=D0=B8=D0=B7=D0=B8=D0=BA=D1=96=
+=D0=B2, =D1=80=D0=BE=D0=B1=D0=BE=D1=82=D1=83 =D0=B7=D0=B0 =D1=81=D1=82=D0=
+=B0=D0=BD=D0=B4=D0=B0=D1=80=D1=82=D0=B0=D0=BC=D0=B8 IMAS =D1=82=D0=B0 =D0=
+=BF=D0=BB=D0=B0=D0=BD=D1=83=D0=B2=D0=B0=D0=BD=D0=BD=D1=8F =D0=B1=D0=B5=D0=
+=B7=D0=BF=D0=B5=D1=87=D0=BD=D0=BE=D0=B3=D0=BE, =D0=BF=D1=80=D0=B8=D1=80=D0=
+=BE=D0=B4=D0=BE=D0=BE=D1=80=D1=96=D1=94=D0=BD=D1=82=D0=BE=D0=B2=D0=B0=D0=BD=
+=D0=BE=D0=B3=D0=BE =D0=B2=D1=96=D0=B4=D0=BD=D0=BE=D0=B2=D0=BB=D0=B5=D0=BD=
+=D0=BD=D1=8F =D1=82=D0=B5=D1=80=D0=B8=D1=82=D0=BE=D1=80=D1=96=D0=B9.</p></t=
+d> </tr> <tr style=3D"border-collapse:collapse"> <td align=3D"center" class=
+=3D"es-m-p20l" style=3D"padding:10px;Margin:0"><span class=3D"es-button-bor=
+der-1772201338427 es-button-border" style=3D"border-style:solid;border-colo=
+r:#2CB543;background:#e67e2d;border-width:0px;display:inline-block;border-r=
+adius:8px;width:auto"><a href=3D"https://prometheusor.esclick.me/1qYFY4s6mF=
+AI38LfGk" class=3D"es-button es-button-1772201338427" target=3D"_blank" sty=
+le=3D"mso-style-priority:100 !important;text-decoration:none;-webkit-text-s=
+ize-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;colo=
+r:#ffffff;font-size:16px;display:inline-block;background:#e67e2d;border-rad=
+ius:8px;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-wei=
+ght:normal;font-style:normal;line-height:19.2px;width:auto;text-align:cente=
+r;padding:15px;mso-padding-alt:0;mso-border-alt:10px solid #e67e2d">=D0=94=
+=D1=96=D0=B7=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B1=D1=96=D0=BB=D1=8C=
+=D1=88=D0=B5 =E2=9E=9F</a></span></td> </tr>  </table></td> </tr>  </table>=
+<!--[if mso]></td><td dir=3D"ltr" style=3D"width:20px"></td><td dir=3D"ltr"=
+ style=3D"width:270px" valign=3D"top"><![endif]--> <table cellpadding=3D"0"=
+ cellspacing=3D"0" class=3D"es-left" align=3D"left" role=3D"none" style=3D"=
+mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-s=
+pacing:0px;float:left">  <tr style=3D"border-collapse:collapse"> <td align=
+=3D"left" style=3D"padding:0;Margin:0;width:270px"> <table cellpadding=3D"0=
+" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table=
+-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0p=
+x">  <tr style=3D"border-collapse:collapse"> <td align=3D"center" style=3D"=
+padding:0;Margin:0;font-size:0px"><a target=3D"_blank" href=3D"https://prom=
+etheusor.esclick.me/1qYFYQqn3pBODPtv8k" style=3D"-webkit-text-size-adjust:n=
+one;-ms-text-size-adjust:none;mso-line-height-rule:exactly;text-decoration:=
+underline;color:#2CB543;font-size:14px"><img class=3D"adapt-img" src=3D"htt=
+ps://pics.esputnik.com/repository/home/103056/images/msg/39205982/177220137=
+9931.png" alt=3D"=D0=9F=D1=80=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=
+=81=D1=8F =D0=B4=D0=BE =D0=BD=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F" st=
+yle=3D"display:block;border:0;outline:none;text-decoration:none;-ms-interpo=
+lation-mode:bicubic;border-radius:10px" width=3D"270" title=3D"=D0=9F=D1=80=
+=D0=B8=D1=94=D0=B4=D0=BD=D0=B0=D1=82=D0=B8=D1=81=D1=8F =D0=B4=D0=BE =D0=BD=
+=D0=B0=D0=B2=D1=87=D0=B0=D0=BD=D0=BD=D1=8F"></a></td> </tr>  </table></td> =
+</tr>  </table><!--[if mso]></td></tr></table><![endif]--></td> </tr> <tr s=
+tyle=3D"border-collapse:collapse"> <td class=3D"es-m-p10b" align=3D"left" s=
+tyle=3D"Margin:0;padding-bottom:20px;padding-left:20px;padding-right:20px;p=
+adding-top:25px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%"=
+ role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-co=
+llapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:collapse=
+"> <td class=3D"es-m-p0r es-m-p20b" valign=3D"top" align=3D"center" style=
+=3D"padding:0;Margin:0;width:560px"> <table width=3D"100%" cellspacing=3D"0=
+" cellpadding=3D"0" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bord=
+er-collapse:separate;border-spacing:0px;border-left:2px solid #e67d2d;borde=
+r-right:2px solid #e67d2d;border-top:2px solid #e67d2d;border-bottom:2px so=
+lid #e67d2d;border-radius:30px" role=3D"presentation">  <tr style=3D"border=
+-collapse:collapse"> <td align=3D"center" class=3D"es-m-txt-c" style=3D"pad=
+ding:10px;Margin:0"> <p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms=
+-text-size-adjust:none;mso-line-height-rule:exactly;font-family:arial, 'hel=
+vetica neue', helvetica, sans-serif;line-height:30px;color:#f58932;font-siz=
+e:20px"><b>=D0=A9=D0=BE =D0=BD=D0=BE=D0=B2=D0=BE=D0=B3=D0=BE =D0=B2 =D0=BD=
+=D0=B0=D1=88=D0=B8=D1=85 =D1=81=D0=BE=D1=86=D0=BC=D0=B5=D1=80=D0=B5=D0=B6=
+=D0=B0=D1=85</b></p></td> </tr>  </table></td> </tr>  </table></td> </tr> <=
+tr style=3D"border-collapse:collapse"> <td align=3D"left" style=3D"Margin:0=
+;padding-top:5px;padding-bottom:10px;padding-left:20px;padding-right:20px">=
+<!--[if mso]><table style=3D"width:560px" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td style=3D"width:190px" valign=3D"top"><![endif]--> <table cellpad=
+ding=3D"0" cellspacing=3D"0" class=3D"es-left" align=3D"left" role=3D"none"=
+ style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collaps=
+e;border-spacing:0px;float:left">  <tr style=3D"border-collapse:collapse"> =
+<td class=3D"es-m-p0r es-m-p20b" align=3D"center" style=3D"padding:0;Margin=
+:0;width:180px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" =
+role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bo=
+rder-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:c=
+ollapse"> <td align=3D"center" style=3D"padding:0;Margin:0;font-size:0px"><=
+a target=3D"_blank" href=3D"https://prometheusor.esclick.me/1qYFYmpTLPCUNhS=
+BWk" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-l=
+ine-height-rule:exactly;text-decoration:underline;color:#2CB543;font-size:1=
+4px"><img class=3D"adapt-img" src=3D"https://pics.esputnik.com/repository/h=
+ome/103056/images/msg/39205982/1772201488977.png" alt=3D"=D0=A2=D0=B8=D1=81=
+=D0=BD=D1=96=D1=82=D1=8C! =D0=A0=D0=BE=D0=B7=D0=BA=D0=B0=D0=B6=D0=B5=D0=BC=
+=D0=BE =D0=B4=D0=B5=D1=82=D0=B0=D0=BB=D1=8C=D0=BD=D1=96=D1=88=D0=B5" style=
+=3D"display:block;border:0;outline:none;text-decoration:none;-ms-interpolat=
+ion-mode:bicubic;border-radius:10px" width=3D"174" title=3D"=D0=A2=D0=B8=D1=
+=81=D0=BD=D1=96=D1=82=D1=8C! =D0=A0=D0=BE=D0=B7=D0=BA=D0=B0=D0=B6=D0=B5=D0=
+=BC=D0=BE =D0=B4=D0=B5=D1=82=D0=B0=D0=BB=D1=8C=D0=BD=D1=96=D1=88=D0=B5"></a=
+></td> </tr>  </table></td> <td class=3D"es-hidden" style=3D"padding:0;Marg=
+in:0;width:10px"></td> </tr>  </table><!--[if mso]></td><td style=3D"width:=
+179px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=3D"=
+0" class=3D"es-left" align=3D"left" role=3D"none" style=3D"mso-table-lspace=
+:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float=
+:left">  <tr style=3D"border-collapse:collapse"> <td class=3D"es-m-p20b" al=
+ign=3D"center" style=3D"padding:0;Margin:0;width:179px"> <table cellpadding=
+=3D"0" cellspacing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-=
+table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spaci=
+ng:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"center" styl=
+e=3D"padding:0;Margin:0;font-size:0px"><a target=3D"_blank" href=3D"https:/=
+/prometheusor.esclick.me/1qYFZ8o9czDaXz0Rmk" style=3D"-webkit-text-size-adj=
+ust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;text-decora=
+tion:underline;color:#2CB543;font-size:14px"><img class=3D"adapt-img" src=
+=3D"https://pics.esputnik.com/repository/home/103056/images/msg/39205982/17=
+72201495577.png" alt=3D"=D0=A2=D0=B8=D1=81=D0=BD=D1=96=D1=82=D1=8C! =D0=A0=
+=D0=BE=D0=B7=D0=BA=D0=B0=D0=B6=D0=B5=D0=BC=D0=BE =D0=B4=D0=B5=D1=82=D0=B0=
+=D0=BB=D1=8C=D0=BD=D1=96=D1=88=D0=B5" style=3D"display:block;border:0;outli=
+ne:none;text-decoration:none;-ms-interpolation-mode:bicubic;border-radius:1=
+0px" width=3D"173" title=3D"=D0=A2=D0=B8=D1=81=D0=BD=D1=96=D1=82=D1=8C! =D0=
+=A0=D0=BE=D0=B7=D0=BA=D0=B0=D0=B6=D0=B5=D0=BC=D0=BE =D0=B4=D0=B5=D1=82=D0=
+=B0=D0=BB=D1=8C=D0=BD=D1=96=D1=88=D0=B5"></a></td> </tr>  </table></td> </t=
+r>  </table><!--[if mso]></td><td style=3D"width:10px"></td><td style=3D"wi=
+dth:181px" valign=3D"top"><![endif]--> <table cellpadding=3D"0" cellspacing=
+=3D"0" class=3D"es-right" align=3D"right" role=3D"none" style=3D"mso-table-=
+lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px=
+;float:right">  <tr style=3D"border-collapse:collapse"> <td align=3D"center=
+" style=3D"padding:0;Margin:0;width:181px"> <table cellpadding=3D"0" cellsp=
+acing=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:=
+0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr=
+ style=3D"border-collapse:collapse"> <td align=3D"center" style=3D"padding:=
+0;Margin:0;font-size:0px"><a target=3D"_blank" href=3D"https://prometheusor=
+.esclick.me/1qYFZUmpuZEgiGYhuk" style=3D"-webkit-text-size-adjust:none;-ms-=
+text-size-adjust:none;mso-line-height-rule:exactly;text-decoration:underlin=
+e;color:#2CB543;font-size:14px"><img class=3D"adapt-img" src=3D"https://pic=
+s.esputnik.com/repository/home/103056/images/msg/39205982/1772201500922.png=
+" alt=3D"=D0=A2=D0=B8=D1=81=D0=BD=D1=96=D1=82=D1=8C! =D0=A0=D0=BE=D0=B7=D0=
+=BA=D0=B0=D0=B6=D0=B5=D0=BC=D0=BE =D0=B4=D0=B5=D1=82=D0=B0=D0=BB=D1=8C=D0=
+=BD=D1=96=D1=88=D0=B5" style=3D"display:block;border:0;outline:none;text-de=
+coration:none;-ms-interpolation-mode:bicubic;border-radius:10px" width=3D"1=
+71" title=3D"=D0=A2=D0=B8=D1=81=D0=BD=D1=96=D1=82=D1=8C! =D0=A0=D0=BE=D0=B7=
+=D0=BA=D0=B0=D0=B6=D0=B5=D0=BC=D0=BE =D0=B4=D0=B5=D1=82=D0=B0=D0=BB=D1=8C=
+=D0=BD=D1=96=D1=88=D0=B5"></a></td> </tr>  </table></td> </tr>  </table><!-=
+-[if mso]></td></tr></table><![endif]--></td> </tr> <tr style=3D"border-col=
+lapse:collapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-lef=
+t:10px;padding-right:10px"> <table cellpadding=3D"0" cellspacing=3D"0" widt=
+h=3D"100%" role=3D"none" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt=
+;border-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collaps=
+e:collapse"> <td align=3D"center" valign=3D"top" style=3D"padding:0;Margin:=
+0;width:580px"> <table cellpadding=3D"0" cellspacing=3D"0" width=3D"100%" r=
+ole=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;bor=
+der-collapse:collapse;border-spacing:0px">  <tr style=3D"border-collapse:co=
+llapse"> <td align=3D"left" style=3D"padding:0;Margin:0;padding-left:10px;p=
+adding-right:10px;padding-bottom:20px"> <p style=3D"Margin:0;-webkit-text-s=
+ize-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font=
+-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;col=
+or:#333333;font-size:16px">=D0=9F=D1=96=D0=B4=D0=BF=D0=B8=D1=81=D1=83=D0=B9=
+=D1=82=D0=B5=D1=81=D1=8F =D0=BD=D0=B0 =D0=BD=D0=B0=D1=81 =D1=83 Facebook, I=
+nstagram, Telegram =D1=96 =D0=B1=D1=83=D0=B4=D1=8C=D1=82=D0=B5 =D0=B2 =D0=
+=BA=D1=83=D1=80=D1=81=D1=96 =D0=B2=D1=81=D1=8C=D0=BE=D0=B3=D0=BE =D0=BD=D0=
+=B0=D0=B9=D1=86=D1=96=D0=BA=D0=B0=D0=B2=D1=96=D1=88=D0=BE=D0=B3=D0=BE!</p> =
+<p style=3D"Margin:0;-webkit-text-size-adjust:none;-ms-text-size-adjust:non=
+e;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helveti=
+ca, sans-serif;line-height:21px;color:#333333;font-size:14px;display:none">=
+<br></p></td> </tr>  </table></td> </tr>  </table></td> </tr>  </table></td=
+> </tr>  </table> <table class=3D"es-footer" cellspacing=3D"0" cellpadding=
+=3D"0" align=3D"center" role=3D"none" style=3D"mso-table-lspace:0pt;mso-tab=
+le-rspace:0pt;border-collapse:collapse;border-spacing:0px;table-layout:fixe=
+d !important;width:100%;background-color:transparent;background-repeat:repe=
+at;background-position:center top">  <tr style=3D"border-collapse:collapse"=
+> <td align=3D"center" bgcolor=3D"#ffffff" style=3D"padding:0;Margin:0;back=
+ground-color:#ffffff"> <table class=3D"es-footer-body" cellspacing=3D"0" ce=
+llpadding=3D"0" bgcolor=3D"#ffffff" align=3D"center" role=3D"none" style=3D=
+"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-=
+spacing:0px;background-color:transparent;width:600px">  <tr style=3D"border=
+-collapse:collapse"> <td align=3D"left" bgcolor=3D"#18191f" style=3D"paddin=
+g:0;Margin:0;padding-top:20px;padding-left:20px;padding-right:20px;backgrou=
+nd-color:#18191f;border-radius:10px 10px 0px 0px"> <table cellpadding=3D"0"=
+ cellspacing=3D"0" width=3D"100%" role=3D"none" style=3D"mso-table-lspace:0=
+pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr =
+style=3D"border-collapse:collapse"> <td align=3D"center" valign=3D"top" sty=
+le=3D"padding:0;Margin:0;width:560px"> <table cellpadding=3D"0" cellspacing=
+=3D"0" width=3D"100%" role=3D"presentation" style=3D"mso-table-lspace:0pt;m=
+so-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr styl=
+e=3D"border-collapse:collapse"> <td align=3D"center" style=3D"padding:0;Mar=
+gin:0;padding-top:10px;padding-bottom:20px"> <h1 style=3D"Margin:0;line-hei=
+ght:27px;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', =
+helvetica, sans-serif;font-size:18px;font-style:normal;font-weight:normal;c=
+olor:#ffffff">=D0=97=D0=B0=D0=BB=D0=B8=D1=88=D0=B0=D0=B9=D1=82=D0=B5=D1=81=
+=D1=8C =D0=BD=D0=B0 =D0=B7=D0=B2'=D1=8F=D0=B7=D0=BA=D1=83!</h1></td> </tr> =
+<tr style=3D"border-collapse:collapse"> <td align=3D"center" style=3D"paddi=
+ng:0;Margin:0;font-size:0"> <table cellpadding=3D"0" cellspacing=3D"0" clas=
+s=3D"es-table-not-adapt es-social" dir=3D"ltr" role=3D"presentation" style=
+=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;bord=
+er-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"cent=
+er" valign=3D"top" style=3D"padding:0;Margin:0;padding-right:10px"><a targe=
+t=3D"_blank" href=3D"https://prometheusor.esclick.me/1qYFZqlWC9FmsY6xek" st=
+yle=3D"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-hei=
+ght-rule:exactly;text-decoration:underline;color:#1376C8;font-size:14px"><i=
+mg src=3D"https://esputnik.com/content/stripostatic/assets/img/social-icons=
+/logo-white/facebook-logo-white.png" alt=3D"Fb" title=3D"Facebook" width=3D=
+"32" height=3D"32" style=3D"display:block;border:0;outline:none;text-decora=
+tion:none;-ms-interpolation-mode:bicubic"></a></td> <td align=3D"center" va=
+lign=3D"top" style=3D"padding:0;Margin:0;padding-right:10px"><a target=3D"_=
+blank" href=3D"https://prometheusor.esclick.me/1qYFaCkCTjGt2pfDuk" style=3D=
+"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-ru=
+le:exactly;text-decoration:underline;color:#1376C8;font-size:14px"><img src=
+=3D"https://esputnik.com/content/stripostatic/assets/img/messenger-icons/lo=
+go-white/telegram-logo-white.png" alt=3D"Telegram" title=3D"Telegram" width=
+=3D"32" height=3D"32" style=3D"display:block;border:0;outline:none;text-dec=
+oration:none;-ms-interpolation-mode:bicubic"></a></td> <td align=3D"center"=
+ valign=3D"top" style=3D"padding:0;Margin:0;padding-right:10px"><a target=
+=3D"_blank" href=3D"https://prometheusor.esclick.me/1qYFaYislJHzD7DTek" sty=
+le=3D"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-heig=
+ht-rule:exactly;text-decoration:underline;color:#1376C8;font-size:14px"><im=
+g src=3D"https://esputnik.com/content/stripostatic/assets/img/social-icons/=
+logo-white/instagram-logo-white.png" alt=3D"Ig" title=3D"Instagram" width=
+=3D"32" height=3D"32" style=3D"display:block;border:0;outline:none;text-dec=
+oration:none;-ms-interpolation-mode:bicubic"></a></td> <td align=3D"center"=
+ valign=3D"top" style=3D"padding:0;Margin:0;padding-right:10px"><a target=
+=3D"_blank" href=3D"https://prometheusor.esclick.me/1qYFauhZ2tJ5NOljmk" sty=
+le=3D"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-heig=
+ht-rule:exactly;text-decoration:underline;color:#1376C8;font-size:14px"><im=
+g src=3D"https://esputnik.com/content/stripostatic/assets/img/social-icons/=
+logo-white/x-logo-white.png" alt=3D"X" title=3D"X" width=3D"32" height=3D"3=
+2" style=3D"display:block;border:0;outline:none;text-decoration:none;-ms-in=
+terpolation-mode:bicubic"></a></td> <td align=3D"center" valign=3D"top" sty=
+le=3D"padding:0;Margin:0"><a target=3D"_blank" href=3D"https://prometheusor=
+.esclick.me/1qYFbGgFKTKBXgJzuk" style=3D"-webkit-text-size-adjust:none;-ms-=
+text-size-adjust:none;mso-line-height-rule:exactly;text-decoration:underlin=
+e;color:#1376C8;font-size:14px"><img src=3D"https://esputnik.com/content/st=
+ripostatic/assets/img/social-icons/logo-white/youtube-logo-white.png" alt=
+=3D"Yt" title=3D"YouTube" width=3D"32" height=3D"32" style=3D"display:block=
+;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic"=
+></a></td> </tr>  </table></td> </tr>  </table></td> </tr>  </table></td> <=
+/tr> <tr style=3D"border-collapse:collapse"> <td style=3D"padding:0;Margin:=
+0;padding-left:20px;padding-right:20px;padding-top:30px;background-color:#1=
+8191f" bgcolor=3D"#18191f" align=3D"left"> <table width=3D"100%" cellspacin=
+g=3D"0" cellpadding=3D"0" role=3D"none" style=3D"mso-table-lspace:0pt;mso-t=
+able-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D=
+"border-collapse:collapse"> <td valign=3D"top" align=3D"center" style=3D"pa=
+dding:0;Margin:0;width:560px"> <table width=3D"100%" cellspacing=3D"0" cell=
+padding=3D"0" role=3D"presentation" style=3D"mso-table-lspace:0pt;mso-table=
+-rspace:0pt;border-collapse:collapse;border-spacing:0px">  <tr style=3D"bor=
+der-collapse:collapse"> <td class=3D"es-infoblock" align=3D"center" style=
+=3D"padding:0;Margin:0;line-height:15.6px;font-size:12px;color:#CCCCCC"> <h=
+3 style=3D"Margin:0;line-height:19.5px;mso-line-height-rule:exactly;font-fa=
+mily:arial, 'helvetica neue', helvetica, sans-serif;font-size:13px;font-sty=
+le:normal;font-weight:normal;color:#ffffff">=D0=92=D0=B8 =D0=BE=D1=82=D1=80=
+=D0=B8=D0=BC=D0=B0=D0=BB=D0=B8 =D0=B4=D0=B0=D0=BD=D0=BE=D0=B3=D0=BE =D0=BB=
+=D0=B8=D1=81=D1=82=D0=B0, =D0=B1=D0=BE =D0=BF=D1=96=D0=B4=D0=BF=D0=B8=D1=81=
+=D0=B0=D0=BD=D1=96 =D0=BD=D0=B0 =D1=80=D0=BE=D0=B7=D1=81=D0=B8=D0=BB=D0=BA=
+=D1=83 Prometheus.</h3></td> </tr>  </table></td> </tr>  </table></td> </tr=
+> <tr style=3D"border-collapse:collapse"> <td style=3D"Margin:0;padding-top=
+:5px;padding-left:20px;padding-right:20px;padding-bottom:40px;background-co=
+lor:#18191f;border-radius:0px 0px 10px 10px" bgcolor=3D"#18191f" align=3D"l=
+eft"> <table width=3D"100%" cellspacing=3D"0" cellpadding=3D"0" role=3D"non=
+e" style=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:colla=
+pse;border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td valig=
+n=3D"top" align=3D"center" style=3D"padding:0;Margin:0;width:560px"> <table=
+ width=3D"100%" cellspacing=3D"0" cellpadding=3D"0" role=3D"presentation" s=
+tyle=3D"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;=
+border-spacing:0px">  <tr style=3D"border-collapse:collapse"> <td align=3D"=
+center" style=3D"padding:0;Margin:0"> <h3 style=3D"Margin:0;line-height:21p=
+x;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helveti=
+ca, sans-serif;font-size:14px;font-style:normal;font-weight:normal;color:#f=
+fffff">=D0=92=D0=B8 =D0=BC=D0=BE=D0=B6=D0=B5=D1=82=D0=B5 &nbsp;<a target=3D=
+"_blank" style=3D"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;m=
+so-line-height-rule:exactly;text-decoration:none;color:#f58932;font-size:14=
+px" href=3D"https://prometheusor.esclick.me/1qYFbydbtdMNsFQVGk">=D0=B2=D1=
+=96=D0=B4=D0=BF=D0=B8=D1=81=D0=B0=D1=82=D0=B8=D1=81=D1=8C =D1=82=D1=83=D1=
+=82</a></h3></td> </tr>  </table></td> </tr>  </table></td> </tr>  </table>=
+</td> </tr>  </table></td> </tr>  </table> </div> </body></html>
+------=_Part_2154391_262215134.1772205802564--
