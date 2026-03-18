@@ -1,0 +1,1427 @@
+Delivered-To: user@example.com
+Received: by 2002:a05:7108:92ca:b0:4e7:754f:8d0f with SMTP id hs10csp2542805gdb;
+        Tue, 17 Mar 2026 10:04:47 -0700 (PDT)
+X-Received: by 2002:a17:907:8dcd:b0:b93:81e7:845a with SMTP id a640c23a62f3a-b976507ad70mr1036291466b.9.1773767087498;
+        Tue, 17 Mar 2026 10:04:47 -0700 (PDT)
+ARC-Seal: i=1; a=rsa-sha256; t=1773767087; cv=none;
+        d=google.com; s=arc-20240605;
+        b=AkmwK7AMnUxAaQZWxAIVtlsL9GsrIjjb2I+VH1OeJ36Bw6uJSlDtkaDqT+CR24g5Uf
+         fy+klwxWOgUZQvDBe5KMnbegexROw+4VOax+hajyJuJTiGtFWEDgVRTnb4/kyPpLNXBQ
+         xiaGbqmPqtg0GNs0txrgFL4+zVgkHCU7jFW+axXOKMMUitcdoHYQX8PtMGiveX4fgh5t
+         /hL9rYzaK6lRpMNcDnpKVOlpZk3lehISzC/9mkNoLyGba/gE/94C5hkRVl0nA5npH0eH
+         PuXO12PQuTGzCPiC2bu7qS3NYABzzsBPPc8zs7P54rXKaEy+9beXLU3Rnni2Gk1gWXe1
+         Hyuw==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605;
+        h=list-unsubscribe-post:list-unsubscribe:precedence:message-id
+         :mime-version:reply-to:to:date:subject:from:dkim-signature;
+        bh=JqhWYpkv0Iexmqg3q7VJI4ntqAwgPXRTsNFhwhWJsFc=;
+        fh=3I/Q7MJ9r9gi2keMBGjBXtBw3XLK33Jx1FbbPFgJ+fE=;
+        b=lKH0mnjJAtRIq09M3kpUtuGpSXk8PsqIyTnPNpU9P2y8Z2rEZhvyB1sycco0eDCCml
+         hRD1FsFnVDT+NTLe0zQE3+4CmTWykKCyzdmbRnc7rF7FISaC5OQVMPHCRRSZIykEKgdD
+         qK13hJyjap0a3Ueq++wjSgprgeSjMx7pLjDlR3sgPjRpn66Ih6EA+OB7YwrpjVYuKNl4
+         2TKB4wqWMXdtTeIigZuauV8Vfk/aa7N6iecbzju/GuhJqVPt9JdHL5rk+SgbS7aMwGnc
+         hMEeDufNzDwiZ4tzo4sIWFrTIMANQoPUar9rKg6NGwd/jWAIPWCrgWyhcrliMmA17+eh
+         6lBw==;
+        dara=google.com
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@ca.nespresso.com header.s=nestlenespressosa header.b="NPPYQFT/";
+       spf=pass (google.com: domain of bounce@ca.nespresso.com designates 130.248.197.63 as permitted sender) smtp.mailfrom=bounce@ca.nespresso.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ca.nespresso.com
+Return-Path: <bounce@ca.nespresso.com>
+Received: from r63.uk.nespresso.com (r63.uk.nespresso.com. [130.248.197.63])
+        by mx.google.com with ESMTPS id a640c23a62f3a-b97f17ef2a7si26249766b.280.2026.03.17.10.04.47
+        for <user@example.com>
+        (version=TLS1_2 cipher=ECDHE-ECDSA-AES128-GCM-SHA256 bits=128/128);
+        Tue, 17 Mar 2026 10:04:47 -0700 (PDT)
+Received-SPF: pass (google.com: domain of bounce@ca.nespresso.com designates 130.248.197.63 as permitted sender) client-ip=130.248.197.63;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ca.nespresso.com header.s=nestlenespressosa header.b="NPPYQFT/";
+       spf=pass (google.com: domain of bounce@ca.nespresso.com designates 130.248.197.63 as permitted sender) smtp.mailfrom=bounce@ca.nespresso.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ca.nespresso.com
+Return-Path: <bounce@ca.nespresso.com>
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=ca.nespresso.com;
+	s=nestlenespressosa; t=1773767087;
+	bh=JqhWYpkv0Iexmqg3q7VJI4ntqAwgPXRTsNFhwhWJsFc=;
+	h=From:Subject:Date:To:MIME-Version:Message-ID:List-Unsubscribe:
+	 List-Unsubscribe-Post:Content-Type;
+	b=NPPYQFT/8L8OZ8KTNNDisSN7Dgfdp6Ur64zvR8FkQFfUyQLqyVv5Smp2iR5zJz1pN
+	 oAqJSEh7IM9VZIEvUtMuJkto7s4DnIMioFk5vbo4dWV33558XUppkwDaVmwPikNII1
+	 y+oQY9PshsxYhuaSb36502K6mOqbHGmdQk0qcR7wev8uotkH3/7LphaOGy3l5P7n0G
+	 hybh+j/jEX5mbRE16Bsb6hH8NWd9aa5W/O7W0usiN2gn0E82+E8NNT1D8cqAMbQZoV
+	 Godz+TIK0JW6up5YXTq6Czja3FLfBw1GnRgBGHTuKYgm5Mh8btTCKUZzIpBUELu7m3
+	 R5gFr9l9HuhwA==
+X-MSFBL: REDACTED_MSFBL_SIG=|REDACTED_BASE64_TRACKING
+	DATA_REDACTED_1
+	DATA_REDACTED_2
+	DATA_REDACTED_3
+	DATA_REDACTED_4
+	DATA_REDACTED_5
+	DATA_REDACTED_6
+Received: from [10.1.1.69] ([10.1.1.69:58605] helo=r63.uk.nespresso.com) by irl1-prod1-mta-i-042c477fd5fa77c31 (envelope-from <bounce@ca.nespresso.com>) (ecelerity 4.4.1.20033 r(msys-ecelerity:tags/4.4.1.0^0)) with ESMTP id 30/97-36310-FA989B96; Tue, 17 Mar 2026 17:04:47 +0000
+From: "Nespresso" <nespresso@ca.nespresso.com>
+Subject: Hurry! The app offer ends soon!
+Date: Tue, 17 Mar 2026 18:04:46 +0100
+To: <user@example.com>
+Reply-To: "Nespresso" <no-reply@ca.nespresso.com>
+MIME-Version: 1.0
+X-mailer: nlserver, Build 6.7.0
+Message-ID: <NM63804B92107DAFB9Dnestlen_mid_prod1-Ym91bmNlQGNhLm5lc3ByZXNzby5jb20=@ca.nespresso.com>
+Precedence: bulk
+List-Unsubscribe: <https://survey.nespresso.com/webApp/unsubNoClick?id=@REDACTED_UNSUB_ID==&deliveryId=DM0000000>
+X-CSA-Complaints: whitelist-complaints@eco.de
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+Content-Type: multipart/alternative;
+	charset="windows-1252";
+	boundary="----=_NextPart_749_3A112308.3A112308"
+
+This is a multi-part message in MIME format.
+
+------=_NextPart_749_3A112308.3A112308
+Content-Type: text/plain;
+	charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+ 
+
+2 free cups with your coffee order | View this email  https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c2f&e=cDE9UlVHeEptdlhUcFo5Uk4lMkZ1SmhPJTJCY2xEN04wYXl5aE1n&s=IFnfUuv5vgMF-CkWDxs5MR9u2J8pDdE4GI_BDtApzOo online 
+	
+	
+
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c30 	
+	
+	
+
+	
+	
+
+ENJOY A free GIFT exclusively ON the app 
+	
+	
+	
+
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c31 	
+	
+
+LAST CHANCE 
+TO get 2 Origin Gran Lungo cups 
+	
+	
+	
+
+with your $139 coffee order on the app*. 
+($40 value) 
+	
+	
+	
+
+Visit or download the app to 
+enjoy the offer 
+	
+	
+	
+
+  	
+	
+
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c32  https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c33 	
+	
+
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c34  https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c35 	
+	
+
+	
+	
+
+*Only available on Nespresso capsules. 
+Starbucks ®  capsules by Nespresso is excluded from the promotion. 
+	
+	
+	
+
+Discover the spring collection available on the app 
+	
+	
+	
+
+Access our seasonal selection: new capsules and inspiring accessories 
+	
+	
+	
+
+	
+	
+
+	
+	
+
+	
+	
+
+	
+	
+
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c36 Available on the App 	
+	
+	
+
+VERTUO UP 
+	
+	
+	
+
+New colours reveal 
+	
+	
+	
+
+Introducing our latest innovation - Vertuo Up  - now available in two new colours! 
+	
+	
+	
+
+	
+	
+
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c37 Shop Now 	
+	
+	
+
+  	
+	
+
+Club Member Number: 10726552
+	
+	
+	
+
+Share your #Nespressomoments 
+
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c38 	 https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c39 	 https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c3a 	 https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c3b 	
+
+	
+
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c3c 
+
+For orders above  $75 
+	
+	  	
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c3d 
+
+Visit or pick up your order in boutique 
+	
+	
+  
+
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c3e 
+
+Recycle your used capsules 
+	
+	  	
+ https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c3f 
+
+1‑855‑325‑5781 or LiveChat for any advice or order 
+	
+	
+
+	
+	
+	
+
+*Receive 2 Origin Gran Lungo cups ($40 value) on $139 coffee order before taxes on the mobile app only, see details below. 
+This offer is valid from March 12, at 9:00 a.m. EDT to March 18, 2026, at 2:59 a.m. EDT, while supplies last. Offer is subject to availability and may be cancelled at any time without notice. To be eligible for this promotion, your coffee order must reach the $139 threshold and be placed on the Nespresso app only. Offer includes 2 Origin Gran Lungo cups. 
+Orders can be on the Nespresso mobile app. No substitutions allowed. All food products (including but not limited to coffee capsules, cookies, sugar sticks, and flavoured syrups) are final sale. See our return policy for more information. Offers valid in Canada only and only for Canadian shipping addresses. Offers are not transferable and may be cancelled at any time without notice. Void where prohibited or restricted. Not valid in combination with any other Nespresso offer or promotion. 
+
+Offer is subject to stock availability of capsules and do not include applicable taxes. If any of the above Gift items are out of stock, Nespresso reserves the right to replace the Gift(s) with a Gift of superior or equal value. Only Nespresso capsules qualify for the threshold; Starbucks by Nespresso capsules are excluded from this offer. 
+
+You are receiving this email from Nespresso Canada, a division of Nestlé Canada Inc. because you are a Nespresso Club member. You can withdraw your consent at any time.​ 
+​ 
+For more information, please refer to our  https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c40 Privacy Policy  or contact us at Nespresso Canada, a division of Nestlé, P.O. Box 35759, CP Léo-Pariseau, Montréal, Québec, H2X 0A4. If you have a question for the Nespresso Club, please call 1-855-325-5781 during our  https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c41 business hours  or use the Live Chat option at  https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c42 www.nespresso.com .​ 
+​ 
+To Unsubscribe from our email marketing and promotion lists,  https://t.ca.nespresso.com/r/?id=td01eac97,5beb5de2,5f612c43&e=cDE9dW5zdWJzY3JpYmUubmVzcHJlc3NvLmNvbS9jYS9lbi9zaWdub3V0Lmh0bWw_Y21wPUNBNDYxMDNfYjJjX2VtYWlsX2FwcGRheXNfbWFyY2gxMl9ubmFzc2FkbHkmdD00MzQxMjQzMTI0MzEzMDM3MzIzNjM1MzUzMjI0NDU0RTI0MzIzMDMyMzYyRDMwMzMyRDMxMzcmYz0zMTM2MzIzODM2MzE&s=CCWUlvKKRYQygFEdtNCli8uDfqp9oUyAgCWYwv8iw1g click here  and allow up to ten (10) days for the change to take effect. Please note that you may continue to receive transactional email messages from Nespresso Canada.​ 
+​ 
+If you have more than one Nespresso account with the same email address, you may continue to receive marketing emails related to your other account(s) until you unsubscribe from the other account(s) as well. To unsubscribe from all Nespresso Canada accounts related to this email address, please email us at:  mailto:casl.ca@nespresso.com?subject=Unsubscribe%20me%20from%20ALL casl.ca@nespresso.com  or call our Customer Care Centre at 1-855-325-5781.​ 
+​ 
+All trademarks are owned by Société des Produits Nestlé S.A., Vevey, Switzerland, and used under license. ©2026 Nestlé​
+
+------=_NextPart_749_3A112308.3A112308
+Content-Type: text/html;
+	charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"en" xmlns:v=3D"urn:schemas-microsoft-com:vml" xmlns:o=3D"urn:=
+schemas-microsoft-com:office:office">
+<head><meta content=3D"text/html; charset=3Dutf-8" http-equiv=3D"Content-Ty=
+pe">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<meta name=3D"format-detection" content=3D"telephone=3Dno,address=3Dno,emai=
+l=3Dno,date=3Dno,url=3Dno">
+<meta name=3D"x-apple-disable-message-reformatting">
+<meta name=3D"color-scheme" content=3D"light dark">
+<!--Built in London by the ActionRocket team - @ActionRocket -->
+<title>Nespresso</title>
+
+
+
+
+
+<link rel=3D"stylesheet" href=3D"https://fonts.googleapis.com/css2=3Ffamily=
+=3DNoto+Sans:wght@300;400;800&display=3Dswap">  
+<style>
+ @media screen {
+ @font-face {
+  font-family: 'Gustavo-Regular';
+  src: url("https://www.nespresso.com/emailing/NespressoVisuals/common/font=
+s/Other/Gustavo-Regular.woff") format("woff");
+  font-weight: normal; font-style: normal}
+ @font-face {
+  font-family: 'Gustavo-Light';
+  src: url("https://www.nespresso.com/emailing/NespressoVisuals/common/font=
+s/Other/Gustavo-Light.woff") format("woff");
+  font-weight: normal; font-style: normal}
+ @font-face {
+  font-family: 'Gustavo-Bold';
+  src: url("https://www.nespresso.com/emailing/NespressoVisuals/common/font=
+s/Other/Gustavo-Bold.woff") format("woff");
+  font-weight: bold}
+ }
+ </style>
+ 
+<style>
+  body {margin: 0; padding: 0} 
+  table {border-collapse: collapse}
+  #root [x-apple-data-detectors=3Dtrue],
+  a[x-apple-data-detectors=3Dtrue]{color: inherit !important;  text-decorat=
+ion: inherit !important}
+  u + #body a{ color:inherit; text-decoration:none; font-size:inherit; font=
+-family:inherit; font-weight:inherit; line-height:inherit}
+ strong {font-family: 'Gustavo-Bold', Arial, sans-serif;}
+</style>
+ <style>
+  #menuToggle {position: relative;}
+  #menuToggle span {display: block; width: 33px; height: 4px; margin-bottom=
+: 5px; position: relative; background: #000; border-radius: 3px; transform-=
+origin: 4px 0px; transition: transform 0.5s cubic-bezier(0.77,0.2,0.05,1.0)=
+,opacity 0.55s ease;}
+  #menuToggle .top {transform-origin: 0% 0%;}
+  #menuToggle .bottom {transform-origin: 0% 100%;}
+  #menu:checked ~* .top {transform: rotate(45deg) translate(-3px, -1px);}
+  #menu:checked ~* .middle {opacity: 0; transform: rotate(0deg) scale(0.2, =
+0.2);}
+  #menu:checked ~* .bottom {transform: rotate(-45deg) translate(-1px, -1px)=
+;}
+  #menu:checked ~* .menutray {height: 230px;}
+ </style>
+ <style>
+ @media screen and (max-width:640px) {
+  table tbody tr { width: 100%!important; display: table!important;}
+ .w100pcmax {width: auto!important; height: auto!important; max-width: 100%=
+!important; display: block!important}
+ .w100pc {width: 100%!important; min-width: 100%!important; max-width: 1000=
+px!important; height: auto!important}
+ .nomob {display: none!important}
+ .show {display: block!important}
+ .unstack { display: table-cell!important}
+ .noborder {border: none!important}
+ .arrow { display: block!important; width: 50%!important; height: auto!impo=
+rtant}
+ .showstatus { display: table-cell!important; height: auto!important; overf=
+low: visible!important; float: none!important; max-height: inherit!importan=
+t; padding: 10px 15px 0px 0px!important}
+ .statusimg { width: 30px!important; height: auto!important}
+ .mobilecontent { width: 100%!important; display: block!important; max-heig=
+ht: none!important; max-width: 100%!important}
+ .clearheight { height: auto!important}
+ .h42vw { height: 42vw!important}
+ .w100 {width: 28vw!important; max-width: 150px!important}
+ .w100pcvw { width: 100%!important; max-width: 1000px!important; height: 44=
+.5vw!important}
+ .w54px {width: 54px!important}
+ .w80px { width: 80px!important}
+ .w200px { width: 200px!important}
+ .w270px { width: 270px!important}
+ .w290px {width: 290px!important}
+  
+ .wmax200px { max-width: 200px!important}
+
+ .w80pc { width:80%!important; max-width:1000px!important; height:auto!impo=
+rtant}
+ .w60pc { width:60%!important; max-width:1000px!important; height:auto!impo=
+rtant}
+ .w50pc { width:50%!important; max-width:1000px!important; height:auto!impo=
+rtant}
+ .w40pc { width:40%!important; max-width:1000px!important; height:auto!impo=
+rtant} 
+ .colsplit {width: 100%!important;float: left!important;display: block!impo=
+rtant}
+ .colsplit-top {width: 100%!important;display: table-row-group!important}
+ .colsplit-bottom {width: 100%!important;display: table-footer-group!import=
+ant}
+ .colsplitborder {width: 100%!important;float: left!important;display: bloc=
+k!important;border-bottom: 1px solid #eae9e5}
+ .clear-border { border: 0px!important}
+ .bd-bottom  { border-bottom:1px solid #8d8d8d !important}
+ .bd-left  { border-left:1px solid #8d8d8d !important}
+ .bd-right  { border-right:1px solid #8d8d8d !important}
+ .bd-top { border-top:1px solid #8d8d8d !important}
+ .center { text-align: center!important}
+ .left { text-align: left!important}
+ .right { text-align: right!important}
+ .fs52 { font-size: 52px!important; line-height: 1.2!important}
+ .fs48 { font-size: 48px!important; line-height: 1.2!important}
+ .fs46 { font-size: 46px!important; line-height: 1.2!important}
+ .fs44 { font-size: 44px!important; line-height: 1.2!important}
+ .fs42 { font-size: 42px!important; line-height: 1.2!important}
+ .fs40 { font-size: 40px!important; line-height: 1.2!important}
+ .fs38 { font-size: 38px!important; line-height: 1.2!important}
+ .fs36 { font-size: 36px!important; line-height: 1.2!important}
+ .fs34 { font-size: 34px!important; line-height: 1.2!important}
+ .fs32 { font-size: 32px!important; line-height: 1.2!important}
+ .fs30 { font-size: 30px!important; line-height: 1.2!important}
+ .fs28 { font-size: 28px!important; line-height: 1.2!important}
+ .fs26 { font-size: 26px!important; line-height: 1.2!important}
+ .fs24 { font-size: 24px!important; line-height: 1.2!important}
+ .fs22 { font-size: 22px!important; line-height: 1.2!important}
+ .fs20 { font-size: 20px!important; line-height: 1.2!important}
+ .fs18 { font-size: 18px!important; line-height: 1.5!important}
+ .fs16 { font-size: 16px!important; line-height: 1.5!important}
+ .fs14 { font-size: 14px!important; line-height: 1.5!important}
+ .nopadtop { padding-top: 0px!important}
+ .nopadbot { padding-bottom: 0px!important} 
+ .nopad { padding: 0px!important}
+ .nosidepad {padding-left:0!important;padding-right:0!important}
+ .gpad, .mobpad {padding-left: 15px!important; padding-right: 15px!importan=
+t}
+ .pb15 { padding-bottom: 15px!important}
+ .pb20 { padding-bottom: 20px!important}
+ .pb30 { padding-bottom: 30px!important}
+ .pl15 { padding-left: 15px!important}
+ .pl30 { padding-left: 30px!important}    
+ .pr15 { padding-right: 15px!important}
+ .pr30 { padding-right: 30px!important}
+ .pt15 { padding-top: 15px!important}
+ .pt20 { padding-top: 20px!important}
+ .pt30 { padding-top: 30px!important}
+ .pm15 { margin-bottom: 15px!important}
+=2Emgs15 { margin-left: 15px!important; margin-right: 15px!important}
+ .clearbg { background: none!important}
+ .valignmobtop { vertical-align: top!important}
+ .valignmobmiddle { vertical-align: middle!important}
+ .valignmobbottom { vertical-align: bottom!important}
+ }
+ @media screen and (max-width:640px) {
+  @supports(--css: variables) {
+   .showmenu { display: inline-block!important; max-height: inherit!importa=
+nt; overflow: visible!important; position: relative;  left: 40px;  top: -20=
+px;} 
+   .pl35 { padding-left: 40px!important;}
+  }
+ .menuitem {width: 100%;display: block;border-bottom: 1px solid #e3e3e3;}
+ .menutext {margin: 10px 0 !important;}
+ .menutray {height: 0;overflow: hidden;transition: all 0.5s ease;}
+ }
+ </style>
+ <style>
+ u + #body .gmail { display: none!important; }
+ u + #body .gmailshow { display: inline-block!important}
+ </style>
+ 
+ 
+ <style>  
+ @supports(--css: variables) {
+ .fallback { display: none !important}
+ .interactive { display: block !important; max-height: none !important}
+ }
+ .hvr-fade:hover, .hvr-fade:focus, .hvr-fade:active {background-color:#d9ca=
+af; color: white} 
+ </style>  
+ <style>
+ :root { color-scheme: light dark; supported-color-schemes: light dark}
+ @media (prefers-color-scheme: dark) {
+  #menuToggle span {background: #fff;} 
+  .lightimage {display: none !important}
+  .darkimageWrapper, .darkimage {display: block !important; height: auto !i=
+mportant}
+  .darkimagelogo {display: inline-block !important; height: auto !important=
+}
+  td, th { background-color: rgb(21, 19, 18)!important}       
+  * { color: rgb(255, 255, 255) !important; -webkit-text-fill-color: rgb(25=
+5, 255, 255) !important} 
+  td.button, div[class^=3D"open"] { background-color: #6d6d6d !important;  =
+background-image: linear-gradient(rgb(109,109,109),rgb(109,109,109)) !impor=
+tant}  
+  table.button.linkonly{ border:none!important}
+  table.button.linkonly td.button{ background-color:transparent!important; =
+background-image:none!important; border:none!important}   
+  table.button.linkonly td.button a{text-decoration:underline!important}
+  td.button a {text-decoration:none!important} 
+  .light {background-color: transparent!important}    
+  .bghide {background: none !important}
+  .serv6_txt {color: #000000 !important;-webkit-text-fill-color: rgb(0, 0, =
+0) !important}  
+ .serv6_left, .serv6_left td, .serv6_left th { background-color: rgb(242, 2=
+42, 242)!important} 
+ .serv6_right, .serv6_right td, .serv6_right th { background-color: rgb(217=
+, 217, 217)!important} 
+ }   
+ [data-ogsc] .lightimage {display: none !important}
+ [data-ogsc] .darkimage {display: block !important;  height: auto !importan=
+t}
+ [data-ogsb] td, [data-ogsb] th { background-color: rgb(21, 19, 18)!importa=
+nt}       
+ [data-ogsb] {color: rgb(255, 255, 255) !important;-webkit-text-fill-color:=
+ rgb(255, 255, 255) !important}
+ [data-ogsb] td.button {  background-color: #6d6d6d !important;  background=
+-image: linear-gradient(rgb(109,109,109),rgb(109,109,109)) !important}
+ [data-ogsb] table.button.linkonly td.button { background-color:transparent=
+ !important; background-image:none !important; border:none !important}
+ [data-ogsb] .bghide {background: none !important}
+ [data-ogsb] td.button a {text-decoration:none!important}
+ [data-ogsb] .light {background-color: transparent!important}  
+ [data-ogsb] .serv6_txt {color: #000000 !important;-webkit-text-fill-color:=
+ rgb(0, 0, 0) !important}
+ [data-ogsb] .serv6_left, [data-ogsb] .serv6_left td, [data-ogsb] .serv6_le=
+ft th { background-color: rgb(242, 242, 242)!important} 
+ [data-ogsb] .serv6_right, [data-ogsb] .serv6_right td, [data-ogsb] .serv6_=
+right th { background-color: rgb(217, 217, 217)!important}
+ </style>
+     
+ </head>
+ <body xml:lang=3D"en" id=3D"body" xml:lang=3D"en">
+<div role=3D"article" aria-roledescription=3D"email" aria-label=3D"email na=
+me" lang=3D"en" dir=3D"ltr" style=3D"font-size:medium; font-size:max(16px, =
+1rem)">
+<div style=3D"display:none">   
+</div>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;" class=3D"nomob"><tr><td align=3D"cent=
+er">
+<table role=3D"none" width=3D"640" border=3D"0" cellpadding=3D"0" cellspaci=
+ng=3D"0" style=3D"width: 640px; " class=3D"w100pc"><tr><td align=3D"center"=
+ style=3D"padding: 15px 0 15px 0"><p style=3D"font-size: 14px; line-height:=
+1.5; font-family: 'Gustavo-Light', Arial, sans-serif; color: #000000; margi=
+n:0; direction: ltr">
+2 free cups with your coffee order | View this email
+<a target=3D"_blank" style=3D"color: #000000; text-decoration: underline" h=
+ref=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5f612c1a&e=
+=3DcDE9UlVHeEptdlhUcFo5Uk4lMkZ1SmhPJTJCY2xEN04wYXl5aE1n&s=3DM-jU-_Uj4zHLfGX=
+2hxuU-6eBK7SakQGMEHYsS7SbkRk" _type=3D"mirrorPage">online</a></p>
+</td></tr></table>
+</td></tr></table><!--[if !mso]><!-- --><input type=3D"checkbox" id=3D"menu=
+" style=3D"width:0px; height:0px; margin:0px; overflow:hidden; display: blo=
+ck"><!--<![endif]-->
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;" class=3D"w100pc">
+<tr>
+<td align=3D"center">
+<table role=3D"none" width=3D"640" border=3D"0" cellpadding=3D"0" cellspaci=
+ng=3D"0" style=3D"width: 640px; " class=3D"w100pc">
+<tr>
+<td align=3D"center" class=3D"pt20" style=3D"padding: 0px 0 0px">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0">
+<tr>
+<td align=3D"center" style=3D"padding:0 0 20px">
+<a target=3D"_blank" href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97=
+,5beb5de2,5f612c1b"><img src=3D"https://www.nespresso.com/emailing/campaign=
+factory/eds/Nespresso-logo.png" alt=3D"Nespresso: the coffee experience of =
+superior taste and quality." width=3D"80" style=3D"display: block" class=3D=
+"lightimage">
+<div class=3D"darkimageWrapper" style=3D"mso-hide: all; display: none">
+<img src=3D"https://www.nespresso.com/emailing/campaignfactory/eds/Nespress=
+o-logo-white.png" width=3D"80" alt=3D"Nespresso: the coffee experience of s=
+uperior taste and quality." class=3D"darkimage" style=3D"display: none">
+</div>
+</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<div style=3D"display:none"> <img src=3D"https://login.dotomi.com/ucm/UCMCo=
+ntroller=3Fdtm_com=3D2&dtm_cid=3D80786&dtm_cmagic=3Dc6d4d1&dtm_fid=3D103&dt=
+m_format=3D6&cli_promo_id=3D99&dtm_email_hash=3Dbc9a7e951e1eb0dda809f0109a3=
+95d3a613d19a777cb370c1b876641387118ec&dtm_user_id=3D10726552&dtmc_drop_id=
+=3DDM0000000&dtmc_country_code=3DCA&dtmc_language=3DEN" width=3D"1" height=
+=3D"1" border=3D"0" alt=3D"">
+</div>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 30px; padding-bottom: 0px">
+<img src=3D"https://gen.sendtric.com/countdown/g7zmie26j4" alt=3D"" width=
+=3D"400" style=3D"display:block;height:auto" class=3D"w100pc">
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 60px; padding-bottom: 30px"><tab=
+le role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=3D"=
+width: 620px" class=3D"w100pc">
+<tr>
+<td>
+<h2 align=3D"center" style=3D"font-size: 40px; font-family: 'Gustavo-Bold',=
+ Arial, sans-serif; font-weight: bold; color:#000000; margin: 0 15px; text-=
+transform:uppercase; direction: ltr" class=3D"fs30 ">
+ENJOY A free GIFT exclusively ON the app
+</h2></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 15px; padding-bottom: 15px">
+<a href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5f612c1c=
+"><img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA46103/hero.=
+jpg" alt=3D"" width=3D"640" style=3D"display:block;height:auto" class=3D"w1=
+00pc">
+</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 15px; padding-bottom: 15px"><tab=
+le role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=3D"=
+width: 530px" class=3D"w100pc">
+<tr>
+<td>
+<h2 align=3D"center" style=3D"font-size: 24px; font-family: 'Gustavo-Light'=
+, Arial, sans-serif; font-weight: normal;line-height: 1.2; color:#000000; m=
+argin: 0 15px; text-transform:uppercase; direction: ltr" class=3D"fs24 ">
+LAST CHANCE <br><strong style=3D"font-family: 'Gustavo-Bold', Arial, sans-s=
+erif">TO get 2 Origin Gran Lungo cups</strong>
+</h2></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 15px; padding-bottom: 30px"><tab=
+le role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=3D"=
+width: 530px" class=3D"w100pc">
+<tr>
+<td>
+<h2 align=3D"center" style=3D"font-size: 18px; font-family: 'Gustavo-Light'=
+, Arial, sans-serif; font-weight: normal;line-height: 1; color:#000000; mar=
+gin: 0 15px;  direction: ltr">
+with your $139 coffee order on the&nbsp;app*. <br>($40 value)
+</h2></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#a08bcb;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 40px; padding-bottom: 15px"><tab=
+le role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=3D"=
+width: 530px" class=3D"w100pc">
+<tr>
+<td>
+<h2 align=3D"center" style=3D"font-size: 28px; font-family: 'Gustavo-Bold',=
+ Arial, sans-serif; font-weight: bold;line-height: 1; color:#000000; margin=
+: 0 15px;  direction: ltr" class=3D"fs24 ">
+Visit or download the app to <br class=3D"nomob"/>enjoy the offer
+</h2></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;" class=3D"nomob">
+<tr>
+<td>
+<table align=3D"center" role=3D"none" border=3D"0" cellpadding=3D"0" cellsp=
+acing=3D"0" style=3D"width:640px;background:#a08bcb;" class=3D"w100pc">
+<tr>
+<td><span style=3D"line-height:20px;height:20px">=E2=80=8A</span></td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 0px; padding-bottom: 0px">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#a08bcb;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding: 0">
+<table role=3D"none" width=3D"100%" border=3D"0" cellspacing=3D"0" cellpadd=
+ing=3D"0">
+<tr><!-- COLUMN 1 -->
+<th width=3D"310" valign=3D"top" class=3D"colsplit" style=3D"font-weight: n=
+ormal">
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" width=
+=3D"100%" class=3D"w100pc" style=3D"width: 100%"><!-- Column 1 Heading Text=
+ Top --><!-- Column 1 Top Image -->
+<tr>
+<td>
+<table role=3D"none" width=3D"100%" border=3D"0" cellpadding=3D"0" cellspac=
+ing=3D"0" style=3D"width:100%" class=3D"w100pc" bgcolor=3D"#a08bcb">
+<tr>
+<td align=3D"center" valign=3D"top"><!--[if !mso]><!-->
+<div class=3D"mobilecontent" style=3D"display:none;max-height:0px;overflow:=
+hidden"><a href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,=
+5f612c1d"><img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA461=
+03/apple_badge.png" width=3D"0" height=3D"0" border=3D"0" alt=3D"" style=3D=
+"display: block" class=3D"w100pc"></a></div><!--<![endif]-->
+<a href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5f612c1e=
+"><img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA46103/apple=
+_code.png" width=3D"310" border=3D"0" style=3D"display:block;height: auto; =
+max-width:100%" alt=3D"" class=3D"nomob"></a>
+</td>
+</tr>
+</table>
+</td>
+</tr><!-- Column 1 Second Image --><!-- Column 1 Text Content Area --><!-- =
+Column 1 Third Image --><!-- Column 1 Fourth Image --><!-- Column 1 Bottom =
+Heading -->
+</table>
+</th><!-- Gap Spacer -->
+<th class=3D"colsplit" style=3D"font-weight: normal;background:#a08bcb">
+<img src=3D"https://www.nespresso.com/emailing/emailing/globalassets/sp.gif=
+" alt=3D"" height=3D"20" width=3D"20" style=3D"display: block" class=3D"nom=
+ob">
+</th><!-- COLUMN 2 -->
+<th width=3D"310" valign=3D"top" class=3D"colsplit" style=3D"font-weight: n=
+ormal">
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" width=
+=3D"100%" class=3D"w100pc" style=3D"width: 100%"><!-- Column 2 Heading Text=
+ Top --><!-- Column 2 Top Image -->
+<tr>
+<td>
+<table role=3D"none" width=3D"100%" border=3D"0" cellpadding=3D"0" cellspac=
+ing=3D"0" style=3D"width:100%" class=3D"w100pc" bgcolor=3D"#a08bcb">
+<tr>
+<td align=3D"center" valign=3D"top"><!--[if !mso]><!-->
+<div class=3D"mobilecontent" style=3D"display:none;max-height:0px;overflow:=
+hidden"><a href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,=
+5f612c1f"><img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA461=
+03/android_badge.png" width=3D"0" height=3D"0" border=3D"0" alt=3D"" style=
+=3D"display: block" class=3D"w100pc"></a></div><!--<![endif]-->
+<a href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5f612c20=
+"><img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA46103/andro=
+id_code.png" width=3D"310" border=3D"0" style=3D"display:block;height: auto=
+; max-width:100%" alt=3D"" class=3D"nomob"></a>
+</td>
+</tr>
+</table>
+</td>
+</tr><!-- Column 2 Second Image --><!-- Column 2 Text Content Area --><!-- =
+Column 2 Third Image --><!-- Column 2 Fourth Image --><!-- Column 2 Bottom =
+Heading -->
+</table>
+</th>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;">
+<tr>
+<td align=3D"center"><table role=3D"none" border=3D"0" cellpadding=3D"0" ce=
+llspacing=3D"0" style=3D"width:640px;background:#a08bcb;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 15px; padding-bottom: 50px"><tab=
+le role=3D"none" width=3D"600" border=3D"0" cellpadding=3D"0" cellspacing=
+=3D"0" class=3D"w100pc" style=3D"width: 600px">
+<tr>
+<td>
+<p align=3D"center" style=3D"font-size: 16px; font-family: 'Gustavo-Light',=
+ Arial, sans-serif; line-height:1.5; color: #000000; text-decoration: none;=
+ margin: 0px 15px;  direction: ltr">
+*Only available on Nespresso capsules.<br>Starbucks<sup>&reg;</sup> capsule=
+s by Nespresso is excluded from the promotion.
+</p></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 60px; padding-bottom: 15px"><tab=
+le role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=3D"=
+width: 600px" class=3D"w100pc">
+<tr>
+<td>
+<h2 align=3D"center" style=3D"font-size: 28px; font-family: 'Gustavo-Bold',=
+ Arial, sans-serif; font-weight: bold;line-height: 1; color:#000000; margin=
+: 0 15px; text-transform:uppercase; direction: ltr" class=3D"fs24 ">
+Discover the spring collection available on the&nbsp;app
+</h2></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 15px; padding-bottom: 15px"><tab=
+le role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=3D"=
+width: 530px" class=3D"w100pc">
+<tr>
+<td>
+<h2 align=3D"center" style=3D"font-size: 18px; font-family: 'Gustavo-Light'=
+, Arial, sans-serif; font-weight: normal;line-height: 1; color:#000000; mar=
+gin: 0 15px;  direction: ltr">
+Access our seasonal selection: new capsules and inspiring accessories
+</h2></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 15px; padding-bottom: 15px">
+<img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA46103/image1.=
+jpg" alt=3D"" width=3D"610" style=3D"display:block;height:auto" class=3D"w1=
+00pc">
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 0px; padding-bottom: 0px">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding: 0">
+<table role=3D"none" width=3D"100%" border=3D"0" cellspacing=3D"0" cellpadd=
+ing=3D"0">
+<tr><!-- COLUMN 1 -->
+<th width=3D"310" valign=3D"top" class=3D"colsplit" style=3D"font-weight: n=
+ormal">
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" width=
+=3D"100%" class=3D"w100pc" style=3D"width: 100%"><!-- Column 1 Heading Text=
+ Top --><!-- Column 1 Top Image --><!-- Column 1 Second Image -->
+<tr>
+<td>
+<table role=3D"none" width=3D"100%" border=3D"0" cellpadding=3D"0" cellspac=
+ing=3D"0" style=3D"width:100%" class=3D"w100pc" bgcolor=3D"#F2EBE7">
+<tr>
+<td align=3D"center" valign=3D"top"><!--[if !mso]><!-->
+<div class=3D"mobilecontent" style=3D"display:none;max-height:0px;overflow:=
+hidden"><img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA46103=
+/image2.png" width=3D"0" height=3D"0" border=3D"0" alt=3D"" style=3D"displa=
+y: block" class=3D"w100pc"></div><!--<![endif]-->
+<img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA46103/woman_g=
+ap.png" width=3D"310" border=3D"0" style=3D"display:block;height: auto; max=
+-width:100%" alt=3D"" class=3D"nomob">
+</td>
+</tr>
+</table>
+</td>
+</tr><!-- Column 1 Text Content Area --><!-- Column 1 Third Image --><!-- C=
+olumn 1 Fourth Image --><!-- Column 1 Bottom Heading -->
+</table>
+</th><!-- Gap Spacer -->
+<th class=3D"colsplit" style=3D"font-weight: normal;">
+<img src=3D"https://www.nespresso.com/emailing/emailing/globalassets/sp.gif=
+" alt=3D"" height=3D"20" width=3D"20" style=3D"display: block">
+</th><!-- COLUMN 2 -->
+<th width=3D"310" valign=3D"top" class=3D"colsplit" style=3D"font-weight: n=
+ormal">
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" width=
+=3D"100%" class=3D"w100pc" style=3D"width: 100%"><!-- Column 2 Heading Text=
+ Top --><!-- Column 2 Top Image --><!-- Column 2 Second Image -->
+<tr>
+<td>
+<table role=3D"none" width=3D"100%" border=3D"0" cellpadding=3D"0" cellspac=
+ing=3D"0" style=3D"width:100%" class=3D"w100pc" bgcolor=3D"#F2EBE7">
+<tr>
+<td align=3D"center" valign=3D"top"><!--[if !mso]><!-->
+<div class=3D"mobilecontent" style=3D"display:none;max-height:0px;overflow:=
+hidden"><img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA46103=
+/image3.png" width=3D"0" height=3D"0" border=3D"0" alt=3D"" style=3D"displa=
+y: block" class=3D"w100pc"></div><!--<![endif]-->
+<img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA46103/kit_gap=
+.png" width=3D"310" border=3D"0" style=3D"display:block;height: auto; max-w=
+idth:100%" alt=3D"" class=3D"nomob">
+</td>
+</tr>
+</table>
+</td>
+</tr><!-- Column 2 Text Content Area --><!-- Column 2 Third Image --><!-- C=
+olumn 2 Fourth Image --><!-- Column 2 Bottom Heading -->
+</table>
+</th>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding: 15px 15px 15px 15px">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"border: 1px solid #000000;background-color: #000000; display: inline-bl=
+ock" class=3D"button ">
+<tr>
+<td align=3D"center" style=3D"padding: 12px 40px; mso-padding-alt: 10px 40p=
+x 16px; direction: ltr" class=3D"button">
+<a style=3D"text-decoration: none; color: #F2EBE7; font-size: 16px; display=
+:inline-block; line-height:1.5; text-transform:uppercase;; text-align:cente=
+r; font-family: 'Gustavo-Regular', Arial, sans-serif; font-weight: normal!i=
+mportant" href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5=
+f612c21">Available on the App
+</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#EABA94;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 30px; padding-bottom: 0px"><tabl=
+e role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=3D"w=
+idth: 530px" class=3D"w100pc">
+<tr>
+<td>
+<h2 align=3D"center" style=3D"font-size: 48px; font-family: 'Gustavo-Bold',=
+ Arial, sans-serif; font-weight: bold;line-height: 1.2; color:#000000; marg=
+in: 0 15px; text-transform:uppercase; direction: ltr" class=3D"fs40 ">
+VERTUO UP
+</h2></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#eaba94;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 0px; padding-bottom: 15px"><tabl=
+e role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=3D"w=
+idth: 530px" class=3D"w100pc">
+<tr>
+<td>
+<h2 align=3D"center" style=3D"font-size: 38px; font-family: 'Gustavo-Light'=
+, Arial, sans-serif; font-weight: normal;line-height: 1.2; color:#000000; m=
+argin: 0 15px;  direction: ltr" class=3D"fs24 ">
+New colours reveal
+</h2></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;">
+<tr>
+<td align=3D"center"><table role=3D"none" border=3D"0" cellpadding=3D"0" ce=
+llspacing=3D"0" style=3D"width:640px;background:#eaba94;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 15px; padding-bottom: 15px"><tab=
+le role=3D"none" width=3D"530" border=3D"0" cellpadding=3D"0" cellspacing=
+=3D"0" class=3D"w100pc" style=3D"width: 530px">
+<tr>
+<td>
+<p align=3D"center" style=3D"font-size: 16px; font-family: 'Gustavo-Light',=
+ Arial, sans-serif; line-height:1.5; color: #000000; text-decoration: none;=
+ margin: 0px 15px;  direction: ltr">
+Introducing our <strong style=3D"font-family: 'Gustavo-Bold', Arial, sans-s=
+erif">latest innovation - Vertuo Up</strong> - now available in two new&nbs=
+p;colours!
+</p></td>
+</tr>
+</table></td>
+</tr>
+</table></td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#FFFFFF;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 0px; padding-bottom: 0px">
+<img src=3D"https://www.nespresso.com/emailing/taxi/2026/CA/CA46103/machine=
+.jpg" alt=3D"" width=3D"640" style=3D"display:block;height:auto" class=3D"w=
+100pc">
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding: 15px 15px 15px 15px">
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0" style=
+=3D"border: 1px solid #000000;background-color: #000000; display: inline-bl=
+ock" class=3D"button ">
+<tr>
+<td align=3D"center" style=3D"padding: 12px 40px; mso-padding-alt: 10px 40p=
+x 16px; direction: ltr" class=3D"button">
+<a style=3D"text-decoration: none; color: #F2EBE7; font-size: 16px; display=
+:inline-block; line-height:1.5; text-transform:uppercase;; text-align:cente=
+r; font-family: 'Gustavo-Regular', Arial, sans-serif; font-weight: normal!i=
+mportant" href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5=
+f612c22">Shop Now
+</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#FFFFFF;" class=3D"nomob">
+<tr>
+<td>
+<table align=3D"center" role=3D"none" border=3D"0" cellpadding=3D"0" cellsp=
+acing=3D"0" style=3D"width:640px;background:#F2EBE7;" class=3D"w100pc">
+<tr>
+<td><span style=3D"line-height:80px;height:80px">=E2=80=8A</span></td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"border-top: 1px solid #eae9e5;">
+<table role=3D"none" border=3D"0" align=3D"center" cellpadding=3D"0" cellsp=
+acing=3D"0" style=3D"width: 640px;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 15px; padding-bottom: 15px;">
+<table role=3D"none" width=3D"530" border=3D"0" align=3D"center" cellpaddin=
+g=3D"0" cellspacing=3D"0" class=3D"w100pc" style=3D"width: 530px;">
+<tr>
+<td>
+<p valign=3D"top" align=3D"center" style=3D"font-size: 16px; font-family: '=
+Gustavo-Light', Arial, sans-serif; font-weight: normal;line-height: 1; colo=
+r: #000000; text-decoration: none; margin: 0px 15px;  direction: ltr;">
+Club Member Number: 10726552
+</p>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff; border-top: 1px solid #eae9e5" class=
+=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 20px; padding-bottom: 20px;">
+<table role=3D"none" border=3D"0" align=3D"center" cellpadding=3D"0" cellsp=
+acing=3D"0">
+<tr>
+<th class=3D"colsplit" style=3D"font-weight: normal;">
+<p align=3D"center" valign=3D"top" style=3D"font-size: 16px; font-family: '=
+Gustavo-Light', Arial, sans-serif; font-weight: normal;line-height: 1; colo=
+r: #000000; margin: 0; text-decoration: none;  direction: ltr;" class=3D"pm=
+15 ">
+Share your #Nespressomoments
+</p>
+</th>
+<th class=3D"colsplit" style=3D"font-weight: normal;">
+<table role=3D"none" border=3D"0" align=3D"center" cellpadding=3D"0" cellsp=
+acing=3D"0">
+<tr>
+<td style=3D"padding: 0 10px;"><a href=3D"https://t.ca.nespresso.com/r/=3Fi=
+d=3Dhd01eac97,5beb5de2,5f612c23"><img src=3D"https://www.nespresso.com/emai=
+ling/campaignfactory/eds/facebook.png" width=3D"20" style=3D"display: block=
+; height: auto;" class=3D"lightimage" alt=3D"Facebook">
+<div class=3D"darkimageWrapper" style=3D"mso-hide: all; display: none;">
+<img src=3D"https://www.nespresso.com/emailing/app1/2021/template_images/fa=
+cebook-dark.png" width=3D"20" class=3D"darkimage" style=3D"display: none; m=
+so-hide: all; height:0px" alt=3D"Facebook">
+</div>
+</a></td>
+<td style=3D"padding: 0 10px;"><a href=3D"https://t.ca.nespresso.com/r/=3Fi=
+d=3Dhd01eac97,5beb5de2,5f612c24"><img src=3D"https://www.nespresso.com/emai=
+ling/app1/2022/template-images/twitter-default.png" width=3D"26" style=3D"d=
+isplay: block; height: auto;" class=3D"lightimage" alt=3D"X">
+<div class=3D"darkimageWrapper" style=3D"mso-hide: all; display: none;">
+<img src=3D"https://www.nespresso.com/emailing/app1/2022/template-images/tw=
+itter-DM.png" width=3D"26" class=3D"darkimage" style=3D"display: none; mso-=
+hide: all; height:0px" alt=3D"X">
+</div>
+</a></td>
+<td style=3D"padding: 0 10px;"><a href=3D"https://t.ca.nespresso.com/r/=3Fi=
+d=3Dhd01eac97,5beb5de2,5f612c25"><img src=3D"https://www.nespresso.com/emai=
+ling/campaignfactory/eds/youtube.png" width=3D"26" style=3D"display: block;=
+ height: auto;" class=3D"lightimage" alt=3D"YouTube">
+<div class=3D"darkimageWrapper" style=3D"mso-hide: all; display: none;">
+<img src=3D"https://www.nespresso.com/emailing/app1/2021/template_images/yo=
+utube-dark.png" width=3D"26" class=3D"darkimage" style=3D"display: none; ms=
+o-hide: all; height:0px" alt=3D"YouTube">
+</div>
+</a></td>
+<td style=3D"padding: 0 10px;"><a href=3D"https://t.ca.nespresso.com/r/=3Fi=
+d=3Dhd01eac97,5beb5de2,5f612c26"><img src=3D"https://www.nespresso.com/emai=
+ling/campaignfactory/eds/instagram.png" width=3D"26" style=3D"display: bloc=
+k; height: auto;" class=3D"lightimage" alt=3D"Instagram">
+<div class=3D"darkimageWrapper" style=3D"mso-hide: all; display: none;">
+<img src=3D"https://www.nespresso.com/emailing/app1/2021/template_images/in=
+stagram-dark.png" width=3D"26" class=3D"darkimage" style=3D"display: none; =
+mso-hide: all; height:0px" alt=3D"Instagram">
+</div>
+</a></td>
+</tr>
+</table>
+</th>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff; border-top: 1px solid #eae9e5">
+<tr>
+<td align=3D"center">
+<table role=3D"none" border=3D"0" align=3D"center" cellpadding=3D"0" cellsp=
+acing=3D"0" style=3D"width:640px;" class=3D"w100pc">
+<tr>
+<td align=3D"center" style=3D"padding-top: 20px; padding-bottom: 20px;">
+<table role=3D"none" border=3D"0" align=3D"center" cellpadding=3D"0" cellsp=
+acing=3D"0" class=3D"w100pc" style=3D"width: 640px;">
+<tr>
+<td valign=3D"top" align=3D"center">
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0">
+<tr>
+<th class=3D"colsplit" style=3D"font-weight: normal;vertical-align:top;" al=
+ign=3D"center">
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0">
+<tr>
+<td align=3D"center" valign=3D"top" style=3D"padding:10px 0 0; width:120px"=
+>
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0">
+<tr>
+<td align=3D"center" valign=3D"middle" style=3D"display:block; padding: 10p=
+x 0px 10px 0;">
+<a style=3D"color: #000000; text-decoration: none;" href=3D"https://t.ca.ne=
+spresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5f612c27"><img src=3D"https://www.=
+nespresso.com/emailing/campaignfactory/eds/picto/delivery_light.png" alt=3D=
+"" width=3D"92" style=3D"display: block; height: auto;" class=3D"lightimage=
+">
+<div class=3D"darkimageWrapper" style=3D"mso-hide: all; display: none;">
+<img src=3D"https://www.nespresso.com/emailing/campaignfactory/eds/picto/de=
+livery_dark.png" alt=3D"" width=3D"92" class=3D"darkimage" style=3D"display=
+: none; mso-hide: all; height:0px">
+</div>
+<p style=3D" margin: 10px 0; font-size: 14px; font-family: 'Gustavo-Light',=
+ Arial, sans-serif; font-weight: normal;line-height: 1; direction: ltr;">
+For orders above&nbsp; $75
+</p>
+</a>
+</td>
+</tr>
+</table>
+</td>
+<td style=3D"width:30px">&nbsp;</td>
+<td align=3D"center" valign=3D"top" style=3D"padding:10px 0 0; width:120px"=
+>
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0">
+<tr>
+<td align=3D"center" valign=3D"middle" style=3D"display:block; padding: 10p=
+x 0px 10px 0;">
+<a style=3D"color: #000000; text-decoration: none;" href=3D"https://t.ca.ne=
+spresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5f612c28"><img src=3D"https://www.=
+nespresso.com/emailing/campaignfactory/eds/picto/boutique_light.png" alt=3D=
+"" width=3D"92" style=3D"display: block; height: auto;" class=3D"lightimage=
+">
+<div class=3D"darkimageWrapper" style=3D"mso-hide: all; display: none;">
+<img src=3D"https://www.nespresso.com/emailing/campaignfactory/eds/picto/bo=
+utique_dark.png" alt=3D"" width=3D"92" class=3D"darkimage" style=3D"display=
+: none; mso-hide: all; height:0px">
+</div>
+<p style=3D" margin: 10px 0; font-size: 14px; font-family: 'Gustavo-Light',=
+ Arial, sans-serif; font-weight: normal;line-height: 1; direction: ltr;">
+Visit or pick up your order in boutique
+</p>
+</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</th>
+<th class=3D"nomob" style=3D"width:30px">&nbsp;</th>
+<th class=3D"colsplit" style=3D"font-weight: normal;vertical-align:top;" al=
+ign=3D"center">
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0">
+<tr>
+<td align=3D"center" valign=3D"top" style=3D"padding:10px 0 0; width:120px"=
+>
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0">
+<tr>
+<td align=3D"center" valign=3D"middle" style=3D"display:block; padding: 10p=
+x 0px 10px 0;">
+<a style=3D"color: #000000; text-decoration: none;" href=3D"https://t.ca.ne=
+spresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5f612c29"><img src=3D"https://www.=
+nespresso.com/emailing/campaignfactory/eds/picto/recycling_light.png" alt=
+=3D"" width=3D"92" style=3D"display: block; height: auto;" class=3D"lightim=
+age">
+<div class=3D"darkimageWrapper" style=3D"mso-hide: all; display: none;">
+<img src=3D"https://www.nespresso.com/emailing/campaignfactory/eds/picto/re=
+cycling_dark.png" alt=3D"" width=3D"92" class=3D"darkimage" style=3D"displa=
+y: none; mso-hide: all; height:0px">
+</div>
+<p style=3D" margin: 10px 0; font-size: 14px; font-family: 'Gustavo-Light',=
+ Arial, sans-serif; font-weight: normal;line-height: 1; direction: ltr;">
+Recycle your used&nbsp;capsules
+</p>
+</a>
+</td>
+</tr>
+</table>
+</td>
+<td style=3D"width:30px">&nbsp;</td>
+<td align=3D"center" valign=3D"top" style=3D"padding:10px 0 0; width:120px"=
+>
+<table role=3D"none" border=3D"0" cellpadding=3D"0" cellspacing=3D"0">
+<tr>
+<td align=3D"center" valign=3D"middle" style=3D"display:block; padding: 10p=
+x 0px 10px 0;">
+<a style=3D"color: #000000; text-decoration: none;" href=3D"https://t.ca.ne=
+spresso.com/r/=3Fid=3Dhd01eac97,5beb5de2,5f612c2a"><img src=3D"https://www.=
+nespresso.com/emailing/campaignfactory/eds/picto/phone24-7_light.png" alt=
+=3D"" width=3D"92" style=3D"display: block; height: auto;" class=3D"lightim=
+age">
+<div class=3D"darkimageWrapper" style=3D"mso-hide: all; display: none;">
+<img src=3D"https://www.nespresso.com/emailing/campaignfactory/eds/picto/ph=
+one24-7_dark.png" alt=3D"" width=3D"92" class=3D"darkimage" style=3D"displa=
+y: none; mso-hide: all; height:0px">
+</div>
+<p style=3D" margin: 10px 0; font-size: 14px; font-family: 'Gustavo-Light',=
+ Arial, sans-serif; font-weight: normal;line-height: 1; direction: ltr;">
+1=E2=80=91855=E2=80=91325=E2=80=915781 or LiveChat for any advice or order
+</p>
+</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</th>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+<table role=3D"none" border=3D"0" cellspacing=3D"0" cellpadding=3D"0" style=
+=3D"width: 100%; background:#ffffff; border-top: 1px solid #eae9e5"><tr><td=
+ align=3D"center" style=3D"padding-top: 20px; padding-bottom: 20px;">
+<table role=3D"none" style=3D"width: 640px;" border=3D"0" cellspacing=3D"0"=
+ cellpadding=3D"0" class=3D"w100pc"><tr><td style=3D"padding: 0 15px 25px 1=
+5px;" align=3D"center">
+<p style=3D"margin:25px 0 0 0;font-size: 14px; font-family: 'Gustavo-Light'=
+, Arial, sans-serif; font-weight: normal;line-height: 1; color:#434343; dir=
+ection: ltr">
+*Receive 2 Origin Gran Lungo cups ($40 value) on $139 coffee order before t=
+axes on the mobile app only, see details below. <br>This offer is valid fro=
+m March 12, at 9:00 a.m. EDT to March 18, 2026, at 2:59 a.m. EDT, while sup=
+plies last. Offer is subject to availability and may be cancelled at any ti=
+me without notice. To be eligible for this promotion, your coffee order mus=
+t reach the $139 threshold and be placed on the Nespresso app only. Offer i=
+ncludes 2 Origin Gran Lungo cups. <br>Orders can be on the Nespresso mobile=
+ app. No substitutions allowed. All food products (including but not limite=
+d to coffee capsules, cookies, sugar sticks, and flavoured syrups) are fina=
+l sale. See our return policy for more information. Offers valid in Canada =
+only and only for Canadian shipping addresses. Offers are not transferable =
+and may be cancelled at any time without notice. Void where prohibited or r=
+estricted. Not valid in combination with any other Nespresso offer or promo=
+tion. <br><br>Offer is subject to stock availability of capsules and do not=
+ include applicable taxes. If any of the above Gift items are out of stock,=
+ Nespresso reserves the right to replace the Gift(s) with a Gift of superio=
+r or equal value. Only Nespresso capsules qualify for the threshold; Starbu=
+cks by Nespresso capsules are excluded from this offer.
+</p>
+<p style=3D"margin:25px 0 0 0;font-size: 14px; font-family: 'Gustavo-Light'=
+, Arial, sans-serif; font-weight: normal;line-height: 1; color:#434343; dir=
+ection: ltr">You are receiving this email from Nespresso Canada, a division=
+ of Nestl=C3=A9 Canada Inc. because you are a Nespresso Club member. You ca=
+n withdraw your consent at any time.=E2=80=8B<br>=E2=80=8B<br>For more info=
+rmation, please refer to our <a style=3D"color:#000000; text-decoration:und=
+erline;" target=3D"_blank" href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd0=
+1eac97,5beb5de2,5f612c2b">Privacy Policy </a>or contact us at Nespresso Can=
+ada, a division of Nestl=C3=A9, P.O. Box 35759, CP L=C3=A9o-Pariseau, Montr=
+=C3=A9al, Qu=C3=A9bec, H2X 0A4. If you have a question for the Nespresso Cl=
+ub, please call 1-855-325-5781 during our <a style=3D"color:#000000; text-d=
+ecoration:underline;" target=3D"_blank" href=3D"https://t.ca.nespresso.com/=
+r/=3Fid=3Dhd01eac97,5beb5de2,5f612c2c">business hours </a>or use the Live C=
+hat option at <a style=3D"color:#000000; text-decoration:underline;" target=
+=3D"_blank" href=3D"https://t.ca.nespresso.com/r/=3Fid=3Dhd01eac97,5beb5de2=
+,5f612c2d">www.nespresso.com</a>.=E2=80=8B<br>=E2=80=8B<br>To Unsubscribe f=
+rom our email marketing and promotion lists, <a style=3D"color:#000000; tex=
+t-decoration:underline;" target=3D"_blank" href=3D"https://t.ca.nespresso.c=
+om/r/=3Fid=3Dhd01eac97,5beb5de2,5f612c2e&e=3DcDE9dW5zdWJzY3JpYmUubmVzcHJlc3=
+NvLmNvbS9jYS9lbi9zaWdub3V0Lmh0bWw_Y21wPUNBNDYxMDNfYjJjX2VtYWlsX2FwcGRheXNfb=
+WFyY2gxMl9ubmFzc2FkbHkmdD00MzQxMjQzMTI0MzEzMDM3MzIzNjM1MzUzMjI0NDU0RTI0MzIz=
+MDMyMzYyRDMwMzMyRDMxMzcmYz0zMTM2MzIzODM2MzE&s=3DnApyxgaHIva8n3-Hpo_5g77K6Fu=
+OCfRSjsRIpjqkF9U" _label=3D"optout link" _type=3D"optout">click here</a> an=
+d allow up to ten (10) days for the change to take effect. Please note that=
+ you may continue to receive transactional email messages from Nespresso Ca=
+nada.=E2=80=8B<br>=E2=80=8B<br>If you have more than one Nespresso account =
+with the same email address, you may continue to receive marketing emails r=
+elated to your other account(s) until you unsubscribe from the other accoun=
+t(s) as well. To unsubscribe from all Nespresso Canada accounts related to =
+this email address, please email us at: <a style=3D"color:#000000; text-dec=
+oration:underline; " target=3D"_blank" href=3D"mailto:casl.ca@nespresso.com=
+=3Fsubject=3DUnsubscribe%20me%20from%20ALL" _label=3D"optout link" _type=3D=
+"optout">casl.ca@nespresso.com</a> or call our Customer Care Centre at 1-85=
+5-325-5781.=E2=80=8B<br>=E2=80=8B<br>All trademarks are owned by Soci=C3=A9=
+t=C3=A9 des Produits Nestl=C3=A9 S.A., Vevey, Switzerland, and used under l=
+icense. =C2=A92026 Nestl=C3=A9=E2=80=8B</p>
+</td></tr></table>
+</td></tr></table>
+</div>
+<span style=3D"display: none">
+<xml>
+<o:officedocumentsettings>
+<o:pixelsperinch>96</o:pixelsperinch>
+</o:officedocumentsettings>
+<w:worddocument>
+<w:dontuseadvancedtypographyreadingmail></w:dontuseadvancedtypographyreadin=
+gmail>
+</w:worddocument>
+</xml>
+</span>
+<img height=3D'0' width=3D'0' alt=3D'' src=3D'https://t.ca.nespresso.com/r/=
+=3Fid=3Dhd01eac97,5beb5de2,1'/></body>
+ </html>
+
+------=_NextPart_749_3A112308.3A112308--
+
