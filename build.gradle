@@ -8,8 +8,8 @@ java {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
-group = 'org.example'
-version = '1.0-SNAPSHOT'
+group = 'com.github.ttereshchenko'
+version = '0.1.0'
 
 repositories {
     mavenCentral()
@@ -29,6 +29,14 @@ dependencies {
 
 intellijPlatform {
     pluginConfiguration {
-        name = 'eml-helper'
+        name = 'EML Helper'
+    }
+    publishing {
+        token = providers.environmentVariable('PUBLISH_TOKEN')
+    }
+    signing {
+        certificateChain = providers.environmentVariable('CERTIFICATE_CHAIN')
+        privateKey = providers.environmentVariable('PRIVATE_KEY')
+        password = providers.environmentVariable('PRIVATE_KEY_PASSWORD')
     }
 }

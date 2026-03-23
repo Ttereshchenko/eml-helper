@@ -1,11 +1,11 @@
-package org.example.highlighting;
+package com.github.ttereshchenko.emlhelper.highlighting;
 
 import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.fileTypes.SyntaxHighlighter;
 import com.intellij.openapi.options.colors.AttributesDescriptor;
 import com.intellij.openapi.options.colors.ColorDescriptor;
 import com.intellij.openapi.options.colors.ColorSettingsPage;
-import org.example.settings.EmlHeaderSettings;
+import com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettings;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+  <!-- Envelope body -->
+  <rect x="4" y="10" width="32" height="22" rx="2" ry="2" fill="#4A90D9" />
+  <!-- Envelope flap (open V) -->
+  <polyline points="4,10 20,24 36,10" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Left fold line -->
+  <line x1="4" y1="32" x2="14" y2="21" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6"/>
+  <!-- Right fold line -->
+  <line x1="36" y1="32" x2="26" y2="21" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6"/>
+</svg>

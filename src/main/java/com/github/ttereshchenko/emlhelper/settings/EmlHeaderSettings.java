@@ -1,4 +1,4 @@
-package org.example.settings;
+package com.github.ttereshchenko.emlhelper.settings;
 
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.PersistentStateComponent;
