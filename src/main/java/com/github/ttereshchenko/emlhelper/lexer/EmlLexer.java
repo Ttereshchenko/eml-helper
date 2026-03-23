@@ -1,8 +1,8 @@
-package org.example.lexer;
+package com.github.ttereshchenko.emlhelper.lexer;
 
 import com.intellij.lexer.LexerBase;
 import com.intellij.psi.tree.IElementType;
-import org.example.EmlTokenTypes;
+import com.github.ttereshchenko.emlhelper.EmlTokenTypes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

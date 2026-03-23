@@ -1,12 +1,12 @@
-package org.example.highlighting;
+package com.github.ttereshchenko.emlhelper.highlighting;
 
 import com.intellij.lexer.Lexer;
 import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.fileTypes.SyntaxHighlighterBase;
 import com.intellij.psi.tree.IElementType;
-import org.example.EmlTokenTypes;
-import org.example.lexer.EmlLexer;
-import org.example.settings.EmlHeaderSettings;
+import com.github.ttereshchenko.emlhelper.EmlTokenTypes;
+import com.github.ttereshchenko.emlhelper.lexer.EmlLexer;
+import com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettings;
 import org.jetbrains.annotations.NotNull;
 
 import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.*;

@@ -1,4 +1,4 @@
-package org.example.highlighting;
+package com.github.ttereshchenko.emlhelper.highlighting;
 
 import com.intellij.openapi.fileTypes.SyntaxHighlighter;
 import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory;

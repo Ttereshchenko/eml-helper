@@ -1,4 +1,4 @@
-package org.example;
+package com.github.ttereshchenko.emlhelper;
 
 import com.intellij.openapi.fileTypes.LanguageFileType;
 import org.jetbrains.annotations.NotNull;
