@@ -1,35 +1,45 @@
 <idea-plugin>
-    <id>org.example.eml-helper</id>
+    <id>com.github.ttereshchenko.eml-helper</id>
     <name>EML Helper</name>
-    <vendor>org.example</vendor>
-    <description>Helper for working with EML (Email Message format) files.</description>
+    <vendor email="" url="https://github.com/ttereshchenko/eml-helper">ttereshchenko</vendor>
+    <description><![CDATA[
+        <p>Syntax highlighting, code folding, and editor support for EML (Email Message / RFC 822) files.</p>
+        <ul>
+          <li>Syntax highlighting for headers, MIME boundaries, and body content</li>
+          <li>MIME part code folding — collapse and expand nested message parts</li>
+          <li>Per-header color customization via the color scheme editor</li>
+          <li>Name-only highlighting mode (highlight header name, not value)</li>
+          <li>Global highlighting toggle under Settings → Editor → EML</li>
+          <li>Add custom headers to the highlight list</li>
+        </ul>
+    ]]></description>
     <idea-version since-build="243"/>
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="EML"
                   language="EML"
-                  implementationClass="org.example.EmlFileType"
+                  implementationClass="com.github.ttereshchenko.emlhelper.EmlFileType"
                   fieldName="INSTANCE"
                   extensions="eml"/>
 
         <lang.parserDefinition
                 language="EML"
-                implementationClass="org.example.lexer.EmlParserDefinition"/>
+                implementationClass="com.github.ttereshchenko.emlhelper.lexer.EmlParserDefinition"/>
 
         <lang.syntaxHighlighterFactory
                 language="EML"
-                implementationClass="org.example.highlighting.EmlSyntaxHighlighterFactory"/>
+                implementationClass="com.github.ttereshchenko.emlhelper.highlighting.EmlSyntaxHighlighterFactory"/>
 
         <lang.foldingBuilder
                 language="EML"
-                implementationClass="org.example.folding.EmlFoldingBuilder"/>
+                implementationClass="com.github.ttereshchenko.emlhelper.folding.EmlFoldingBuilder"/>
 
-        <applicationService serviceImplementation="org.example.settings.EmlHeaderSettings"/>
+        <applicationService serviceImplementation="com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettings"/>
 
-        <annotator language="EML" implementationClass="org.example.highlighting.EmlHeaderAnnotator"/>
+        <annotator language="EML" implementationClass="com.github.ttereshchenko.emlhelper.highlighting.EmlHeaderAnnotator"/>
 
         <applicationConfigurable parentId="editor" id="eml.settings"
-                displayName="EML" instance="org.example.settings.EmlHeaderSettingsConfigurable"/>
+                displayName="EML" instance="com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettingsConfigurable"/>
 
-        <colorSettingsPage implementation="org.example.highlighting.EmlColorSettingsPage"/>
+        <colorSettingsPage implementation="com.github.ttereshchenko.emlhelper.highlighting.EmlColorSettingsPage"/>
     </extensions>
 </idea-plugin>

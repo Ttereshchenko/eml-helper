@@ -1,4 +1,4 @@
-package org.example.folding;
+package com.github.ttereshchenko.emlhelper.folding;
 
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.folding.FoldingBuilderEx;
