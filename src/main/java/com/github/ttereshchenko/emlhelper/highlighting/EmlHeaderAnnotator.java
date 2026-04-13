@@ -79,7 +79,7 @@ public final class EmlHeaderAnnotator implements Annotator {
         return extractNameFromColon(text);
     }
 
-    private static String extractNameFromColon(String text) {
+    static String extractNameFromColon(String text) {
         int colonIdx = text.indexOf(':');
         if (colonIdx <= 0) {
             return null;
