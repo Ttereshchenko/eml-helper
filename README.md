@@ -2,6 +2,19 @@
 
 An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Message format) files — syntax highlighting, code folding, and configurable header coloring.
 
+<!-- TOC -->
+## Context
+* [Features](#features)
+* [Requirements](#requirements)
+* [Installation](#installation)
+  * [From source](#from-source)
+* [Development](#development)
+* [Usage](#usage)
+* [Contributing with AI](#contributing-with-ai)
+* [Reporting Issues](#reporting-issues)
+* [Feature Requests](#feature-requests)
+* [License](#license)
+<!-- TOC -->
 ## Features
 
 - **Syntax highlighting** — Headers, MIME boundaries, and body content are visually distinct
@@ -43,6 +56,18 @@ The plugin zip will be in `build/distributions/`. Install it via **Settings > Pl
 3. MIME parts can be collapsed/expanded using the gutter fold icons
 4. Customize header colors in **Settings > Editor > Color Scheme > EML**
 5. Configure which headers are highlighted and toggle per-header name-only mode in **Settings > Editor > EML**
+
+## Contributing with AI
+
+This project is configured for AI-assisted development using [Claude Code](https://claude.ai/code).
+
+The [`AGENTS.md`](AGENTS.md) file is the entry point — it links to focused guidance files under `.agents/` covering project architecture, build commands, workflow rules, and code style. Any AI agent (Claude Code or compatible tool) will pick these up automatically.
+
+To get started:
+
+1. Install [Claude Code](https://claude.ai/code)
+2. Open the project root in your terminal
+3. Run `claude` — the agent will load `AGENTS.md` and all sub-files automatically
 
 ## Reporting Issues
 

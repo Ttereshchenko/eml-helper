@@ -1,0 +1,16 @@
+# Project Overview
+
+`eml-helper` is an IntelliJ IDEA plugin (Java, JDK 21) that provides syntax highlighting, MIME part code folding, and per-header color customization for EML (Email Message format) files.
+
+## Tech Stack
+
+- **Language**: Java (JDK 21)
+- **Build**: Gradle 9.2.0 (wrapper at `./gradlew`)
+- **Plugin**: IntelliJ Platform Gradle Plugin 2.13.1
+- **Target IDE**: IntelliJ IDEA Community 2024.3
+- **Testing**: JUnit6 (6.0.3)
+- **Package**: `com.github.ttereshchenko.emlhelper`
+
+## Architecture
+
+Multi-package project under `src/main/java/com/github/ttereshchenko/emlhelper/` with sub-packages: `folding`, `highlighting`, `lexer`, `settings`. Plugin descriptor at `src/main/resources/META-INF/plugin.xml`. No external runtime dependencies — only JUnit 5 for testing. Tests go in `src/test/java/com/github/ttereshchenko/emlhelper/`.
