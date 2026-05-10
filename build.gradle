@@ -1,13 +1,14 @@
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
-    id 'org.jetbrains.intellij.platform' version '2.13.1'
+    id 'org.jetbrains.intellij.platform' version '2.16.0'
     id 'java'
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
 }
 
 group = 'com.github.ttereshchenko'
@@ -22,7 +23,7 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        intellijIdeaCommunity('2024.3')
+        intellijIdea('2026.1')
         testFramework(TestFrameworkType.Platform.INSTANCE)
     }
     testImplementation platform('org.junit:junit-bom:6.0.3')
