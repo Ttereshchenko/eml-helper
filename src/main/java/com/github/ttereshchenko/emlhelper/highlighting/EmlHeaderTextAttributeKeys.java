@@ -5,7 +5,12 @@ import com.intellij.openapi.editor.colors.TextAttributesKey;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.*;
+import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.FUNCTION_DECLARATION;
+import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.INSTANCE_FIELD;
+import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.METADATA;
+import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.NUMBER;
+import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.PARAMETER;
+import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.STATIC_FIELD;
 import static com.intellij.openapi.editor.colors.TextAttributesKey.createTextAttributesKey;
 
 public final class EmlHeaderTextAttributeKeys {

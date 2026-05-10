@@ -8,7 +8,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class EmlLexer extends LexerBase {
@@ -36,9 +35,9 @@ public final class EmlLexer extends LexerBase {
 
         // Collect all boundary strings from the full buffer
         this.boundaries = new ArrayList<>();
-        Matcher m = BOUNDARY_PATTERN.matcher(buffer);
-        while (m.find()) {
-            String boundary = m.group(1);
+        var matcher = BOUNDARY_PATTERN.matcher(buffer);
+        while (matcher.find()) {
+            var boundary = matcher.group(1);
             if (!boundaries.contains(boundary)) {
                 boundaries.add(boundary);
             }
@@ -56,7 +55,7 @@ public final class EmlLexer extends LexerBase {
         }
 
         // Find end of current line (include the \n)
-        int end = tokenStart;
+        var end = tokenStart;
         while (end < bufferEnd && buffer.charAt(end) != '\n') {
             end++;
         }
@@ -65,7 +64,7 @@ public final class EmlLexer extends LexerBase {
         }
         tokenEnd = end;
 
-        String line = buffer.subSequence(tokenStart, tokenEnd).toString().stripTrailing();
+        var line = buffer.subSequence(tokenStart, tokenEnd).toString().stripTrailing();
 
         if (inHeaders) {
             if (line.isEmpty()) {

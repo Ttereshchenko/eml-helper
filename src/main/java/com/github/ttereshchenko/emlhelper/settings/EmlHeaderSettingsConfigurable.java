@@ -36,8 +36,8 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
     @Override
     public @Nullable JComponent createComponent() {
-        EmlHeaderSettings settings = EmlHeaderSettings.getInstance();
-        List<HeaderEntry> entries = new ArrayList<>();
+        var settings = EmlHeaderSettings.getInstance();
+        var entries = new ArrayList<HeaderEntry>();
         for (String header : settings.getHighlightedHeaders()) {
             entries.add(new HeaderEntry(header, settings.isNameOnly(header)));
         }
@@ -47,32 +47,32 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         table.getColumnModel().getColumn(1).setMaxWidth(80);
         table.getColumnModel().getColumn(1).setMinWidth(80);
 
-        ToolbarDecorator decorator = ToolbarDecorator.createDecorator(table)
-                .setAddAction(button -> addHeader())
-                .setRemoveAction(button -> removeHeader());
+        var decorator = ToolbarDecorator.createDecorator(table)
+                .setAddAction(_ -> addHeader())
+                .setRemoveAction(_ -> removeHeader());
 
         tablePanel = new JPanel(new java.awt.BorderLayout());
         tablePanel.setBorder(BorderFactory.createTitledBorder("Highlighted Headers"));
         tablePanel.add(decorator.createPanel(), java.awt.BorderLayout.CENTER);
 
         highlightingEnabledCheckbox = new JCheckBox("Enable highlighting", settings.isHighlightingEnabled());
-        highlightingEnabledCheckbox.addActionListener(e -> updateTableEnabled());
+        highlightingEnabledCheckbox.addActionListener(_ -> updateTableEnabled());
         updateTableEnabled();
 
-        JPanel root = new JPanel(new java.awt.BorderLayout());
+        var root = new JPanel(new java.awt.BorderLayout());
         root.add(highlightingEnabledCheckbox, java.awt.BorderLayout.NORTH);
         root.add(tablePanel, java.awt.BorderLayout.CENTER);
         return root;
     }
 
     private void updateTableEnabled() {
-        boolean enabled = highlightingEnabledCheckbox.isSelected();
+        var enabled = highlightingEnabledCheckbox.isSelected();
         table.setEnabled(enabled);
         tablePanel.setEnabled(enabled);
     }
 
     private void addHeader() {
-        String result = (String) JOptionPane.showInputDialog(
+        var result = (String) JOptionPane.showInputDialog(
                 table,
                 "Enter header name (e.g., Content-Type):",
                 "Add Header",
@@ -85,7 +85,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
             return;
         }
 
-        String name = result.trim();
+        var name = result.trim();
         if (!VALID_HEADER_NAME.matcher(name).matches()) {
             JOptionPane.showMessageDialog(table,
                     "Invalid header name. Only letters, digits, and hyphens are allowed.",
@@ -107,7 +107,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
     }
 
     private void removeHeader() {
-        int row = table.getSelectedRow();
+        var row = table.getSelectedRow();
         if (row >= 0) {
             tableModel.entries.remove(row);
             tableModel.fireTableRowsDeleted(row, row);
@@ -116,9 +116,9 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
     @Override
     public boolean isModified() {
-        EmlHeaderSettings settings = EmlHeaderSettings.getInstance();
-        List<String> currentHeaders = new ArrayList<>();
-        List<String> currentNameOnly = new ArrayList<>();
+        var settings = EmlHeaderSettings.getInstance();
+        var currentHeaders = new ArrayList<String>();
+        var currentNameOnly = new ArrayList<String>();
         for (HeaderEntry entry : tableModel.entries) {
             currentHeaders.add(entry.name);
             if (entry.nameOnly) {
@@ -132,10 +132,10 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
     @Override
     public void apply() {
-        EmlHeaderSettings settings = EmlHeaderSettings.getInstance();
+        var settings = EmlHeaderSettings.getInstance();
         settings.setHighlightingEnabled(highlightingEnabledCheckbox.isSelected());
-        List<String> headers = new ArrayList<>();
-        List<String> nameOnly = new ArrayList<>();
+        var headers = new ArrayList<String>();
+        var nameOnly = new ArrayList<String>();
         for (HeaderEntry entry : tableModel.entries) {
             headers.add(entry.name);
             if (entry.nameOnly) {
@@ -152,7 +152,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
     @Override
     public void reset() {
-        EmlHeaderSettings settings = EmlHeaderSettings.getInstance();
+        var settings = EmlHeaderSettings.getInstance();
         highlightingEnabledCheckbox.setSelected(settings.isHighlightingEnabled());
         updateTableEnabled();
         tableModel.entries.clear();
@@ -207,7 +207,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
         @Override
         public Object getValueAt(int row, int column) {
-            HeaderEntry entry = entries.get(row);
+            var entry = entries.get(row);
             return column == 0 ? entry.name : entry.nameOnly;
         }
 
