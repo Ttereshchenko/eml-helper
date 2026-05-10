@@ -19,15 +19,15 @@ public final class EmlHeaderAnnotator implements Annotator {
             return;
         }
 
-        String text = element.getText();
-        boolean isContinuation = !text.isEmpty() && (text.charAt(0) == ' ' || text.charAt(0) == '\t');
+        var text = element.getText();
+        var isContinuation = !text.isEmpty() && (text.charAt(0) == ' ' || text.charAt(0) == '\t');
 
-        String headerName = extractHeaderName(element);
+        var headerName = extractHeaderName(element);
         if (headerName == null) {
             return;
         }
 
-        EmlHeaderSettings settings = EmlHeaderSettings.getInstance();
+        var settings = EmlHeaderSettings.getInstance();
         if (!settings.isHighlighted(headerName)) {
             return;
         }
@@ -37,12 +37,12 @@ public final class EmlHeaderAnnotator implements Annotator {
             if (isContinuation) {
                 return;
             }
-            int colonIdx = text.indexOf(':');
+            var colonIdx = text.indexOf(':');
             if (colonIdx <= 0) {
                 return;
             }
-            int start = element.getTextRange().getStartOffset();
-            TextRange nameRange = new TextRange(start, start + colonIdx + 1);
+            var start = element.getTextRange().getStartOffset();
+            var nameRange = new TextRange(start, start + colonIdx + 1);
             holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
                     .range(nameRange)
                     .textAttributes(EmlHeaderTextAttributeKeys.getKey(headerName))
@@ -56,12 +56,12 @@ public final class EmlHeaderAnnotator implements Annotator {
     }
 
     private static String extractHeaderName(PsiElement element) {
-        String text = element.getText();
+        var text = element.getText();
 
         // Check if this is a continuation line (starts with whitespace per RFC 822 §3.1.1)
         if (!text.isEmpty() && (text.charAt(0) == ' ' || text.charAt(0) == '\t')) {
             // Walk backward through siblings to find the originating header
-            PsiElement prev = element.getPrevSibling();
+            var prev = element.getPrevSibling();
             while (prev != null) {
                 if (prev.getNode().getElementType() == EmlTokenTypes.HEADER_LINE) {
                     String prevText = prev.getText();
@@ -80,11 +80,11 @@ public final class EmlHeaderAnnotator implements Annotator {
     }
 
     static String extractNameFromColon(String text) {
-        int colonIdx = text.indexOf(':');
+        var colonIdx = text.indexOf(':');
         if (colonIdx <= 0) {
             return null;
         }
-        String name = text.substring(0, colonIdx).trim();
+        var name = text.substring(0, colonIdx).trim();
         if (name.isEmpty()) {
             return null;
         }

@@ -9,7 +9,8 @@ import com.github.ttereshchenko.emlhelper.lexer.EmlLexer;
 import com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettings;
 import org.jetbrains.annotations.NotNull;
 
-import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.*;
+import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.INSTANCE_FIELD;
+import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.KEYWORD;
 
 public final class EmlSyntaxHighlighter extends SyntaxHighlighterBase {
     public static final TextAttributesKey BOUNDARY_KEY =

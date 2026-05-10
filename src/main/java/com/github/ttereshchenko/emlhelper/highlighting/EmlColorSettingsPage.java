@@ -52,7 +52,7 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
 
     @Override
     public @Nullable Map<String, TextAttributesKey> getAdditionalHighlightingTagToDescriptorMap() {
-        Map<String, TextAttributesKey> map = new HashMap<>();
+        var map = new HashMap<String, TextAttributesKey>();
         map.put("from", EmlHeaderTextAttributeKeys.HEADER_FROM);
         map.put("to", EmlHeaderTextAttributeKeys.HEADER_TO);
         map.put("subject", EmlHeaderTextAttributeKeys.HEADER_SUBJECT);
@@ -72,7 +72,7 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
 
     @Override
     public AttributesDescriptor @NotNull [] getAttributeDescriptors() {
-        List<AttributesDescriptor> descriptors = new ArrayList<>();
+        var descriptors = new ArrayList<AttributesDescriptor>();
         descriptors.add(new AttributesDescriptor("Header", EmlSyntaxHighlighter.HEADER_KEY));
         descriptors.add(new AttributesDescriptor("Boundary", EmlSyntaxHighlighter.BOUNDARY_KEY));
         descriptors.add(new AttributesDescriptor("Header//From", EmlHeaderTextAttributeKeys.HEADER_FROM));
