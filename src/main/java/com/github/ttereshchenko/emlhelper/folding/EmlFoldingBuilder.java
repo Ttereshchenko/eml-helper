@@ -20,7 +20,7 @@ public final class EmlFoldingBuilder extends FoldingBuilderEx {
     @Override
     public FoldingDescriptor @NotNull [] buildFoldRegions(
             @NotNull PsiElement root, @NotNull Document doc, boolean quick) {
-        if (quick) return FoldingDescriptor.EMPTY;
+        if (quick) return new FoldingDescriptor[0];
 
         var text = doc.getText();
         var boundaries = new ArrayList<String>();
@@ -80,7 +80,7 @@ public final class EmlFoldingBuilder extends FoldingBuilderEx {
             }
         }
 
-        return descriptors.toArray(FoldingDescriptor.EMPTY);
+        return descriptors.toArray(new FoldingDescriptor[0]);
     }
 
     @Override

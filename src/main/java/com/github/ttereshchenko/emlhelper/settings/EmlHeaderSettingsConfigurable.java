@@ -1,11 +1,11 @@
 package com.github.ttereshchenko.emlhelper.settings;
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.ui.ToolbarDecorator;
 import com.intellij.ui.table.JBTable;
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.Nullable;
 
@@ -146,7 +146,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         settings.setNameOnlyHeaders(nameOnly);
 
         for (Project project : ProjectManager.getInstance().getOpenProjects()) {
-            DaemonCodeAnalyzer.getInstance(project).restart();
+            DaemonCodeAnalyzer.getInstance(project).restart("EML settings changed");
         }
     }
 
