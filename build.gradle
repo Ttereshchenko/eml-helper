@@ -1,4 +1,5 @@
 import org.jetbrains.changelog.Changelog
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
@@ -51,6 +52,12 @@ intellijPlatform {
                 changelog.getOrNull(pluginVersion) ?: changelog.getUnreleased(),
                 Changelog.OutputType.HTML
             )
+        }
+    }
+    pluginVerification {
+        ides {
+            create(IntelliJPlatformType.IntellijIdea, '2025.3')
+            create(IntelliJPlatformType.IntellijIdea, '2026.1')
         }
     }
     publishing {
