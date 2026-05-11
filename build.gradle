@@ -12,7 +12,7 @@ java {
 }
 
 group = 'com.github.ttereshchenko'
-version = '0.1.0'
+version = pluginVersion
 
 repositories {
     mavenCentral()

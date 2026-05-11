@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 
 class EmlFileTypeTest {
 
@@ -30,6 +29,6 @@ class EmlFileTypeTest {
 
     @Test
     void testGetIcon() {
-        assertNull(EmlFileType.INSTANCE.getIcon());
+        assertNotNull(EmlFileType.INSTANCE.getIcon());
     }
 }
