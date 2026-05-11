@@ -14,6 +14,7 @@
         </ul>
     ]]></description>
     <idea-version since-build="243"/>
+    <depends>com.intellij.modules.platform</depends>
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="EML"
                   language="EML"
