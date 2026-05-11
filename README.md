@@ -13,6 +13,7 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 * [Contributing with AI](#contributing-with-ai)
 * [Reporting Issues](#reporting-issues)
 * [Feature Requests](#feature-requests)
+* [Donate](#donate)
 * [License](#license)
 <!-- TOC -->
 ## Features
@@ -90,6 +91,12 @@ Have an idea for a new feature? We'd love to hear it! Please [open a GitHub issu
 
 - A description of the desired behavior
 - The use case or motivation — how would this feature improve your workflow?
+
+## Donate
+
+If EML Helper saves you time, consider buying me a coffee — it helps keep the project going.
+
+[![Buy Me a Coffee](https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=&slug=ttereshchenko&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff)](https://www.buymeacoffee.com/ttereshchenko)
 
 ## License
 
