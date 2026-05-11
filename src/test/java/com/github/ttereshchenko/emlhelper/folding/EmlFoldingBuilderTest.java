@@ -18,8 +18,7 @@ public class EmlFoldingBuilderTest extends BasePlatformTestCase {
     // ===== Positive Tests =====
 
     public void testSingleBoundaryPart() {
-        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" +
-                "--sep\nPart 1 content\n--sep--\n";
+        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" + "--sep\nPart 1 content\n--sep--\n";
         PsiFile file = myFixture.configureByText("test.eml", content);
         Document doc = myFixture.getEditor().getDocument();
 
@@ -28,8 +27,8 @@ public class EmlFoldingBuilderTest extends BasePlatformTestCase {
     }
 
     public void testMultipleBoundaryParts() {
-        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" +
-                "--sep\nPart 1\n--sep\nPart 2\n--sep--\n";
+        String content =
+                "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" + "--sep\nPart 1\n--sep\nPart 2\n--sep--\n";
         PsiFile file = myFixture.configureByText("test.eml", content);
         Document doc = myFixture.getEditor().getDocument();
 
@@ -38,9 +37,9 @@ public class EmlFoldingBuilderTest extends BasePlatformTestCase {
     }
 
     public void testNestedBoundaries() {
-        String content = "Content-Type: multipart/mixed; boundary=\"outer\"\n\n" +
-                "--outer\nContent-Type: multipart/alternative; boundary=\"inner\"\n\n" +
-                "--inner\nText part\n--inner--\n--outer--\n";
+        String content = "Content-Type: multipart/mixed; boundary=\"outer\"\n\n"
+                + "--outer\nContent-Type: multipart/alternative; boundary=\"inner\"\n\n"
+                + "--inner\nText part\n--inner--\n--outer--\n";
         PsiFile file = myFixture.configureByText("test.eml", content);
         Document doc = myFixture.getEditor().getDocument();
 
@@ -50,8 +49,7 @@ public class EmlFoldingBuilderTest extends BasePlatformTestCase {
     }
 
     public void testFoldRegionOffsets() {
-        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" +
-                "--sep\nPart content here\n--sep--\n";
+        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" + "--sep\nPart content here\n--sep--\n";
         PsiFile file = myFixture.configureByText("test.eml", content);
         Document doc = myFixture.getEditor().getDocument();
 
@@ -80,8 +78,7 @@ public class EmlFoldingBuilderTest extends BasePlatformTestCase {
     // ===== Negative Tests =====
 
     public void testQuickModeReturnsEmpty() {
-        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" +
-                "--sep\nPart\n--sep--\n";
+        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" + "--sep\nPart\n--sep--\n";
         PsiFile file = myFixture.configureByText("test.eml", content);
         Document doc = myFixture.getEditor().getDocument();
 
@@ -99,8 +96,7 @@ public class EmlFoldingBuilderTest extends BasePlatformTestCase {
     }
 
     public void testEmptyContentBetweenMarkers() {
-        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" +
-                "--sep\n--sep--\n";
+        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" + "--sep\n--sep--\n";
         PsiFile file = myFixture.configureByText("test.eml", content);
         Document doc = myFixture.getEditor().getDocument();
 

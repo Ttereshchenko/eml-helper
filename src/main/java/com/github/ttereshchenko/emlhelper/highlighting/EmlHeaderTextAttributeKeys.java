@@ -1,25 +1,18 @@
 package com.github.ttereshchenko.emlhelper.highlighting;
 
-import com.intellij.openapi.editor.colors.TextAttributesKey;
+import static com.intellij.openapi.editor.colors.TextAttributesKey.createTextAttributesKey;
 
+import com.intellij.openapi.editor.colors.TextAttributesKey;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static com.intellij.openapi.editor.colors.TextAttributesKey.createTextAttributesKey;
-
 public final class EmlHeaderTextAttributeKeys {
-    public static final TextAttributesKey HEADER_FROM =
-            createTextAttributesKey("EML_HEADER_FROM");
-    public static final TextAttributesKey HEADER_TO =
-            createTextAttributesKey("EML_HEADER_TO");
-    public static final TextAttributesKey HEADER_SUBJECT =
-            createTextAttributesKey("EML_HEADER_SUBJECT");
-    public static final TextAttributesKey HEADER_DATE =
-            createTextAttributesKey("EML_HEADER_DATE");
-    public static final TextAttributesKey HEADER_CC =
-            createTextAttributesKey("EML_HEADER_CC");
-    public static final TextAttributesKey HEADER_BCC =
-            createTextAttributesKey("EML_HEADER_BCC");
+    public static final TextAttributesKey HEADER_FROM = createTextAttributesKey("EML_HEADER_FROM");
+    public static final TextAttributesKey HEADER_TO = createTextAttributesKey("EML_HEADER_TO");
+    public static final TextAttributesKey HEADER_SUBJECT = createTextAttributesKey("EML_HEADER_SUBJECT");
+    public static final TextAttributesKey HEADER_DATE = createTextAttributesKey("EML_HEADER_DATE");
+    public static final TextAttributesKey HEADER_CC = createTextAttributesKey("EML_HEADER_CC");
+    public static final TextAttributesKey HEADER_BCC = createTextAttributesKey("EML_HEADER_BCC");
 
     private static final Map<String, TextAttributesKey> PREDEFINED = Map.of(
             "FROM", HEADER_FROM,
@@ -27,8 +20,7 @@ public final class EmlHeaderTextAttributeKeys {
             "SUBJECT", HEADER_SUBJECT,
             "DATE", HEADER_DATE,
             "CC", HEADER_CC,
-            "BCC", HEADER_BCC
-    );
+            "BCC", HEADER_BCC);
 
     private static final Map<String, TextAttributesKey> DYNAMIC_KEYS = new ConcurrentHashMap<>();
 
@@ -40,7 +32,6 @@ public final class EmlHeaderTextAttributeKeys {
         if (predefined != null) {
             return predefined;
         }
-        return DYNAMIC_KEYS.computeIfAbsent(upper,
-                k -> createTextAttributesKey("EML_HEADER_" + k));
+        return DYNAMIC_KEYS.computeIfAbsent(upper, key -> createTextAttributesKey("EML_HEADER_" + key));
     }
 }

@@ -1,12 +1,11 @@
 package com.github.ttereshchenko.emlhelper;
 
-import com.intellij.psi.tree.IElementType;
-import org.junit.jupiter.api.Test;
-
-import java.util.Set;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+import com.intellij.psi.tree.IElementType;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
 
 class EmlTokenTypesTest {
 
@@ -31,8 +30,7 @@ class EmlTokenTypesTest {
                 EmlTokenTypes.BLANK_LINE,
                 EmlTokenTypes.BOUNDARY_START,
                 EmlTokenTypes.BOUNDARY_END,
-                EmlTokenTypes.BODY_LINE
-        );
+                EmlTokenTypes.BODY_LINE);
         assertEquals(5, types.size());
     }
 }
