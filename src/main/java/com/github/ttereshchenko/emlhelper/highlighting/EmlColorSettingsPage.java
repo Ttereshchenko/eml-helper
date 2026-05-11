@@ -1,19 +1,17 @@
 package com.github.ttereshchenko.emlhelper.highlighting;
 
+import com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettings;
 import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.fileTypes.SyntaxHighlighter;
 import com.intellij.openapi.options.colors.AttributesDescriptor;
 import com.intellij.openapi.options.colors.ColorDescriptor;
 import com.intellij.openapi.options.colors.ColorSettingsPage;
-import com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettings;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import javax.swing.*;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
+import javax.swing.Icon;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public final class EmlColorSettingsPage implements ColorSettingsPage {
     private static final String DEMO_TEXT = """
@@ -85,10 +83,14 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
         // Add descriptors for user-configured headers beyond the defaults
         for (String header : EmlHeaderSettings.getInstance().getHighlightedHeaders()) {
             String upper = header.toUpperCase();
-            if (!upper.equals("FROM") && !upper.equals("TO") && !upper.equals("SUBJECT")
-                    && !upper.equals("DATE") && !upper.equals("CC") && !upper.equals("BCC")) {
-                descriptors.add(new AttributesDescriptor(
-                        "Header//" + header, EmlHeaderTextAttributeKeys.getKey(header)));
+            if (!upper.equals("FROM")
+                    && !upper.equals("TO")
+                    && !upper.equals("SUBJECT")
+                    && !upper.equals("DATE")
+                    && !upper.equals("CC")
+                    && !upper.equals("BCC")) {
+                descriptors.add(
+                        new AttributesDescriptor("Header//" + header, EmlHeaderTextAttributeKeys.getKey(header)));
             }
         }
         return descriptors.toArray(AttributesDescriptor[]::new);

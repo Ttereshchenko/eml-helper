@@ -1,19 +1,18 @@
 package com.github.ttereshchenko.emlhelper.lexer;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.github.ttereshchenko.emlhelper.EmlTokenTypes;
 import com.intellij.psi.tree.IElementType;
-import org.junit.jupiter.api.Test;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
 
 class EmlLexerTest {
 
@@ -28,8 +27,7 @@ class EmlLexerTest {
                     lexer.getTokenType(),
                     lexer.getTokenStart(),
                     lexer.getTokenEnd(),
-                    input.substring(lexer.getTokenStart(), lexer.getTokenEnd())
-            ));
+                    input.substring(lexer.getTokenStart(), lexer.getTokenEnd())));
             lexer.advance();
         }
         return tokens;
@@ -45,25 +43,27 @@ class EmlLexerTest {
     void testSimpleHeadersAndBody() {
         String input = "From: a@b.com\nTo: c@d.com\n\nHello\n";
         List<IElementType> types = tokenTypes(input);
-        assertEquals(List.of(
-                EmlTokenTypes.HEADER_LINE,
-                EmlTokenTypes.HEADER_LINE,
-                EmlTokenTypes.BLANK_LINE,
-                EmlTokenTypes.BODY_LINE
-        ), types);
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE),
+                types);
     }
 
     @Test
     void testBoundaryExtraction() {
         String input = "Content-Type: multipart/mixed; boundary=\"abc123\"\n\n--abc123\nBody part\n--abc123--\n";
         List<IElementType> types = tokenTypes(input);
-        assertEquals(List.of(
-                EmlTokenTypes.HEADER_LINE,
-                EmlTokenTypes.BLANK_LINE,
-                EmlTokenTypes.BOUNDARY_START,
-                EmlTokenTypes.BODY_LINE,
-                EmlTokenTypes.BOUNDARY_END
-        ), types);
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                types);
     }
 
     @Test
@@ -76,25 +76,30 @@ class EmlLexerTest {
 
     @Test
     void testMultipleBoundaries() {
-        String input = "Content-Type: multipart/mixed; boundary=\"outer\"\n\n" +
-                "--outer\nContent-Type: multipart/alternative; boundary=\"inner\"\n\n" +
-                "--inner\nText\n--inner--\n--outer--\n";
+        String input = "Content-Type: multipart/mixed; boundary=\"outer\"\n\n"
+                + "--outer\nContent-Type: multipart/alternative; boundary=\"inner\"\n\n"
+                + "--inner\nText\n--inner--\n--outer--\n";
         List<IElementType> types = tokenTypes(input);
 
-        long boundaryStartCount = types.stream().filter(t -> t == EmlTokenTypes.BOUNDARY_START).count();
-        long boundaryEndCount = types.stream().filter(t -> t == EmlTokenTypes.BOUNDARY_END).count();
+        long boundaryStartCount = types.stream()
+                .filter(tokenType -> tokenType == EmlTokenTypes.BOUNDARY_START)
+                .count();
+        long boundaryEndCount = types.stream()
+                .filter(tokenType -> tokenType == EmlTokenTypes.BOUNDARY_END)
+                .count();
         assertEquals(2, boundaryStartCount);
         assertEquals(2, boundaryEndCount);
     }
 
     @Test
     void testDuplicateBoundaryDeduplication() {
-        String input = "Content-Type: multipart/mixed; boundary=\"dup\"\n" +
-                "X-Other: multipart/mixed; boundary=\"dup\"\n\n" +
-                "--dup\nBody\n--dup--\n";
+        String input = "Content-Type: multipart/mixed; boundary=\"dup\"\n"
+                + "X-Other: multipart/mixed; boundary=\"dup\"\n\n" + "--dup\nBody\n--dup--\n";
         List<IElementType> types = tokenTypes(input);
 
-        long boundaryStartCount = types.stream().filter(t -> t == EmlTokenTypes.BOUNDARY_START).count();
+        long boundaryStartCount = types.stream()
+                .filter(tokenType -> tokenType == EmlTokenTypes.BOUNDARY_START)
+                .count();
         assertEquals(1, boundaryStartCount);
     }
 
@@ -102,53 +107,51 @@ class EmlLexerTest {
     void testContinuationHeaderLine() {
         String input = "To: a@b.com,\n b@c.com\n\nBody\n";
         List<IElementType> types = tokenTypes(input);
-        assertEquals(List.of(
-                EmlTokenTypes.HEADER_LINE,
-                EmlTokenTypes.HEADER_LINE,
-                EmlTokenTypes.BLANK_LINE,
-                EmlTokenTypes.BODY_LINE
-        ), types);
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE),
+                types);
     }
 
     @Test
     void testTabContinuationHeaderLine() {
         String input = "To: a@b.com,\n\tb@c.com\n\nBody\n";
         List<IElementType> types = tokenTypes(input);
-        assertEquals(List.of(
-                EmlTokenTypes.HEADER_LINE,
-                EmlTokenTypes.HEADER_LINE,
-                EmlTokenTypes.BLANK_LINE,
-                EmlTokenTypes.BODY_LINE
-        ), types);
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE),
+                types);
     }
 
     @Test
     void testEmptyBodyAfterHeaders() {
         String input = "From: a@b.com\n\n";
         List<IElementType> types = tokenTypes(input);
-        assertEquals(List.of(
-                EmlTokenTypes.HEADER_LINE,
-                EmlTokenTypes.BLANK_LINE
-        ), types);
+        assertEquals(List.of(EmlTokenTypes.HEADER_LINE, EmlTokenTypes.BLANK_LINE), types);
     }
 
     @Test
     void testOnlyBody() {
         String input = "\nHello World\n";
         List<IElementType> types = tokenTypes(input);
-        assertEquals(List.of(
-                EmlTokenTypes.BLANK_LINE,
-                EmlTokenTypes.BODY_LINE
-        ), types);
+        assertEquals(List.of(EmlTokenTypes.BLANK_LINE, EmlTokenTypes.BODY_LINE), types);
     }
 
     @Test
     void testMultipleBoundaryStartLines() {
-        String input = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" +
-                "--sep\nPart 1\n--sep\nPart 2\n--sep--\n";
+        String input =
+                "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" + "--sep\nPart 1\n--sep\nPart 2\n--sep--\n";
         List<IElementType> types = tokenTypes(input);
 
-        long startCount = types.stream().filter(t -> t == EmlTokenTypes.BOUNDARY_START).count();
+        long startCount = types.stream()
+                .filter(tokenType -> tokenType == EmlTokenTypes.BOUNDARY_START)
+                .count();
         assertEquals(2, startCount);
     }
 
@@ -223,9 +226,9 @@ class EmlLexerTest {
         assertEquals(EmlTokenTypes.HEADER_LINE, tokens.getFirst().type());
 
         // Should contain boundary markers (file has boundary="------------26A45336F6C6196BD8BBA2A2")
-        boolean hasBoundaryStart = tokens.stream().anyMatch(t -> t.type() == EmlTokenTypes.BOUNDARY_START);
-        boolean hasBoundaryEnd = tokens.stream().anyMatch(t -> t.type() == EmlTokenTypes.BOUNDARY_END);
-        boolean hasBlankLine = tokens.stream().anyMatch(t -> t.type() == EmlTokenTypes.BLANK_LINE);
+        boolean hasBoundaryStart = tokens.stream().anyMatch(token -> token.type() == EmlTokenTypes.BOUNDARY_START);
+        boolean hasBoundaryEnd = tokens.stream().anyMatch(token -> token.type() == EmlTokenTypes.BOUNDARY_END);
+        boolean hasBlankLine = tokens.stream().anyMatch(token -> token.type() == EmlTokenTypes.BLANK_LINE);
         assertTrue(hasBoundaryStart, "Should have boundary start markers");
         assertTrue(hasBoundaryEnd, "Should have boundary end markers");
         assertTrue(hasBlankLine, "Should have blank line separating headers from body");
@@ -245,12 +248,13 @@ class EmlLexerTest {
     void testNoBoundaryDefined() {
         String input = "From: a@b.com\n\n--notaboundary\nBody text\n";
         List<IElementType> types = tokenTypes(input);
-        assertEquals(List.of(
-                EmlTokenTypes.HEADER_LINE,
-                EmlTokenTypes.BLANK_LINE,
-                EmlTokenTypes.BODY_LINE,
-                EmlTokenTypes.BODY_LINE
-        ), types);
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BODY_LINE),
+                types);
     }
 
     @Test

@@ -1,5 +1,8 @@
 package com.github.ttereshchenko.emlhelper.lexer;
 
+import com.github.ttereshchenko.emlhelper.EmlFileType;
+import com.github.ttereshchenko.emlhelper.EmlLanguage;
+import com.github.ttereshchenko.emlhelper.EmlTokenTypes;
 import com.intellij.extapi.psi.PsiFileBase;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.ParserDefinition;
@@ -12,9 +15,6 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
-import com.github.ttereshchenko.emlhelper.EmlFileType;
-import com.github.ttereshchenko.emlhelper.EmlLanguage;
-import com.github.ttereshchenko.emlhelper.EmlTokenTypes;
 import org.jetbrains.annotations.NotNull;
 
 public final class EmlParserDefinition implements ParserDefinition {

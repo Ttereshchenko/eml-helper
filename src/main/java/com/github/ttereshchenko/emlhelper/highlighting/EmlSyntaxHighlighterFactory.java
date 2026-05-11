@@ -9,7 +9,8 @@ import org.jetbrains.annotations.Nullable;
 
 public final class EmlSyntaxHighlighterFactory extends SyntaxHighlighterFactory {
     @Override
-    public @NotNull SyntaxHighlighter getSyntaxHighlighter(@Nullable Project project, @Nullable VirtualFile virtualFile) {
+    public @NotNull SyntaxHighlighter getSyntaxHighlighter(
+            @Nullable Project project, @Nullable VirtualFile virtualFile) {
         return new EmlSyntaxHighlighter();
     }
 }

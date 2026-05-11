@@ -6,22 +6,37 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.ui.ToolbarDecorator;
 import com.intellij.ui.table.JBTable;
-import org.jetbrains.annotations.Nls;
-import org.jetbrains.annotations.Nullable;
-
-import javax.swing.*;
-import javax.swing.table.AbstractTableModel;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import javax.swing.BorderFactory;
+import javax.swing.JCheckBox;
+import javax.swing.JComponent;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.table.AbstractTableModel;
+import org.jetbrains.annotations.Nls;
+import org.jetbrains.annotations.Nullable;
 
 public final class EmlHeaderSettingsConfigurable implements Configurable {
     private static final Pattern VALID_HEADER_NAME = Pattern.compile("[A-Za-z0-9-]+");
 
     private static final String[] SUGGESTIONS = {
-            "From", "To", "Cc", "Bcc", "Subject", "Date",
-            "Reply-To", "Sender", "Message-ID", "In-Reply-To", "References",
-            "MIME-Version", "Content-Type", "Content-Transfer-Encoding", "Content-Disposition"
+        "From",
+        "To",
+        "Cc",
+        "Bcc",
+        "Subject",
+        "Date",
+        "Reply-To",
+        "Sender",
+        "Message-ID",
+        "In-Reply-To",
+        "References",
+        "MIME-Version",
+        "Content-Type",
+        "Content-Transfer-Encoding",
+        "Content-Disposition"
     };
 
     private JCheckBox highlightingEnabledCheckbox;
@@ -87,17 +102,21 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
         var name = result.trim();
         if (!VALID_HEADER_NAME.matcher(name).matches()) {
-            JOptionPane.showMessageDialog(table,
+            JOptionPane.showMessageDialog(
+                    table,
                     "Invalid header name. Only letters, digits, and hyphens are allowed.",
-                    "Validation Error", JOptionPane.ERROR_MESSAGE);
+                    "Validation Error",
+                    JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         for (HeaderEntry entry : tableModel.entries) {
             if (entry.name.equalsIgnoreCase(name)) {
-                JOptionPane.showMessageDialog(table,
+                JOptionPane.showMessageDialog(
+                        table,
                         "Header \"" + entry.name + "\" already exists.",
-                        "Duplicate Header", JOptionPane.WARNING_MESSAGE);
+                        "Duplicate Header",
+                        JOptionPane.WARNING_MESSAGE);
                 return;
             }
         }

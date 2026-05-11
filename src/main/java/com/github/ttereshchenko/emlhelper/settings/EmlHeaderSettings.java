@@ -4,10 +4,9 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
-import org.jetbrains.annotations.NotNull;
-
 import java.util.ArrayList;
 import java.util.List;
+import org.jetbrains.annotations.NotNull;
 
 @State(name = "EmlHeaderSettings", storages = @Storage("emlHeaderSettings.xml"))
 public final class EmlHeaderSettings implements PersistentStateComponent<EmlHeaderSettings.MyState> {
@@ -71,11 +70,7 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
 
     public static final class MyState {
         public boolean highlightingEnabled = true;
-        public List<String> highlightedHeaders = new ArrayList<>(List.of(
-                "From", "To", "Subject", "Date", "Cc", "Bcc"
-        ));
-        public List<String> nameOnlyHeaders = new ArrayList<>(List.of(
-                "From", "To", "Subject", "Date", "Cc", "Bcc"
-        ));
+        public List<String> highlightedHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));
+        public List<String> nameOnlyHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));
     }
 }

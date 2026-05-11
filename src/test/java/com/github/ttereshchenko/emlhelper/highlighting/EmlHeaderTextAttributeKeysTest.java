@@ -1,12 +1,12 @@
 package com.github.ttereshchenko.emlhelper.highlighting;
 
-import com.intellij.openapi.editor.colors.TextAttributesKey;
-import org.junit.jupiter.api.Test;
-
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+
+import com.intellij.openapi.editor.colors.TextAttributesKey;
+import org.junit.jupiter.api.Test;
 
 class EmlHeaderTextAttributeKeysTest {
 

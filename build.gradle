@@ -5,7 +5,9 @@ import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 plugins {
     id 'org.jetbrains.intellij.platform' version '2.16.0'
     id 'org.jetbrains.changelog' version '2.2.1'
+    id 'com.diffplug.spotless' version '7.2.1'
     id 'java'
+    id 'checkstyle'
 }
 
 java {
@@ -67,5 +69,24 @@ intellijPlatform {
         certificateChain = providers.environmentVariable('CERTIFICATE_CHAIN')
         privateKey = providers.environmentVariable('PRIVATE_KEY')
         password = providers.environmentVariable('PRIVATE_KEY_PASSWORD')
+    }
+}
+
+checkstyle {
+    toolVersion = '11.1.0'
+    configFile = file('config/checkstyle/checkstyle.xml')
+    ignoreFailures = false
+    maxWarnings = 0
+    showViolations = true
+    sourceSets = [sourceSets.main, sourceSets.test]
+}
+
+spotless {
+    java {
+        target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
+        palantirJavaFormat('2.90.0')
+        removeUnusedImports()
+        trimTrailingWhitespace()
+        endWithNewline()
     }
 }

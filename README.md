@@ -44,10 +44,13 @@ The plugin zip will be in `build/distributions/`. Install it via **Settings > Pl
 ### Development
 
 ```bash
-./gradlew runIde        # Launch a sandboxed IDE with the plugin loaded
-./gradlew compileJava   # Compile only
-./gradlew test          # Run tests
-./gradlew verifyPlugin  # Run JetBrains plugin verifier (compatibility check)
+./gradlew runIde         # Launch a sandboxed IDE with the plugin loaded
+./gradlew compileJava    # Compile only
+./gradlew test           # Run tests
+./gradlew verifyPlugin   # Run JetBrains plugin verifier (compatibility check)
+./gradlew check          # Run tests + Checkstyle + Spotless
+./gradlew spotlessApply  # Auto-fix formatting and unused imports
+./gradlew spotlessCheck  # Verify formatting without modifying files
 ```
 
 ## Usage

@@ -1,14 +1,13 @@
 package com.github.ttereshchenko.emlhelper.lexer;
 
+import com.github.ttereshchenko.emlhelper.EmlTokenTypes;
 import com.intellij.lexer.LexerBase;
 import com.intellij.psi.tree.IElementType;
-import com.github.ttereshchenko.emlhelper.EmlTokenTypes;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public final class EmlLexer extends LexerBase {
     private static final Pattern BOUNDARY_PATTERN =
