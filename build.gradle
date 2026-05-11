@@ -1,7 +1,9 @@
+import org.jetbrains.changelog.Changelog
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
     id 'org.jetbrains.intellij.platform' version '2.16.0'
+    id 'org.jetbrains.changelog' version '2.2.1'
     id 'java'
 }
 
@@ -37,9 +39,19 @@ tasks.withType(Test).configureEach {
     useJUnitPlatform()
 }
 
+changelog {
+    version = pluginVersion
+}
+
 intellijPlatform {
     pluginConfiguration {
         name = 'EML Helper'
+        changeNotes = provider {
+            changelog.renderItem(
+                changelog.getOrNull(pluginVersion) ?: changelog.getUnreleased(),
+                Changelog.OutputType.HTML
+            )
+        }
     }
     publishing {
         token = providers.environmentVariable('PUBLISH_TOKEN')
