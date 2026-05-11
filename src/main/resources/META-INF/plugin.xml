@@ -42,5 +42,8 @@
                 displayName="EML" instance="com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettingsConfigurable"/>
 
         <colorSettingsPage implementation="com.github.ttereshchenko.emlhelper.highlighting.EmlColorSettingsPage"/>
+
+        <additionalTextAttributes scheme="Default" file="colorSchemes/EmlDefault.xml"/>
+        <additionalTextAttributes scheme="Darcula" file="colorSchemes/EmlDarcula.xml"/>
     </extensions>
 </idea-plugin>

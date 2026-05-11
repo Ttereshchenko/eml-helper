@@ -1,0 +1,49 @@
+<list>
+  <option name="EML_BOUNDARY">
+    <value>
+      <option name="FOREGROUND" value="0033b3"/>
+      <option name="FONT_TYPE" value="0"/>
+    </value>
+  </option>
+  <option name="EML_HEADER">
+    <value>
+      <option name="FOREGROUND" value="871094"/>
+      <option name="FONT_TYPE" value="0"/>
+    </value>
+  </option>
+  <option name="EML_HEADER_FROM">
+    <value>
+      <option name="FOREGROUND" value="871094"/>
+      <option name="FONT_TYPE" value="0"/>
+    </value>
+  </option>
+  <option name="EML_HEADER_TO">
+    <value>
+      <option name="FOREGROUND" value="871094"/>
+      <option name="FONT_TYPE" value="1"/>
+    </value>
+  </option>
+  <option name="EML_HEADER_SUBJECT">
+    <value>
+      <option name="FONT_TYPE" value="1"/>
+    </value>
+  </option>
+  <option name="EML_HEADER_DATE">
+    <value>
+      <option name="FOREGROUND" value="1750eb"/>
+      <option name="FONT_TYPE" value="0"/>
+    </value>
+  </option>
+  <option name="EML_HEADER_CC">
+    <value>
+      <option name="FOREGROUND" value="000080"/>
+      <option name="FONT_TYPE" value="0"/>
+    </value>
+  </option>
+  <option name="EML_HEADER_BCC">
+    <value>
+      <option name="FOREGROUND" value="808080"/>
+      <option name="FONT_TYPE" value="0"/>
+    </value>
+  </option>
+</list>
