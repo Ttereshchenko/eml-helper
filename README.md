@@ -47,6 +47,7 @@ The plugin zip will be in `build/distributions/`. Install it via **Settings > Pl
 ./gradlew runIde        # Launch a sandboxed IDE with the plugin loaded
 ./gradlew compileJava   # Compile only
 ./gradlew test          # Run tests
+./gradlew verifyPlugin  # Run JetBrains plugin verifier (compatibility check)
 ```
 
 ## Usage
