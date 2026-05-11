@@ -5,70 +5,75 @@ import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import org.jetbrains.annotations.NotNull;
 
 @State(name = "EmlHeaderSettings", storages = @Storage("emlHeaderSettings.xml"))
-public final class EmlHeaderSettings implements PersistentStateComponent<EmlHeaderSettings.MyState> {
-    private MyState myState = new MyState();
+public final class EmlHeaderSettings implements PersistentStateComponent<EmlHeaderSettings.State> {
+    private State state = new State();
+    private volatile Set<String> highlightedLookup = caseInsensitiveSet(state.highlightedHeaders);
+    private volatile Set<String> nameOnlyLookup = caseInsensitiveSet(state.nameOnlyHeaders);
 
     public static EmlHeaderSettings getInstance() {
         return ApplicationManager.getApplication().getService(EmlHeaderSettings.class);
     }
 
     @Override
-    public @NotNull MyState getState() {
-        return myState;
+    public @NotNull State getState() {
+        return state;
     }
 
     @Override
-    public void loadState(@NotNull MyState state) {
-        myState = state;
+    public void loadState(@NotNull State state) {
+        this.state = state;
+        highlightedLookup = caseInsensitiveSet(state.highlightedHeaders);
+        nameOnlyLookup = caseInsensitiveSet(state.nameOnlyHeaders);
     }
 
     public boolean isHighlightingEnabled() {
-        return myState.highlightingEnabled;
+        return state.highlightingEnabled;
     }
 
     public void setHighlightingEnabled(boolean enabled) {
-        myState.highlightingEnabled = enabled;
+        state.highlightingEnabled = enabled;
     }
 
     public List<String> getHighlightedHeaders() {
-        return myState.highlightedHeaders;
+        return state.highlightedHeaders;
     }
 
     public void setHighlightedHeaders(List<String> headers) {
-        myState.highlightedHeaders = new ArrayList<>(headers);
+        state.highlightedHeaders = new ArrayList<>(headers);
+        highlightedLookup = caseInsensitiveSet(state.highlightedHeaders);
     }
 
     public boolean isHighlighted(String headerName) {
-        for (String h : myState.highlightedHeaders) {
-            if (h.equalsIgnoreCase(headerName)) {
-                return true;
-            }
-        }
-        return false;
+        return highlightedLookup.contains(headerName);
     }
 
     public boolean isNameOnly(String headerName) {
-        for (String h : myState.nameOnlyHeaders) {
-            if (h.equalsIgnoreCase(headerName)) {
-                return true;
-            }
-        }
-        return false;
+        return nameOnlyLookup.contains(headerName);
     }
 
     public List<String> getNameOnlyHeaders() {
-        return myState.nameOnlyHeaders;
+        return state.nameOnlyHeaders;
     }
 
     public void setNameOnlyHeaders(List<String> headers) {
-        myState.nameOnlyHeaders = new ArrayList<>(headers);
+        state.nameOnlyHeaders = new ArrayList<>(headers);
+        nameOnlyLookup = caseInsensitiveSet(state.nameOnlyHeaders);
     }
 
-    public static final class MyState {
+    private static Set<String> caseInsensitiveSet(Collection<String> source) {
+        var set = new TreeSet<String>(String.CASE_INSENSITIVE_ORDER);
+        set.addAll(source);
+        return set;
+    }
+
+    public static final class State {
         public boolean highlightingEnabled = true;
         public List<String> highlightedHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));
         public List<String> nameOnlyHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));

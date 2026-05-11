@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+### Changed
+- Faster lexing, folding, and header annotation for large multipart messages (set-based boundary lookup, cached header-name resolution for RFC 822 continuation lines, case-insensitive lookup caches in EML settings).
+
 ## [0.1.0] - 2026-03-23
 ### Added
 - Syntax highlighting for EML headers, MIME boundaries, and body content

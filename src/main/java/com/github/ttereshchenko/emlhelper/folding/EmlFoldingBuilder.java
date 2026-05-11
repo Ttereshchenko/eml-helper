@@ -1,5 +1,6 @@
 package com.github.ttereshchenko.emlhelper.folding;
 
+import com.github.ttereshchenko.emlhelper.lexer.EmlBoundaryParser;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.folding.FoldingBuilderEx;
 import com.intellij.lang.folding.FoldingDescriptor;
@@ -7,74 +8,76 @@ import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.PsiElement;
 import java.util.ArrayList;
-import java.util.regex.Pattern;
+import java.util.HashMap;
+import java.util.List;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class EmlFoldingBuilder extends FoldingBuilderEx {
-    private static final Pattern BOUNDARY_PATTERN =
-            Pattern.compile("boundary\\s*=\\s*\"?([^\"\\s;]+)\"?", Pattern.CASE_INSENSITIVE);
+    private static final FoldingDescriptor[] EMPTY = new FoldingDescriptor[0];
 
     @Override
     public FoldingDescriptor @NotNull [] buildFoldRegions(
             @NotNull PsiElement root, @NotNull Document doc, boolean quick) {
-        if (quick) return new FoldingDescriptor[0];
+        if (quick) {
+            return EMPTY;
+        }
 
-        var text = doc.getText();
-        var boundaries = new ArrayList<String>();
-        var matcher = BOUNDARY_PATTERN.matcher(text);
-        while (matcher.find()) {
-            var boundary = matcher.group(1);
-            if (!boundaries.contains(boundary)) boundaries.add(boundary);
+        var text = doc.getCharsSequence();
+        var boundaries = EmlBoundaryParser.collect(text);
+        if (boundaries.isEmpty()) {
+            return EMPTY;
+        }
+
+        var markersByBoundary = new HashMap<String, List<Marker>>();
+        var lineCount = doc.getLineCount();
+        for (int lineIdx = 0; lineIdx < lineCount; lineIdx++) {
+            var lineStart = doc.getLineStartOffset(lineIdx);
+            var lineEnd = doc.getLineEndOffset(lineIdx);
+            var line = text.subSequence(lineStart, lineEnd).toString().stripTrailing();
+
+            String boundaryName;
+            Marker.Kind kind;
+            if (boundaries.isEnd(line)) {
+                boundaryName = line.substring(2, line.length() - 2);
+                kind = Marker.Kind.END;
+            } else if (boundaries.isStart(line)) {
+                boundaryName = line.substring(2);
+                kind = Marker.Kind.START;
+            } else {
+                continue;
+            }
+            markersByBoundary
+                    .computeIfAbsent(boundaryName, _ -> new ArrayList<>())
+                    .add(new Marker(lineIdx, kind));
         }
 
         var descriptors = new ArrayList<FoldingDescriptor>();
-        var lineCount = doc.getLineCount();
-
-        for (String boundary : boundaries) {
-            var startMarker = "--" + boundary;
-            var endMarker = "--" + boundary + "--";
-
-            // Collect positions of all boundary lines for this boundary
-            var markerLines = new ArrayList<int[]>(); // [lineIndex, type: 0=start, 1=end]
-            for (int i = 0; i < lineCount; i++) {
-                var lineStart = doc.getLineStartOffset(i);
-                var lineEnd = doc.getLineEndOffset(i);
-                var line = text.substring(lineStart, lineEnd).stripTrailing();
-                if (line.equals(endMarker)) {
-                    markerLines.add(new int[] {i, 1});
-                } else if (line.equals(startMarker)) {
-                    markerLines.add(new int[] {i, 0});
+        var totalLength = doc.getTextLength();
+        for (var markers : markersByBoundary.values()) {
+            for (int idx = 0; idx < markers.size() - 1; idx++) {
+                var current = markers.get(idx);
+                if (current.kind() != Marker.Kind.START) {
+                    continue;
                 }
-            }
-
-            // Create fold for each MIME part: from after --boundary\n to before next marker
-            for (int idx = 0; idx < markerLines.size() - 1; idx++) {
-                var current = markerLines.get(idx);
-                var next = markerLines.get(idx + 1);
-
-                // Only fold after a start marker
-                if (current[1] != 0) continue;
-
-                var currentLineIdx = current[0];
-                var nextLineIdx = next[0];
-
-                // Content starts at beginning of line after --boundary
-                var contentStart = doc.getLineEndOffset(currentLineIdx);
-                if (contentStart < doc.getTextLength() && doc.getCharsSequence().charAt(contentStart) == '\n') {
-                    contentStart++;
-                }
-
-                // Content ends at start of next marker line
-                var contentEnd = doc.getLineStartOffset(nextLineIdx);
-
+                var next = markers.get(idx + 1);
+                var contentStart = contentStartOffset(doc, current.lineIdx(), totalLength);
+                var contentEnd = doc.getLineStartOffset(next.lineIdx());
                 if (contentEnd > contentStart) {
                     descriptors.add(new FoldingDescriptor(root.getNode(), new TextRange(contentStart, contentEnd)));
                 }
             }
         }
 
-        return descriptors.toArray(new FoldingDescriptor[0]);
+        return descriptors.toArray(FoldingDescriptor[]::new);
+    }
+
+    private static int contentStartOffset(Document doc, int startLineIdx, int totalLength) {
+        var nextLineIdx = startLineIdx + 1;
+        if (nextLineIdx < doc.getLineCount()) {
+            return doc.getLineStartOffset(nextLineIdx);
+        }
+        return totalLength;
     }
 
     @Override
@@ -85,5 +88,12 @@ public final class EmlFoldingBuilder extends FoldingBuilderEx {
     @Override
     public boolean isCollapsedByDefault(@NotNull ASTNode node) {
         return false;
+    }
+
+    private record Marker(int lineIdx, Kind kind) {
+        enum Kind {
+            START,
+            END
+        }
     }
 }

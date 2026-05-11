@@ -3,16 +3,11 @@ package com.github.ttereshchenko.emlhelper.lexer;
 import com.github.ttereshchenko.emlhelper.EmlTokenTypes;
 import com.intellij.lexer.LexerBase;
 import com.intellij.psi.tree.IElementType;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.regex.Pattern;
+import java.util.Objects;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class EmlLexer extends LexerBase {
-    private static final Pattern BOUNDARY_PATTERN =
-            Pattern.compile("boundary\\s*=\\s*\"?([^\"\\s;]+)\"?", Pattern.CASE_INSENSITIVE);
-
     private CharSequence buffer;
     private int bufferEnd;
 
@@ -20,27 +15,18 @@ public final class EmlLexer extends LexerBase {
     private int tokenEnd;
     private IElementType tokenType;
 
-    private List<String> boundaries;
+    private EmlBoundaryParser boundaries;
     private boolean inHeaders;
 
     @Override
     public void start(@NotNull CharSequence buffer, int startOffset, int endOffset, int initialState) {
-        this.buffer = buffer;
+        this.buffer = Objects.requireNonNull(buffer, "buffer");
         this.bufferEnd = endOffset;
         this.tokenStart = startOffset;
         this.tokenEnd = startOffset;
         this.tokenType = null;
         this.inHeaders = (initialState == 0);
-
-        // Collect all boundary strings from the full buffer
-        this.boundaries = new ArrayList<>();
-        var matcher = BOUNDARY_PATTERN.matcher(buffer);
-        while (matcher.find()) {
-            var boundary = matcher.group(1);
-            if (!boundaries.contains(boundary)) {
-                boundaries.add(boundary);
-            }
-        }
+        this.boundaries = EmlBoundaryParser.collect(buffer);
 
         advance();
     }
@@ -53,13 +39,12 @@ public final class EmlLexer extends LexerBase {
             return;
         }
 
-        // Find end of current line (include the \n)
         var end = tokenStart;
         while (end < bufferEnd && buffer.charAt(end) != '\n') {
             end++;
         }
         if (end < bufferEnd) {
-            end++; // include the \n
+            end++;
         }
         tokenEnd = end;
 
@@ -78,13 +63,14 @@ public final class EmlLexer extends LexerBase {
     }
 
     private IElementType classifyBodyLine(String line) {
-        for (String boundary : boundaries) {
-            if (line.equals("--" + boundary + "--")) {
-                return EmlTokenTypes.BOUNDARY_END;
-            }
-            if (line.equals("--" + boundary)) {
-                return EmlTokenTypes.BOUNDARY_START;
-            }
+        if (boundaries.isEmpty()) {
+            return EmlTokenTypes.BODY_LINE;
+        }
+        if (boundaries.isEnd(line)) {
+            return EmlTokenTypes.BOUNDARY_END;
+        }
+        if (boundaries.isStart(line)) {
+            return EmlTokenTypes.BOUNDARY_START;
         }
         return EmlTokenTypes.BODY_LINE;
     }
