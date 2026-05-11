@@ -2,16 +2,18 @@
 
 Guidance for AI agents working in this repository.
 
-## MANDATORY FIRST STEP — read every sub-file below before responding
+## How to use this file
 
-Markdown links are NOT auto-loaded. At the start of every session, before
-writing any plan, code, or answer, open each of the five files in `.agents/`
-with the Read tool. Do not delegate this to a sub-agent.
+`CLAUDE.md` (symlinked to this file) is auto-loaded each session — these rules
+already apply. The five files in `.agents/` are NOT auto-loaded; each has a
+trigger below. Re-read each one yourself (do not delegate to a sub-agent) when
+its trigger applies in the current task.
 
-At the END of every answer, list which sub-files you applied, e.g.:
-`Respected: code-style.md, agent-prompt.md`
+At the END of every answer, list which sub-files you actually applied, e.g.:
+`Respected: code-style.md, agent-prompt.md`. List only files whose content
+materially shaped the answer — empty list is fine for trivial answers.
 
-## Sub-files (read all up front; re-read when the trigger applies)
+## Sub-files (re-read when the trigger applies)
 
 - [.agents/project.md](.agents/project.md) — tech stack, JDK, packages, test layout. Re-read before any architecture or dependency decision.
 - [.agents/build.md](.agents/build.md) — gradle commands. Re-read before running, building, or packaging.
