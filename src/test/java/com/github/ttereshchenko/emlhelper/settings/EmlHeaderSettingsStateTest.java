@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class EmlHeaderSettingsStateTest {
 
@@ -18,7 +20,7 @@ class EmlHeaderSettingsStateTest {
         settings = new EmlHeaderSettings();
     }
 
-    // ===== Positive Tests: MyState defaults =====
+    // ===== Positive Tests: State defaults =====
 
     @Test
     void testDefaultHighlightingEnabled() {
@@ -26,45 +28,39 @@ class EmlHeaderSettingsStateTest {
     }
 
     @Test
-    void testDefaultHighlightedHeaders() {
-        List<String> headers = settings.getHighlightedHeaders();
-        assertEquals(6, headers.size());
-        assertTrue(headers.contains("From"));
-        assertTrue(headers.contains("To"));
-        assertTrue(headers.contains("Subject"));
-        assertTrue(headers.contains("Date"));
-        assertTrue(headers.contains("Cc"));
-        assertTrue(headers.contains("Bcc"));
+    void testDefaultHighlightedHeadersHasSixEntries() {
+        assertEquals(6, settings.getHighlightedHeaders().size());
     }
 
     @Test
-    void testDefaultNameOnlyHeaders() {
-        List<String> headers = settings.getNameOnlyHeaders();
-        assertEquals(6, headers.size());
-        assertTrue(headers.contains("From"));
-        assertTrue(headers.contains("To"));
-        assertTrue(headers.contains("Subject"));
-        assertTrue(headers.contains("Date"));
-        assertTrue(headers.contains("Cc"));
-        assertTrue(headers.contains("Bcc"));
+    void testDefaultNameOnlyHeadersHasSixEntries() {
+        assertEquals(6, settings.getNameOnlyHeaders().size());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"From", "To", "Subject", "Date", "Cc", "Bcc"})
+    void defaultHighlightedHeadersContainsEachStandardHeader(String header) {
+        assertTrue(settings.getHighlightedHeaders().contains(header));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"From", "To", "Subject", "Date", "Cc", "Bcc"})
+    void defaultNameOnlyHeadersContainsEachStandardHeader(String header) {
+        assertTrue(settings.getNameOnlyHeaders().contains(header));
     }
 
     // ===== Positive Tests: Logic methods =====
 
-    @Test
-    void testIsHighlightedCaseInsensitive() {
-        assertTrue(settings.isHighlighted("from"));
-        assertTrue(settings.isHighlighted("FROM"));
-        assertTrue(settings.isHighlighted("fRoM"));
-        assertTrue(settings.isHighlighted("From"));
+    @ParameterizedTest
+    @ValueSource(strings = {"from", "FROM", "fRoM", "From"})
+    void isHighlightedIsCaseInsensitive(String variant) {
+        assertTrue(settings.isHighlighted(variant));
     }
 
-    @Test
-    void testIsNameOnlyCaseInsensitive() {
-        assertTrue(settings.isNameOnly("from"));
-        assertTrue(settings.isNameOnly("FROM"));
-        assertTrue(settings.isNameOnly("fRoM"));
-        assertTrue(settings.isNameOnly("From"));
+    @ParameterizedTest
+    @ValueSource(strings = {"from", "FROM", "fRoM", "From"})
+    void isNameOnlyIsCaseInsensitive(String variant) {
+        assertTrue(settings.isNameOnly(variant));
     }
 
     @Test
@@ -94,7 +90,7 @@ class EmlHeaderSettingsStateTest {
 
     @Test
     void testLoadState() {
-        EmlHeaderSettings.MyState newState = new EmlHeaderSettings.MyState();
+        EmlHeaderSettings.State newState = new EmlHeaderSettings.State();
         newState.highlightingEnabled = false;
         newState.highlightedHeaders = new ArrayList<>(List.of("X-Test"));
         newState.nameOnlyHeaders = new ArrayList<>(List.of("X-Test"));
@@ -112,7 +108,7 @@ class EmlHeaderSettingsStateTest {
         settings.setHighlightingEnabled(false);
         settings.setHighlightedHeaders(List.of("X-Only"));
 
-        EmlHeaderSettings.MyState state = settings.getState();
+        EmlHeaderSettings.State state = settings.getState();
         assertFalse(state.highlightingEnabled);
         assertEquals(List.of("X-Only"), state.highlightedHeaders);
     }

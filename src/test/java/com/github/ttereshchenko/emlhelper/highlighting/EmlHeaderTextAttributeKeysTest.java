@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 import com.intellij.openapi.editor.colors.TextAttributesKey;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class EmlHeaderTextAttributeKeysTest {
 
@@ -42,19 +44,10 @@ class EmlHeaderTextAttributeKeysTest {
         assertSame(EmlHeaderTextAttributeKeys.HEADER_BCC, EmlHeaderTextAttributeKeys.getKey("Bcc"));
     }
 
-    @Test
-    void testCaseInsensitivityLowercase() {
-        assertSame(EmlHeaderTextAttributeKeys.HEADER_FROM, EmlHeaderTextAttributeKeys.getKey("from"));
-    }
-
-    @Test
-    void testCaseInsensitivityUppercase() {
-        assertSame(EmlHeaderTextAttributeKeys.HEADER_FROM, EmlHeaderTextAttributeKeys.getKey("FROM"));
-    }
-
-    @Test
-    void testCaseInsensitivityMixed() {
-        assertSame(EmlHeaderTextAttributeKeys.HEADER_FROM, EmlHeaderTextAttributeKeys.getKey("fRoM"));
+    @ParameterizedTest
+    @ValueSource(strings = {"from", "FROM", "fRoM", "From"})
+    void getKeyResolvesFromCaseInsensitively(String variant) {
+        assertSame(EmlHeaderTextAttributeKeys.HEADER_FROM, EmlHeaderTextAttributeKeys.getKey(variant));
     }
 
     @Test

@@ -8,6 +8,7 @@ plugins {
     id 'com.diffplug.spotless' version '7.2.1'
     id 'java'
     id 'checkstyle'
+    id 'jacoco'
 }
 
 java {
@@ -40,6 +41,25 @@ dependencies {
 
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
+    finalizedBy jacocoTestReport
+    jacoco {
+        // IntelliJ test runner uses a custom classloader (PathClassLoader) whose classes can lack
+        // a CodeSource; without this flag JaCoCo silently skips instrumenting them.
+        includeNoLocationClasses = true
+        excludes = ['jdk.internal.*']
+    }
+}
+
+jacocoTestReport {
+    dependsOn test
+    // IntelliJ Platform Gradle Plugin rewrites bytecode (NotNull/Nullable instrumentation) into
+    // build/instrumented/instrumentCode; the runtime loads those, so the report must analyse them
+    // too — otherwise probe ids mismatch and coverage shows as 0.
+    classDirectories.setFrom(files('build/instrumented/instrumentCode'))
+    reports {
+        xml.required = true
+        html.required = true
+    }
 }
 
 changelog {

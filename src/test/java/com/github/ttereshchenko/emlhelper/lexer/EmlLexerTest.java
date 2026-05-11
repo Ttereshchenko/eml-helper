@@ -316,4 +316,52 @@ class EmlLexerTest {
         assertTrue(types.contains(EmlTokenTypes.BOUNDARY_START));
         assertTrue(types.contains(EmlTokenTypes.BOUNDARY_END));
     }
+
+    // ===== CRLF Line-Ending Tests =====
+
+    @Test
+    void testCrlfSimpleHeadersAndBody() {
+        String input = "From: a@b.com\r\nTo: c@d.com\r\n\r\nHello\r\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testCrlfBoundaryExtraction() {
+        String input = "Content-Type: multipart/mixed; boundary=\"abc\"\r\n\r\n--abc\r\nPart\r\n--abc--\r\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testCrlfContinuationHeader() {
+        String input = "To: a@b.com,\r\n b@c.com\r\n\r\nBody\r\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testQuotedPrintableSoftBreakStaysBodyLine() {
+        // Quoted-printable soft breaks end with '=' but stay as plain body lines for the lexer.
+        String input = "Content-Transfer-Encoding: quoted-printable\n\nThis is a long line=\nthat continues here.\n";
+        var types = tokenTypes(input);
+        assertEquals(EmlTokenTypes.BODY_LINE, types.get(2));
+        assertEquals(EmlTokenTypes.BODY_LINE, types.get(3));
+    }
 }
