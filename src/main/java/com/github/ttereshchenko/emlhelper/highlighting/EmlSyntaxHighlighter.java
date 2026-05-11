@@ -9,14 +9,11 @@ import com.github.ttereshchenko.emlhelper.lexer.EmlLexer;
 import com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettings;
 import org.jetbrains.annotations.NotNull;
 
-import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.INSTANCE_FIELD;
-import static com.intellij.openapi.editor.DefaultLanguageHighlighterColors.KEYWORD;
-
 public final class EmlSyntaxHighlighter extends SyntaxHighlighterBase {
     public static final TextAttributesKey BOUNDARY_KEY =
-            TextAttributesKey.createTextAttributesKey("EML_BOUNDARY", KEYWORD);
+            TextAttributesKey.createTextAttributesKey("EML_BOUNDARY");
     public static final TextAttributesKey HEADER_KEY =
-            TextAttributesKey.createTextAttributesKey("EML_HEADER", INSTANCE_FIELD);
+            TextAttributesKey.createTextAttributesKey("EML_HEADER");
 
     private static final TextAttributesKey[] BOUNDARY_KEYS = {BOUNDARY_KEY};
     private static final TextAttributesKey[] HEADER_KEYS   = {HEADER_KEY};
