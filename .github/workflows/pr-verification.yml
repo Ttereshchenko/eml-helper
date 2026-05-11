@@ -1,0 +1,160 @@
+name: PR Verification
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-verification-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve PR SHA
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        contains(github.event.comment.body, '/verify')
+      )
+    outputs:
+      sha: ${{ steps.pick-sha.outputs.sha }}
+      pr-number: ${{ steps.pick-sha.outputs.pr-number }}
+      triggered-by-comment: ${{ steps.pick-sha.outputs.triggered-by-comment }}
+    steps:
+      - name: Resolve SHA and PR number
+        id: pick-sha
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === 'pull_request') {
+              core.setOutput('sha', context.payload.pull_request.head.sha);
+              core.setOutput('pr-number', context.payload.pull_request.number);
+              core.setOutput('triggered-by-comment', 'false');
+            } else {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.issue.number,
+              });
+              core.setOutput('sha', pr.head.sha);
+              core.setOutput('pr-number', String(context.payload.issue.number));
+              core.setOutput('triggered-by-comment', 'true');
+            }
+
+  check:
+    name: Check (tests · Checkstyle · Spotless · JaCoCo)
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+
+      - name: Run check
+        run: ./gradlew check
+
+      - name: Upload JaCoCo report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: build/reports/jacoco/test/
+          retention-days: 14
+
+      - name: Upload test and Checkstyle reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-reports
+          path: |
+            build/reports/tests/test/
+            build/reports/checkstyle/
+          retention-days: 14
+
+  verify-plugin:
+    name: Verify Plugin (2025.3 · 2026.1)
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+
+      - name: Run verifyPlugin
+        run: ./gradlew verifyPlugin
+
+      - name: Upload plugin verifier report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-verifier-report
+          path: build/reports/pluginVerifier/
+          retention-days: 14
+
+  comment-result:
+    name: Post result comment
+    needs: [resolve, check, verify-plugin]
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      needs.resolve.result == 'success' &&
+      needs.resolve.outputs.triggered-by-comment == 'true'
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const checkResult  = '${{ needs.check.result }}';
+            const verifyResult = '${{ needs.verify-plugin.result }}';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            function badge(r) {
+              if (r === 'success') return '✅ passed';
+              if (r === 'failure') return '❌ failed';
+              if (r === 'skipped') return '⏭ skipped';
+              return '⚠️ ' + r;
+            }
+
+            const allPassed = checkResult === 'success' && verifyResult === 'success';
+            const headline = allPassed ? '### ✅ All checks passed' : '### ❌ Some checks failed';
+
+            const body = [
+              '## /verify result',
+              '',
+              headline,
+              '',
+              '| Job | Result |',
+              '|-----|--------|',
+              `| Check (tests · Checkstyle · Spotless · JaCoCo) | ${badge(checkResult)} |`,
+              `| Verify Plugin (2025.3 · 2026.1) | ${badge(verifyResult)} |`,
+              '',
+              `[View full run logs](${runUrl})`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ needs.resolve.outputs.pr-number }}'),
+              body,
+            });
