@@ -13,7 +13,7 @@
           <li>Add custom headers to the highlight list</li>
         </ul>
     ]]></description>
-    <idea-version since-build="243"/>
+    <idea-version since-build="253"/>
     <depends>com.intellij.modules.platform</depends>
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="EML"
