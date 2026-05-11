@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew compileJava)",
+      "Bash(./gradlew compileJava *)",
+      "Bash(./gradlew build)",
+      "Bash(./gradlew build *)",
+      "Bash(./gradlew test)",
+      "Bash(./gradlew test *)",
+      "Bash(./gradlew check)",
+      "Bash(./gradlew check *)",
+      "Bash(./gradlew clean)",
+      "Bash(./gradlew clean *)",
+      "Bash(./gradlew verifyPlugin)",
+      "Bash(./gradlew verifyPlugin *)",
+      "Bash(./gradlew buildPlugin)",
+      "Bash(./gradlew spotlessCheck)",
+      "Bash(./gradlew spotlessApply)",
+      "Bash(./gradlew prepareTest)",
+      "Bash(./gradlew prepareTest *)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git remote:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git worktree list)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -f*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"${CLAUDE_TOOL_FILE_PATH:-}\" in *.java) ./gradlew spotlessApply --quiet >/dev/null 2>&1 || true ;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}

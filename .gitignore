@@ -1,5 +1,12 @@
 ### AI ###
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/commands/
+!.claude/commands/**
+!.claude/hooks/
+!.claude/hooks/**
+.claude/settings.local.json
+.claude/worktrees/
 .tmp
 .issues
 

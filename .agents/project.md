@@ -14,3 +14,10 @@
 ## Architecture
 
 Multi-package project under `src/main/java/com/github/ttereshchenko/emlhelper/` with sub-packages: `folding`, `highlighting`, `lexer`, `settings`. Plugin descriptor at `src/main/resources/META-INF/plugin.xml`. No external runtime dependencies — only JUnit 5 for testing. Tests go in `src/test/java/com/github/ttereshchenko/emlhelper/`.
+
+## Test Conventions
+
+Tests extend `com.intellij.testFramework.fixtures.BasePlatformTestCase` (JUnit 4
+inheritance, executed via `junit-vintage-engine`). Method names start with
+`test`. Sample EML files live under `src/test/resources/samples/`. Canonical
+examples to copy from: `EmlLexerTest`, `EmlFoldingBuilderTest`.
