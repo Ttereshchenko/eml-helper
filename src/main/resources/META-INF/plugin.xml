@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.github.ttereshchenko.mailkit</id>
     <name>MailKit</name>
-    <vendor email="" url="https://github.com/ttereshchenko/mailkit">ttereshchenko</vendor>
+    <vendor email="plugin.mailkit@gmail.com" url="https://github.com/ttereshchenko/mailkit">ttereshchenko</vendor>
     <description><![CDATA[
         <p>Syntax highlighting, code folding, and editor support for EML (Email Message / RFC 822) files.</p>
         <ul>
