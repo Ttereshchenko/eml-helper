@@ -1,6 +1,6 @@
 # Project Overview
 
-`eml-helper` is an IntelliJ IDEA plugin (Java, JDK 25) that provides syntax highlighting, MIME part code folding, and per-header color customization for EML (Email Message format) files.
+`MailKit` is an IntelliJ IDEA plugin (Java, JDK 25) that provides syntax highlighting, MIME part code folding, and per-header color customization for EML (Email Message format) files.
 
 ## Tech Stack
 

@@ -68,7 +68,7 @@ changelog {
 
 intellijPlatform {
     pluginConfiguration {
-        name = 'EML Helper'
+        name = 'MailKit'
         changeNotes = provider {
             changelog.renderItem(
                 changelog.getOrNull(pluginVersion) ?: changelog.getUnreleased(),

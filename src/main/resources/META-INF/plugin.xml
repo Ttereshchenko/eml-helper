@@ -1,6 +1,6 @@
 <idea-plugin>
     <id>com.github.ttereshchenko.eml-helper</id>
-    <name>EML Helper</name>
+    <name>MailKit</name>
     <vendor email="" url="https://github.com/ttereshchenko/eml-helper">ttereshchenko</vendor>
     <description><![CDATA[
         <p>Syntax highlighting, code folding, and editor support for EML (Email Message / RFC 822) files.</p>
@@ -18,30 +18,30 @@
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="EML"
                   language="EML"
-                  implementationClass="com.github.ttereshchenko.emlhelper.EmlFileType"
+                  implementationClass="com.github.ttereshchenko.mailkit.EmlFileType"
                   fieldName="INSTANCE"
                   extensions="eml"/>
 
         <lang.parserDefinition
                 language="EML"
-                implementationClass="com.github.ttereshchenko.emlhelper.lexer.EmlParserDefinition"/>
+                implementationClass="com.github.ttereshchenko.mailkit.lexer.EmlParserDefinition"/>
 
         <lang.syntaxHighlighterFactory
                 language="EML"
-                implementationClass="com.github.ttereshchenko.emlhelper.highlighting.EmlSyntaxHighlighterFactory"/>
+                implementationClass="com.github.ttereshchenko.mailkit.highlighting.EmlSyntaxHighlighterFactory"/>
 
         <lang.foldingBuilder
                 language="EML"
-                implementationClass="com.github.ttereshchenko.emlhelper.folding.EmlFoldingBuilder"/>
+                implementationClass="com.github.ttereshchenko.mailkit.folding.EmlFoldingBuilder"/>
 
-        <applicationService serviceImplementation="com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettings"/>
+        <applicationService serviceImplementation="com.github.ttereshchenko.mailkit.settings.EmlHeaderSettings"/>
 
-        <annotator language="EML" implementationClass="com.github.ttereshchenko.emlhelper.highlighting.EmlHeaderAnnotator"/>
+        <annotator language="EML" implementationClass="com.github.ttereshchenko.mailkit.highlighting.EmlHeaderAnnotator"/>
 
         <applicationConfigurable parentId="editor" id="eml.settings"
-                displayName="EML" instance="com.github.ttereshchenko.emlhelper.settings.EmlHeaderSettingsConfigurable"/>
+                displayName="EML" instance="com.github.ttereshchenko.mailkit.settings.EmlHeaderSettingsConfigurable"/>
 
-        <colorSettingsPage implementation="com.github.ttereshchenko.emlhelper.highlighting.EmlColorSettingsPage"/>
+        <colorSettingsPage implementation="com.github.ttereshchenko.mailkit.highlighting.EmlColorSettingsPage"/>
 
         <additionalTextAttributes scheme="Default" file="colorSchemes/EmlDefault.xml"/>
         <additionalTextAttributes scheme="Darcula" file="colorSchemes/EmlDarcula.xml"/>
