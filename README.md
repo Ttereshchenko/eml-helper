@@ -28,7 +28,7 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 ## Requirements
 
 - IntelliJ IDEA 2025.3+
-- Java 21+
+- Java 25
 
 ## Installation
 
@@ -78,7 +78,7 @@ To get started:
 
 Detailed bug reports help us diagnose and fix problems faster. When filing an issue, providing the context below lets us reproduce the problem locally and cuts down the back-and-forth.
 
-If you encounter a bug or unexpected behavior, please [open a GitHub issue](https://github.com/Ttereshchenko/eml-helper/issues) with the following information:
+If you encounter a bug or unexpected behavior, please [open a GitHub issue](https://github.com/Ttereshchenko/mailkit/issues) with the following information:
 
 1. **Steps to reproduce** — numbered steps to trigger the issue
 2. **EML file** — attach or paste the `.eml` file that causes the problem (please redact any sensitive data)
@@ -87,7 +87,7 @@ If you encounter a bug or unexpected behavior, please [open a GitHub issue](http
 
 ## Feature Requests
 
-Have an idea for a new feature? We'd love to hear it! Please [open a GitHub issue](https://github.com/Ttereshchenko/eml-helper/issues) with the **feature request** label and include:
+Have an idea for a new feature? We'd love to hear it! Please [open a GitHub issue](https://github.com/Ttereshchenko/mailkit/issues) with the **feature request** label and include:
 
 - A description of the desired behavior
 - The use case or motivation — how would this feature improve your workflow?
