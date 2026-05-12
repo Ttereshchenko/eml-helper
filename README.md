@@ -1,4 +1,4 @@
-# EML Helper
+# MailKit
 
 An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Message format) files — syntax highlighting, code folding, and configurable header coloring.
 
@@ -35,8 +35,8 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 ### From source
 
 ```bash
-git clone https://github.com/Ttereshchenko/eml-helper.git
-cd eml-helper
+git clone https://github.com/Ttereshchenko/mailkit.git
+cd mailkit
 ./gradlew buildPlugin
 ```
 
@@ -83,7 +83,7 @@ If you encounter a bug or unexpected behavior, please [open a GitHub issue](http
 1. **Steps to reproduce** — numbered steps to trigger the issue
 2. **EML file** — attach or paste the `.eml` file that causes the problem (please redact any sensitive data)
 3. **IDE specification** — IDE name, version, and OS (found via **Help > About**)
-4. **Plugin version** — EML Helper version (found via **Settings > Plugins**)
+4. **Plugin version** — MailKit version (found via **Settings > Plugins**)
 
 ## Feature Requests
 
@@ -94,7 +94,7 @@ Have an idea for a new feature? We'd love to hear it! Please [open a GitHub issu
 
 ## Donate
 
-If EML Helper saves you time, consider buying me a coffee — it helps keep the project going.
+If MailKit saves you time, consider buying me a coffee — it helps keep the project going.
 
 [![Buy Me a Coffee](https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=&slug=ttereshchenko&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff)](https://www.buymeacoffee.com/ttereshchenko)
 
