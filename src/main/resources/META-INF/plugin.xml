@@ -9,7 +9,7 @@
           <li>MIME part code folding — collapse and expand nested message parts</li>
           <li>Per-header color customization via the color scheme editor</li>
           <li>Name-only highlighting mode (highlight header name, not value)</li>
-          <li>Global highlighting toggle under Settings → Editor → EML</li>
+          <li>Global highlighting toggle under Settings → Editor → MailKit</li>
           <li>Add custom headers to the highlight list</li>
         </ul>
     ]]></description>
@@ -39,7 +39,7 @@
         <annotator language="EML" implementationClass="com.github.ttereshchenko.mailkit.highlighting.EmlHeaderAnnotator"/>
 
         <applicationConfigurable parentId="editor" id="eml.settings"
-                displayName="EML" instance="com.github.ttereshchenko.mailkit.settings.EmlHeaderSettingsConfigurable"/>
+                displayName="MailKit" instance="com.github.ttereshchenko.mailkit.settings.EmlHeaderSettingsConfigurable"/>
 
         <colorSettingsPage implementation="com.github.ttereshchenko.mailkit.highlighting.EmlColorSettingsPage"/>
 

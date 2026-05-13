@@ -71,14 +71,13 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
     @Override
     public AttributesDescriptor @NotNull [] getAttributeDescriptors() {
         var descriptors = new ArrayList<AttributesDescriptor>();
-        descriptors.add(new AttributesDescriptor("Header", EmlSyntaxHighlighter.HEADER_KEY));
         descriptors.add(new AttributesDescriptor("Boundary", EmlSyntaxHighlighter.BOUNDARY_KEY));
-        descriptors.add(new AttributesDescriptor("Header//From", EmlHeaderTextAttributeKeys.HEADER_FROM));
-        descriptors.add(new AttributesDescriptor("Header//To", EmlHeaderTextAttributeKeys.HEADER_TO));
-        descriptors.add(new AttributesDescriptor("Header//Subject", EmlHeaderTextAttributeKeys.HEADER_SUBJECT));
-        descriptors.add(new AttributesDescriptor("Header//Date", EmlHeaderTextAttributeKeys.HEADER_DATE));
-        descriptors.add(new AttributesDescriptor("Header//Cc", EmlHeaderTextAttributeKeys.HEADER_CC));
-        descriptors.add(new AttributesDescriptor("Header//Bcc", EmlHeaderTextAttributeKeys.HEADER_BCC));
+        descriptors.add(new AttributesDescriptor("Headers//From", EmlHeaderTextAttributeKeys.HEADER_FROM));
+        descriptors.add(new AttributesDescriptor("Headers//To", EmlHeaderTextAttributeKeys.HEADER_TO));
+        descriptors.add(new AttributesDescriptor("Headers//Subject", EmlHeaderTextAttributeKeys.HEADER_SUBJECT));
+        descriptors.add(new AttributesDescriptor("Headers//Date", EmlHeaderTextAttributeKeys.HEADER_DATE));
+        descriptors.add(new AttributesDescriptor("Headers//Cc", EmlHeaderTextAttributeKeys.HEADER_CC));
+        descriptors.add(new AttributesDescriptor("Headers//Bcc", EmlHeaderTextAttributeKeys.HEADER_BCC));
 
         // Add descriptors for user-configured headers beyond the defaults
         for (String header : EmlHeaderSettings.getInstance().getHighlightedHeaders()) {
@@ -90,7 +89,7 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
                     && !upper.equals("CC")
                     && !upper.equals("BCC")) {
                 descriptors.add(
-                        new AttributesDescriptor("Header//" + header, EmlHeaderTextAttributeKeys.getKey(header)));
+                        new AttributesDescriptor("Headers//" + header, EmlHeaderTextAttributeKeys.getKey(header)));
             }
         }
         return descriptors.toArray(AttributesDescriptor[]::new);
@@ -103,6 +102,6 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
 
     @Override
     public @NotNull String getDisplayName() {
-        return "EML";
+        return "MailKit";
     }
 }

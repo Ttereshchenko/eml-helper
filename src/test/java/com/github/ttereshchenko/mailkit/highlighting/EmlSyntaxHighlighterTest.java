@@ -41,10 +41,9 @@ public class EmlSyntaxHighlighterTest extends BasePlatformTestCase {
         assertEquals(EmlSyntaxHighlighter.BOUNDARY_KEY, keys[0]);
     }
 
-    public void testHeaderLineHighlight() {
+    public void testHeaderLineNoHighlight() {
         TextAttributesKey[] keys = highlighter.getTokenHighlights(EmlTokenTypes.HEADER_LINE);
-        assertEquals(1, keys.length);
-        assertEquals(EmlSyntaxHighlighter.HEADER_KEY, keys[0]);
+        assertEquals(0, keys.length);
     }
 
     public void testBodyLineNoHighlight() {

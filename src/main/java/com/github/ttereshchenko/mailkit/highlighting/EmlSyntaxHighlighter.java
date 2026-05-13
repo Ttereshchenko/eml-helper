@@ -11,10 +11,8 @@ import org.jetbrains.annotations.NotNull;
 
 public final class EmlSyntaxHighlighter extends SyntaxHighlighterBase {
     public static final TextAttributesKey BOUNDARY_KEY = TextAttributesKey.createTextAttributesKey("EML_BOUNDARY");
-    public static final TextAttributesKey HEADER_KEY = TextAttributesKey.createTextAttributesKey("EML_HEADER");
 
     private static final TextAttributesKey[] BOUNDARY_KEYS = {BOUNDARY_KEY};
-    private static final TextAttributesKey[] HEADER_KEYS = {HEADER_KEY};
     private static final TextAttributesKey[] EMPTY_KEYS = {};
 
     @Override
@@ -29,9 +27,6 @@ public final class EmlSyntaxHighlighter extends SyntaxHighlighterBase {
         }
         if (tokenType == EmlTokenTypes.BOUNDARY_START || tokenType == EmlTokenTypes.BOUNDARY_END) {
             return BOUNDARY_KEYS;
-        }
-        if (tokenType == EmlTokenTypes.HEADER_LINE) {
-            return HEADER_KEYS;
         }
         return EMPTY_KEYS;
     }
