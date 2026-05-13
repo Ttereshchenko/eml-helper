@@ -46,7 +46,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
     @Override
     public @Nls(capitalization = Nls.Capitalization.Title) String getDisplayName() {
-        return "EML";
+        return "MailKit";
     }
 
     @Override

@@ -45,8 +45,8 @@ public class EmlHeaderSettingsConfigurableTest extends BasePlatformTestCase {
         throw new AssertionError("expected a JCheckBox in the configurable root component");
     }
 
-    public void testDisplayNameIsEml() {
-        assertEquals("EML", configurable.getDisplayName());
+    public void testDisplayNameIsMailKit() {
+        assertEquals("MailKit", configurable.getDisplayName());
     }
 
     public void testCreateComponentReturnsNonNullRoot() {

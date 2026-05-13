@@ -24,8 +24,8 @@ public class EmlColorSettingsPageTest extends BasePlatformTestCase {
         super.tearDown();
     }
 
-    public void testDisplayNameIsEml() {
-        assertEquals("EML", page.getDisplayName());
+    public void testDisplayNameIsMailKit() {
+        assertEquals("MailKit", page.getDisplayName());
     }
 
     public void testIconIsNull() {
@@ -69,15 +69,14 @@ public class EmlColorSettingsPageTest extends BasePlatformTestCase {
         var names = Arrays.stream(descriptors)
                 .map(descriptor -> descriptor.getDisplayName())
                 .toList();
-        assertContainsElements(
-                names, "Header", "Boundary", "Header//From", "Header//Custom".replace("Custom", "X-Custom"));
+        assertContainsElements(names, "Boundary", "Headers//From", "Headers//Custom".replace("Custom", "X-Custom"));
     }
 
     public void testAttributeDescriptorsDoNotDuplicatePredefinedAsCustom() {
         EmlHeaderSettings.getInstance().setHighlightedHeaders(List.of("From", "To", "Subject"));
         var descriptors = page.getAttributeDescriptors();
         var customLikeFrom = Arrays.stream(descriptors)
-                .filter(descriptor -> descriptor.getDisplayName().equals("Header//From"))
+                .filter(descriptor -> descriptor.getDisplayName().equals("Headers//From"))
                 .count();
         assertEquals(1, customLikeFrom);
     }
