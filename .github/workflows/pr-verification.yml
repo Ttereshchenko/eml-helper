@@ -9,37 +9,64 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: pr-verification-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 jobs:
-  resolve:
-    name: Resolve PR SHA
+  check-commits:
+    name: Single commit
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'pull_request' ||
       (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
-        contains(github.event.comment.body, '/verify')
+        contains(github.event.comment.body, '/check_pr')
+      )
+    steps:
+      - name: Enforce squash
+        uses: actions/github-script@v9
+        with:
+          script: |
+            let count;
+            if (context.eventName === 'pull_request') {
+              count = context.payload.pull_request.commits;
+            } else {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.issue.number,
+              });
+              count = pr.commits;
+            }
+            if (count !== 1) {
+              core.setFailed(`PR has ${count} commits — squash to 1 before merging.`);
+            }
+
+  resolve:
+    name: Resolve SHA and PR number
+    needs: check-commits
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        contains(github.event.comment.body, '/check_pr')
       )
     outputs:
       sha: ${{ steps.pick-sha.outputs.sha }}
       pr-number: ${{ steps.pick-sha.outputs.pr-number }}
-      triggered-by-comment: ${{ steps.pick-sha.outputs.triggered-by-comment }}
     steps:
-      - name: Resolve SHA and PR number
-        id: pick-sha
+      - id: pick-sha
         uses: actions/github-script@v9
         with:
           script: |
             if (context.eventName === 'pull_request') {
               core.setOutput('sha', context.payload.pull_request.head.sha);
               core.setOutput('pr-number', context.payload.pull_request.number);
-              core.setOutput('triggered-by-comment', 'false');
             } else {
               const { data: pr } = await github.rest.pulls.get({
                 owner: context.repo.owner,
@@ -48,7 +75,6 @@ jobs:
               });
               core.setOutput('sha', pr.head.sha);
               core.setOutput('pr-number', String(context.payload.issue.number));
-              core.setOutput('triggered-by-comment', 'true');
             }
 
   check:
@@ -112,65 +138,3 @@ jobs:
           name: plugin-verifier-report
           path: build/reports/pluginVerifier/
           retention-days: 14
-
-  check-commits:
-    name: Single commit
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Enforce squash
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const count = context.payload.pull_request.commits;
-            if (count !== 1) {
-              core.setFailed(`PR has ${count} commits — squash to 1 before merging.`);
-            }
-
-  comment-result:
-    name: Post result comment
-    needs: [resolve, check, verify-plugin, check-commits]
-    runs-on: ubuntu-latest
-    if: |
-      always() &&
-      needs.resolve.result == 'success' &&
-      needs.resolve.outputs.triggered-by-comment == 'true'
-    steps:
-      - uses: actions/github-script@v9
-        with:
-          script: |
-            const checkResult  = '${{ needs.check.result }}';
-            const verifyResult = '${{ needs.verify-plugin.result }}';
-            const commitResult = '${{ needs.check-commits.result }}';
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-
-            function badge(r) {
-              if (r === 'success') return '✅ passed';
-              if (r === 'failure') return '❌ failed';
-              if (r === 'skipped') return '⏭ skipped';
-              return '⚠️ ' + r;
-            }
-
-            const allPassed = checkResult === 'success' && verifyResult === 'success' && (commitResult === 'success' || commitResult === 'skipped');
-            const headline = allPassed ? '### ✅ All checks passed' : '### ❌ Some checks failed';
-
-            const body = [
-              '## /verify result',
-              '',
-              headline,
-              '',
-              '| Job | Result |',
-              '|-----|--------|',
-              `| Check (tests · Checkstyle · Spotless · JaCoCo) | ${badge(checkResult)} |`,
-              `| Verify Plugin (2025.3 · 2026.1) | ${badge(verifyResult)} |`,
-              `| Single commit | ${badge(commitResult)} |`,
-              '',
-              `[View full run logs](${runUrl})`,
-            ].join('\n');
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: Number('${{ needs.resolve.outputs.pr-number }}'),
-              body,
-            });
