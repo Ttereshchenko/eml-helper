@@ -113,9 +113,23 @@ jobs:
           path: build/reports/pluginVerifier/
           retention-days: 14
 
+  check-commits:
+    name: Single commit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Enforce squash
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const count = context.payload.pull_request.commits;
+            if (count !== 1) {
+              core.setFailed(`PR has ${count} commits — squash to 1 before merging.`);
+            }
+
   comment-result:
     name: Post result comment
-    needs: [resolve, check, verify-plugin]
+    needs: [resolve, check, verify-plugin, check-commits]
     runs-on: ubuntu-latest
     if: |
       always() &&
@@ -127,6 +141,7 @@ jobs:
           script: |
             const checkResult  = '${{ needs.check.result }}';
             const verifyResult = '${{ needs.verify-plugin.result }}';
+            const commitResult = '${{ needs.check-commits.result }}';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
 
             function badge(r) {
@@ -136,7 +151,7 @@ jobs:
               return '⚠️ ' + r;
             }
 
-            const allPassed = checkResult === 'success' && verifyResult === 'success';
+            const allPassed = checkResult === 'success' && verifyResult === 'success' && (commitResult === 'success' || commitResult === 'skipped');
             const headline = allPassed ? '### ✅ All checks passed' : '### ❌ Some checks failed';
 
             const body = [
@@ -148,6 +163,7 @@ jobs:
               '|-----|--------|',
               `| Check (tests · Checkstyle · Spotless · JaCoCo) | ${badge(checkResult)} |`,
               `| Verify Plugin (2025.3 · 2026.1) | ${badge(verifyResult)} |`,
+              `| Single commit | ${badge(commitResult)} |`,
               '',
               `[View full run logs](${runUrl})`,
             ].join('\n');
