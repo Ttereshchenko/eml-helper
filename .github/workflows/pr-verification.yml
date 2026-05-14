@@ -71,7 +71,7 @@ jobs:
 
       - name: Upload JaCoCo report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jacoco-report
           path: build/reports/jacoco/test/
@@ -79,7 +79,7 @@ jobs:
 
       - name: Upload test and Checkstyle reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: check-reports
           path: |
@@ -107,7 +107,7 @@ jobs:
 
       - name: Upload plugin verifier report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plugin-verifier-report
           path: build/reports/pluginVerifier/
