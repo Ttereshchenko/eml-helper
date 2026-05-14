@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, publish to Marketplace, create GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+
+      - name: Derive version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build plugin
+        run: ./gradlew --no-daemon -PpluginVersion=${{ steps.version.outputs.value }} buildPlugin
+
+      - name: Verify plugin
+        run: ./gradlew --no-daemon -PpluginVersion=${{ steps.version.outputs.value }} verifyPlugin
+
+      - name: Extract release notes
+        run: |
+          ./gradlew --no-daemon -PpluginVersion=${{ steps.version.outputs.value }} \
+            getChangelog --no-header --no-empty-sections \
+            --project-version=${{ steps.version.outputs.value }} \
+            --output-file=RELEASE_NOTES.md
+
+      - name: Publish to JetBrains Marketplace
+        env:
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+        run: ./gradlew --no-daemon -PpluginVersion=${{ steps.version.outputs.value }} publishPlugin
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.version.outputs.value }}
+          body_path: RELEASE_NOTES.md
+          files: build/distributions/*.zip
+          fail_on_unmatched_files: true
