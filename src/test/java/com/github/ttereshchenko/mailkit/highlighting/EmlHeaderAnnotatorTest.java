@@ -95,4 +95,24 @@ public class EmlHeaderAnnotatorTest extends BasePlatformTestCase {
         var infos = annotateText(content);
         assertEquals(1, infos.size());
     }
+
+    public void testNestedEmlHeadersAreAnnotated() {
+        // Regression test for #27: headers of a nested message/rfc822 attachment must be
+        // highlighted just like the outer headers.
+        var content = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type: message/rfc822\n\n"
+                + "From: nested@example.com\nSubject: nested\n\nbody\n--b--\n";
+        var infos = annotateText(content);
+        // Highlight list (configured in setUp) covers From and Subject — both name-only.
+        assertEquals(2, infos.size());
+    }
+
+    public void testPerPartHeadersAreAnnotated() {
+        // Per-part MIME headers (the block right after a --boundary marker) must be annotated.
+        var content =
+                "Content-Type: multipart/mixed; boundary=\"b\"\n\n" + "--b\nX-Custom: per-part-value\n\nhello\n--b--\n";
+        var infos = annotateText(content);
+        // X-Custom is in the highlight list (full-line, not name-only).
+        assertEquals(1, infos.size());
+    }
 }

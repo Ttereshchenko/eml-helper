@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Header highlighting now covers per-part MIME headers and nested `message/rfc822` attachments (#27)
+
 ## 0.0.1 - 2026-05-14
 
 ### Added

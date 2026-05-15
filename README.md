@@ -18,7 +18,7 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 <!-- TOC -->
 ## Features
 
-- **Syntax highlighting** — Headers, MIME boundaries, and body content are visually distinct
+- **Syntax highlighting** — Headers, MIME boundaries, and body content are visually distinct, including per-part MIME headers and nested `message/rfc822` attachments
 - **MIME part folding** — Collapse multipart boundaries to focus on the section you care about
 - **Per-header color customization** — Assign individual colors to headers like `From`, `Subject`, `Date`, etc. via **Settings > Editor > Color Scheme > MailKit**
 - **Name-only highlighting** — Optionally highlight just the header name (e.g. `Subject:`) instead of the full line, configurable per header
