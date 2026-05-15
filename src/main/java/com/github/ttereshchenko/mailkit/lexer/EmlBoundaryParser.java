@@ -1,5 +1,6 @@
 package com.github.ttereshchenko.mailkit.lexer;
 
+import com.intellij.openapi.diagnostic.Logger;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Objects;
@@ -7,6 +8,8 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 public final class EmlBoundaryParser {
+    private static final Logger LOG = Logger.getInstance(EmlBoundaryParser.class);
+
     private static final Pattern BOUNDARY_PATTERN =
             Pattern.compile("boundary\\s*=\\s*\"?([^\"\\s;]+)\"?", Pattern.CASE_INSENSITIVE);
 
@@ -30,9 +33,9 @@ public final class EmlBoundaryParser {
             return EMPTY;
         }
         var rawNames = new HashSet<String>();
-        rawNames.add(matcher.group(1));
+        addBoundary(rawNames, matcher.group(1));
         while (matcher.find()) {
-            rawNames.add(matcher.group(1));
+            addBoundary(rawNames, matcher.group(1));
         }
         var startMarkers = HashSet.<String>newHashSet(rawNames.size());
         var endMarkers = HashSet.<String>newHashSet(rawNames.size());
@@ -60,5 +63,11 @@ public final class EmlBoundaryParser {
 
     public Set<String> rawNames() {
         return rawNames;
+    }
+
+    private static void addBoundary(Set<String> sink, String name) {
+        if (!sink.add(name) && LOG.isDebugEnabled()) {
+            LOG.debug("Duplicate MIME boundary declaration ignored: " + name);
+        }
     }
 }

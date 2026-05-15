@@ -61,10 +61,12 @@ public class EmlHeaderAnnotatorTest extends BasePlatformTestCase {
     }
 
     public void testContinuationLineHighlightedInFullLineMode() {
-        // "X-Custom" is full-line; continuation should also be annotated as the same header.
+        // "X-Custom" is full-line; the whole header including continuation is annotated as one range.
         var content = "X-Custom: first,\n second\n\nBody\n";
         var infos = annotateText(content);
-        assertEquals(2, infos.size());
+        assertEquals(1, infos.size());
+        var info = infos.getFirst();
+        assertEquals("X-Custom: first,\n second\n", content.substring(info.getStartOffset(), info.getEndOffset()));
     }
 
     public void testContinuationLineSuppressedInNameOnlyMode() {

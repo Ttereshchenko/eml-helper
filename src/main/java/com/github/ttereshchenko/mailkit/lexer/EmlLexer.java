@@ -78,6 +78,8 @@ public final class EmlLexer extends LexerBase {
                 } else {
                     inHeaderMode = false;
                 }
+            } else if (line.charAt(0) == ' ' || line.charAt(0) == '\t') {
+                tokenType = EmlTokenTypes.HEADER_CONT_LINE;
             } else {
                 tokenType = EmlTokenTypes.HEADER_LINE;
                 if (!rfc822InCurrentBlock && isContentTypeRfc822(line)) {
@@ -103,13 +105,6 @@ public final class EmlLexer extends LexerBase {
     }
 
     private static boolean isContentTypeRfc822(String line) {
-        if (line.isEmpty()) {
-            return false;
-        }
-        var firstChar = line.charAt(0);
-        if (firstChar == ' ' || firstChar == '\t') {
-            return false;
-        }
         var colonIndex = line.indexOf(':');
         if (colonIndex <= 0) {
             return false;

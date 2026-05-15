@@ -12,8 +12,10 @@ plugins {
 }
 
 java {
+    // IntelliJ Platform 2026.1 (since-build=261) runs on JBR 21. Toolchain must match so the
+    // verifier accepts targetCompatibility=21 and the produced bytecode is loadable by the IDE.
     toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
