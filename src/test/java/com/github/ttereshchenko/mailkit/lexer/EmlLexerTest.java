@@ -54,13 +54,15 @@ class EmlLexerTest {
 
     @Test
     void testBoundaryExtraction() {
-        String input = "Content-Type: multipart/mixed; boundary=\"abc123\"\n\n--abc123\nBody part\n--abc123--\n";
+        // Real multipart parts have a blank line separating their per-part headers from the body.
+        String input = "Content-Type: multipart/mixed; boundary=\"abc123\"\n\n--abc123\n\nBody part\n--abc123--\n";
         List<IElementType> types = tokenTypes(input);
         assertEquals(
                 List.of(
                         EmlTokenTypes.HEADER_LINE,
                         EmlTokenTypes.BLANK_LINE,
                         EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.BLANK_LINE,
                         EmlTokenTypes.BODY_LINE,
                         EmlTokenTypes.BOUNDARY_END),
                 types);
@@ -68,7 +70,7 @@ class EmlLexerTest {
 
     @Test
     void testBoundaryExtractionUnquoted() {
-        String input = "Content-Type: multipart/mixed; boundary=abc123\n\n--abc123\nBody\n--abc123--\n";
+        String input = "Content-Type: multipart/mixed; boundary=abc123\n\n--abc123\n\nBody\n--abc123--\n";
         List<IElementType> types = tokenTypes(input);
         assertTrue(types.contains(EmlTokenTypes.BOUNDARY_START));
         assertTrue(types.contains(EmlTokenTypes.BOUNDARY_END));
@@ -219,7 +221,7 @@ class EmlLexerTest {
 
     @Test
     void testRealEmlFile() throws IOException {
-        String content = Files.readString(Path.of("src/test/resources/samples/3.eml"));
+        String content = Files.readString(Path.of("src/test/resources/samples/eml/non-journaled/3.eml"));
         List<TokenInfo> tokens = tokenize(content);
 
         // File starts with headers
@@ -333,12 +335,13 @@ class EmlLexerTest {
 
     @Test
     void testCrlfBoundaryExtraction() {
-        String input = "Content-Type: multipart/mixed; boundary=\"abc\"\r\n\r\n--abc\r\nPart\r\n--abc--\r\n";
+        String input = "Content-Type: multipart/mixed; boundary=\"abc\"\r\n\r\n--abc\r\n\r\nPart\r\n--abc--\r\n";
         assertEquals(
                 List.of(
                         EmlTokenTypes.HEADER_LINE,
                         EmlTokenTypes.BLANK_LINE,
                         EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.BLANK_LINE,
                         EmlTokenTypes.BODY_LINE,
                         EmlTokenTypes.BOUNDARY_END),
                 tokenTypes(input));
@@ -363,5 +366,169 @@ class EmlLexerTest {
         var types = tokenTypes(input);
         assertEquals(EmlTokenTypes.BODY_LINE, types.get(2));
         assertEquals(EmlTokenTypes.BODY_LINE, types.get(3));
+    }
+
+    // ===== Nested EML / per-part header tests =====
+
+    @Test
+    void testPerPartHeadersAfterBoundaryAreHeaderLines() {
+        // Headers of a MIME part (Content-Type, Content-Transfer-Encoding, ...) sit right after the
+        // boundary marker and must be tokenized as HEADER_LINE so the annotator can color them.
+        String input = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type: text/plain\nContent-Transfer-Encoding: 7bit\n\n"
+                + "hello body\n--b--\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testNestedRfc822HeadersAreHeaderLines() {
+        // After a `Content-Type: message/rfc822` part, the blank line ending the part's headers
+        // does NOT switch the lexer to body mode — the body of that part is itself an RFC 822
+        // message, so its own header block must keep emitting HEADER_LINE tokens.
+        String input = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type: message/rfc822\n\n"
+                + "Subject: nested\nFrom: a@b\n\n"
+                + "nested body\n--b--\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testDoubleNestedRfc822() {
+        // rfc822 inside rfc822 — recursion must work at any depth.
+        String input = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type: message/rfc822\n\n"
+                + "Content-Type: message/rfc822\n\n"
+                + "Subject: innermost\n\n"
+                + "deep body\n--b--\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testMultipartInsideRfc822() {
+        // A nested rfc822 message can itself wrap a multipart body — boundary tracking must keep
+        // working alongside the rfc822 re-entry into header mode.
+        String input = "Content-Type: multipart/mixed; boundary=\"outer\"\n\n"
+                + "--outer\nContent-Type: message/rfc822\n\n"
+                + "Subject: nested email\nContent-Type: multipart/mixed; boundary=\"inner\"\n\n"
+                + "--inner\nContent-Type: text/plain\n\nHi\n--inner--\n--outer--\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testContentTypeMessageRfc822IsCaseInsensitive() {
+        // RFC 822 header names and MIME types are case-insensitive; the rfc822 detection must
+        // accept any common spelling and tolerate the optional space after the colon.
+        String input = "content-type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nCONTENT-TYPE:Message/RFC822\n\n"
+                + "Subject: nested\n\nbody\n--b--\n";
+        var types = tokenTypes(input);
+        // Index 5 is the nested message's "Subject: nested" line.
+        assertEquals(EmlTokenTypes.HEADER_LINE, types.get(5));
+    }
+
+    @Test
+    void testHeaderLikeLinesInTextPlainBodyStayBodyLine() {
+        // Journal-report style: a text/plain part contains lines that LOOK like headers
+        // (Sender:, To:, Subject:) but they are plain text, not real headers. The lexer must
+        // NOT promote them to HEADER_LINE because the part is text/plain, not message/rfc822.
+        String input = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type: text/plain\n\n"
+                + "Sender: foo@example.com\nSubject: looks like a header but is body\n--b--\n";
+        var types = tokenTypes(input);
+        // Indices: 0=outer header, 1=blank, 2=--b, 3=text/plain header, 4=blank, 5=Sender, 6=Subject, 7=--b--
+        assertEquals(EmlTokenTypes.BODY_LINE, types.get(5));
+        assertEquals(EmlTokenTypes.BODY_LINE, types.get(6));
+    }
+
+    @Test
+    void testJournaledSampleAppleMailAttachment() throws IOException {
+        // Real-world sample: outer Apple Mail message with an attached message/rfc822. The
+        // nested email's "Subject: This is an attachment" line was previously mis-tokenized as
+        // body content and therefore never highlighted.
+        String content =
+                Files.readString(Path.of("src/test/resources/samples/eml/journaled/email_with_email_attachment.eml"));
+        var tokens = tokenize(content);
+        var nestedSubject = tokens.stream()
+                .filter(token -> token.text().startsWith("Subject: This is an attachment"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(EmlTokenTypes.HEADER_LINE, nestedSubject.type());
+        var nestedFrom = tokens.stream()
+                .filter(token -> token.text().startsWith("From: Peter MacRobert"))
+                .skip(1)
+                .findFirst()
+                .orElseThrow();
+        assertEquals(EmlTokenTypes.HEADER_LINE, nestedFrom.type());
+    }
+
+    @Test
+    void testJournaledSampleJournalReport() throws IOException {
+        // Real-world journal-report sample (Exchange-style X-MS-Journal-Report). The nested
+        // message/rfc822 attachment's Date/From/Subject/etc. were never highlighted.
+        String content = Files.readString(Path.of("src/test/resources/samples/eml/journaled/journaled_1.eml"));
+        var tokens = tokenize(content);
+        // Nested Message-ID is unique to the attached message.
+        var nestedMessageId = tokens.stream()
+                .filter(token -> token.text().startsWith("Message-ID: <2QKJUVIHJEJ5UE.JavaMail.vcap"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(EmlTokenTypes.HEADER_LINE, nestedMessageId.type());
+        // Journal summary lines inside text/plain (lines 19-24) must remain BODY_LINE.
+        var summarySender = tokens.stream()
+                .filter(token -> token.text().startsWith("Sender: Janie190860"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(EmlTokenTypes.BODY_LINE, summarySender.type());
     }
 }
