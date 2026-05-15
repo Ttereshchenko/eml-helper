@@ -23,6 +23,8 @@
 - Header highlighting now covers per-part MIME headers and nested `message/rfc822` attachments (#27)
 - `EmlBoundaryParser` now logs duplicate boundary declarations at debug level instead of
   silently merging them.
+- Newly added headers now appear in the Color Scheme page immediately after Apply, without
+  needing to reopen the Settings dialog.
 
 ## 0.0.1 - 2026-05-14
 

@@ -40,15 +40,18 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
     private JBTable table;
     private HeaderTableModel tableModel;
     private JPanel tablePanel;
+    private JComponent rootPanel;
     private final DaemonRestarter daemonRestarter;
+    private final ColorSchemePageRefresher colorSchemeRefresher;
 
     @SuppressWarnings("unused")
     public EmlHeaderSettingsConfigurable() {
-        this(DaemonRestarter.DEFAULT);
+        this(DaemonRestarter.DEFAULT, ColorSchemePageRefresher.DEFAULT);
     }
 
-    EmlHeaderSettingsConfigurable(DaemonRestarter daemonRestarter) {
+    EmlHeaderSettingsConfigurable(DaemonRestarter daemonRestarter, ColorSchemePageRefresher colorSchemeRefresher) {
         this.daemonRestarter = daemonRestarter;
+        this.colorSchemeRefresher = colorSchemeRefresher;
     }
 
     @Override
@@ -84,6 +87,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         var root = new JPanel(new java.awt.BorderLayout());
         root.add(highlightingEnabledCheckbox, java.awt.BorderLayout.NORTH);
         root.add(tablePanel, java.awt.BorderLayout.CENTER);
+        rootPanel = root;
         return root;
     }
 
@@ -172,6 +176,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         settings.setNameOnlyHeaders(nameOnly);
 
         daemonRestarter.restart("EML settings changed");
+        colorSchemeRefresher.refresh(rootPanel);
     }
 
     @Override
