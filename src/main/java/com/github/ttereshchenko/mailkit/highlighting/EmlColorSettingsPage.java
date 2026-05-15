@@ -8,13 +8,18 @@ import com.intellij.openapi.options.colors.ColorDescriptor;
 import com.intellij.openapi.options.colors.ColorSettingsPage;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import javax.swing.Icon;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class EmlColorSettingsPage implements ColorSettingsPage {
-    private static final String DEMO_TEXT = """
+
+    private static final Set<String> PREDEFINED_UPPER = Set.of("FROM", "TO", "SUBJECT", "DATE", "CC", "BCC");
+
+    private static final String DEMO_HEADERS = """
             <from>From: sender@example.com</from>
             <to>To: recipient@example.com,</to>
             <to> another@example.com</to>
@@ -22,6 +27,9 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
             <date>Date: Tue, 17 Mar 2026 10:00:00 +0000</date>
             <cc>Cc: someone@example.com</cc>
             <bcc>Bcc: hidden@example.com</bcc>
+            """;
+
+    private static final String DEMO_BODY = """
             Content-Type: multipart/mixed; boundary="abc123"
 
             Hello, this is the body.
@@ -45,7 +53,25 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
 
     @Override
     public @NotNull String getDemoText() {
-        return DEMO_TEXT;
+        var builder = new StringBuilder(DEMO_HEADERS);
+        var seen = new HashSet<String>();
+        for (String header : EmlHeaderSettings.getInstance().getHighlightedHeaders()) {
+            var upper = header.toUpperCase();
+            if (PREDEFINED_UPPER.contains(upper) || !seen.add(upper)) {
+                continue;
+            }
+            var tag = header.toLowerCase();
+            builder.append('<')
+                    .append(tag)
+                    .append('>')
+                    .append(header)
+                    .append(": sample value")
+                    .append("</")
+                    .append(tag)
+                    .append(">\n");
+        }
+        builder.append(DEMO_BODY);
+        return builder.toString();
     }
 
     @Override
@@ -79,18 +105,11 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
         descriptors.add(new AttributesDescriptor("Headers//Cc", EmlHeaderTextAttributeKeys.HEADER_CC));
         descriptors.add(new AttributesDescriptor("Headers//Bcc", EmlHeaderTextAttributeKeys.HEADER_BCC));
 
-        // Add descriptors for user-configured headers beyond the defaults
         for (String header : EmlHeaderSettings.getInstance().getHighlightedHeaders()) {
-            String upper = header.toUpperCase();
-            if (!upper.equals("FROM")
-                    && !upper.equals("TO")
-                    && !upper.equals("SUBJECT")
-                    && !upper.equals("DATE")
-                    && !upper.equals("CC")
-                    && !upper.equals("BCC")) {
-                descriptors.add(
-                        new AttributesDescriptor("Headers//" + header, EmlHeaderTextAttributeKeys.getKey(header)));
+            if (PREDEFINED_UPPER.contains(header.toUpperCase())) {
+                continue;
             }
+            descriptors.add(new AttributesDescriptor("Headers//" + header, EmlHeaderTextAttributeKeys.getKey(header)));
         }
         return descriptors.toArray(AttributesDescriptor[]::new);
     }

@@ -84,4 +84,41 @@ public class EmlColorSettingsPageTest extends BasePlatformTestCase {
     public void testColorDescriptorsIsEmptyArray() {
         assertSame(ColorDescriptor.EMPTY_ARRAY, page.getColorDescriptors());
     }
+
+    public void testDemoTextIncludesCustomHeaderSampleLine() {
+        EmlHeaderSettings.getInstance().setHighlightedHeaders(List.of("From", "X-Custom"));
+        var demo = page.getDemoText();
+        assertTrue("expected <x-custom> tag in demo:\n" + demo, demo.contains("<x-custom>"));
+        assertTrue("expected </x-custom> closing tag in demo:\n" + demo, demo.contains("</x-custom>"));
+        assertTrue("expected sample line to mention X-Custom:\n" + demo, demo.contains("X-Custom:"));
+    }
+
+    public void testDemoTextOmitsPredefinedAsCustom() {
+        EmlHeaderSettings.getInstance().setHighlightedHeaders(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));
+        var demo = page.getDemoText();
+        assertEquals(1, countOccurrences(demo, "<from>"));
+        assertEquals(1, countOccurrences(demo, "<subject>"));
+    }
+
+    public void testDemoTextDeduplicatesCustomHeaders() {
+        EmlHeaderSettings.getInstance().setHighlightedHeaders(List.of("X-Custom", "x-custom"));
+        var demo = page.getDemoText();
+        assertEquals(1, countOccurrences(demo, "<x-custom>"));
+    }
+
+    public void testDemoTextOmitsCustomLinesWhenNoneConfigured() {
+        EmlHeaderSettings.getInstance().setHighlightedHeaders(List.of("From", "To"));
+        var demo = page.getDemoText();
+        assertFalse("no <x-...> tags expected when no custom headers configured:\n" + demo, demo.contains("<x-"));
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        var count = 0;
+        var index = 0;
+        while ((index = haystack.indexOf(needle, index)) != -1) {
+            count++;
+            index += needle.length();
+        }
+        return count;
+    }
 }
