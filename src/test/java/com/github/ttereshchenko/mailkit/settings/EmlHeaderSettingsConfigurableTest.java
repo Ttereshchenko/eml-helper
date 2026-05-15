@@ -92,11 +92,24 @@ public class EmlHeaderSettingsConfigurableTest extends BasePlatformTestCase {
 
     public void testApplyInvokesDaemonRestarter() throws Exception {
         var reasons = new java.util.ArrayList<String>();
-        var withSpy = new EmlHeaderSettingsConfigurable(reasons::add);
+        var withSpy = new EmlHeaderSettingsConfigurable(reasons::add, component -> {});
         try {
             withSpy.createComponent();
             withSpy.apply();
             assertEquals(List.of("EML settings changed"), reasons);
+        } finally {
+            withSpy.disposeUIResources();
+        }
+    }
+
+    public void testApplyInvokesColorSchemeRefresher() throws Exception {
+        var refreshedComponents = new java.util.ArrayList<javax.swing.JComponent>();
+        var withSpy = new EmlHeaderSettingsConfigurable(reason -> {}, refreshedComponents::add);
+        try {
+            var root = withSpy.createComponent();
+            withSpy.apply();
+            assertEquals(1, refreshedComponents.size());
+            assertSame(root, refreshedComponents.get(0));
         } finally {
             withSpy.disposeUIResources();
         }
