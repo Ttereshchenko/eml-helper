@@ -50,7 +50,7 @@ jobs:
         run: ./gradlew --no-daemon -PpluginVersion=${{ steps.version.outputs.value }} publishPlugin
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: v${{ steps.version.outputs.value }}
           body_path: RELEASE_NOTES.md
