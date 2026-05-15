@@ -13,6 +13,9 @@
 
 ### Added
 
+- *Color Scheme → MailKit* preview now includes a sample line for each
+  user-configured custom header, so colors picked for custom headers can be
+  previewed before clicking *Apply*.
 - RFC 2047 encoded-word decoding for header values (`=?UTF-8?Q?…?=` / `=?…?B?…?=`).
 - Test coverage for `EmlSyntaxHighlighterFactory`, the RFC 2047 decoder, the PSI parser,
   and edge cases: missing terminator boundaries, nested `message/rfc822` with CRLF,
@@ -20,6 +23,9 @@
 
 ### Fixed
 
+- "Add Header" dialog in *Settings → MailKit* now accepts custom header names
+  (e.g. `X-Custom`, `CUSTOM-HEADER`); previously it was a non-editable dropdown
+  restricted to 15 predefined headers.
 - Header highlighting now covers per-part MIME headers and nested `message/rfc822` attachments (#27)
 - `EmlBoundaryParser` now logs duplicate boundary declarations at debug level instead of
   silently merging them.

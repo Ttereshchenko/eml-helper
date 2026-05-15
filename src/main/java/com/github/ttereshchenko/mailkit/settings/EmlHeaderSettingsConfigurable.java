@@ -18,23 +18,22 @@ import org.jetbrains.annotations.Nullable;
 public final class EmlHeaderSettingsConfigurable implements Configurable {
     private static final Pattern VALID_HEADER_NAME = Pattern.compile("[A-Za-z0-9-]+");
 
-    private static final String[] SUGGESTIONS = {
-        "From",
-        "To",
-        "Cc",
-        "Bcc",
-        "Subject",
-        "Date",
-        "Reply-To",
-        "Sender",
-        "Message-ID",
-        "In-Reply-To",
-        "References",
-        "MIME-Version",
-        "Content-Type",
-        "Content-Transfer-Encoding",
-        "Content-Disposition"
-    };
+    private static final List<String> SUGGESTIONS = List.of(
+            "From",
+            "To",
+            "Cc",
+            "Bcc",
+            "Subject",
+            "Date",
+            "Reply-To",
+            "Sender",
+            "Message-ID",
+            "In-Reply-To",
+            "References",
+            "MIME-Version",
+            "Content-Type",
+            "Content-Transfer-Encoding",
+            "Content-Disposition");
 
     private JCheckBox highlightingEnabledCheckbox;
     private JBTable table;
@@ -43,15 +42,28 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
     private JComponent rootPanel;
     private final DaemonRestarter daemonRestarter;
     private final ColorSchemePageRefresher colorSchemeRefresher;
+    private final HeaderNamePrompter prompter;
 
     @SuppressWarnings("unused")
     public EmlHeaderSettingsConfigurable() {
-        this(DaemonRestarter.DEFAULT, ColorSchemePageRefresher.DEFAULT);
+        this(DaemonRestarter.DEFAULT, ColorSchemePageRefresher.DEFAULT, HeaderNamePrompter.DEFAULT);
     }
 
     EmlHeaderSettingsConfigurable(DaemonRestarter daemonRestarter, ColorSchemePageRefresher colorSchemeRefresher) {
+        this(daemonRestarter, colorSchemeRefresher, HeaderNamePrompter.DEFAULT);
+    }
+
+    EmlHeaderSettingsConfigurable(DaemonRestarter daemonRestarter, HeaderNamePrompter prompter) {
+        this(daemonRestarter, ColorSchemePageRefresher.DEFAULT, prompter);
+    }
+
+    EmlHeaderSettingsConfigurable(
+            DaemonRestarter daemonRestarter,
+            ColorSchemePageRefresher colorSchemeRefresher,
+            HeaderNamePrompter prompter) {
         this.daemonRestarter = daemonRestarter;
         this.colorSchemeRefresher = colorSchemeRefresher;
+        this.prompter = prompter;
     }
 
     @Override
@@ -97,16 +109,8 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         tablePanel.setEnabled(enabled);
     }
 
-    private void addHeader() {
-        var result = (String) JOptionPane.showInputDialog(
-                table,
-                "Enter header name (e.g., Content-Type):",
-                "Add Header",
-                JOptionPane.PLAIN_MESSAGE,
-                null,
-                SUGGESTIONS,
-                SUGGESTIONS[0]);
-
+    void addHeader() {
+        var result = prompter.prompt(table, SUGGESTIONS);
         if (result == null || result.isBlank()) {
             return;
         }
@@ -136,7 +140,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         tableModel.fireTableRowsInserted(tableModel.entries.size() - 1, tableModel.entries.size() - 1);
     }
 
-    private void removeHeader() {
+    void removeHeader() {
         var row = table.getSelectedRow();
         if (row >= 0) {
             tableModel.entries.remove(row);

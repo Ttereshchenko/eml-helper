@@ -104,7 +104,8 @@ public class EmlHeaderSettingsConfigurableTest extends BasePlatformTestCase {
 
     public void testApplyInvokesColorSchemeRefresher() throws Exception {
         var refreshedComponents = new java.util.ArrayList<javax.swing.JComponent>();
-        var withSpy = new EmlHeaderSettingsConfigurable(reason -> {}, refreshedComponents::add);
+        ColorSchemePageRefresher refresher = component -> refreshedComponents.add(component);
+        var withSpy = new EmlHeaderSettingsConfigurable(reason -> {}, refresher);
         try {
             var root = withSpy.createComponent();
             withSpy.apply();
@@ -112,6 +113,68 @@ public class EmlHeaderSettingsConfigurableTest extends BasePlatformTestCase {
             assertSame(root, refreshedComponents.get(0));
         } finally {
             withSpy.disposeUIResources();
+        }
+    }
+
+    public void testAddHeaderAcceptsCustomHeaderName() throws Exception {
+        var stubPrompter = new RecordingPrompter("CUSTOM-HEADER");
+        var withStub = new EmlHeaderSettingsConfigurable(DaemonRestarter.DEFAULT, stubPrompter);
+        try {
+            withStub.createComponent();
+            withStub.addHeader();
+            withStub.apply();
+            assertTrue(
+                    "expected CUSTOM-HEADER to be persisted, got "
+                            + EmlHeaderSettings.getInstance().getHighlightedHeaders(),
+                    EmlHeaderSettings.getInstance().getHighlightedHeaders().contains("CUSTOM-HEADER"));
+            assertEquals(1, stubPrompter.calls);
+        } finally {
+            withStub.disposeUIResources();
+        }
+    }
+
+    public void testAddHeaderPassesSuggestionsListToPrompter() {
+        var stubPrompter = new RecordingPrompter(null);
+        var withStub = new EmlHeaderSettingsConfigurable(DaemonRestarter.DEFAULT, stubPrompter);
+        try {
+            withStub.createComponent();
+            withStub.addHeader();
+            assertNotNull(stubPrompter.lastSuggestions);
+            assertTrue("suggestions should include From", stubPrompter.lastSuggestions.contains("From"));
+            assertTrue(
+                    "suggestions should include Content-Type", stubPrompter.lastSuggestions.contains("Content-Type"));
+        } finally {
+            withStub.disposeUIResources();
+        }
+    }
+
+    public void testAddHeaderIgnoresNullFromPrompter() {
+        var stubPrompter = new RecordingPrompter(null);
+        var withStub = new EmlHeaderSettingsConfigurable(DaemonRestarter.DEFAULT, stubPrompter);
+        try {
+            withStub.createComponent();
+            var before = List.copyOf(EmlHeaderSettings.getInstance().getHighlightedHeaders());
+            withStub.addHeader();
+            assertEquals(before, List.copyOf(EmlHeaderSettings.getInstance().getHighlightedHeaders()));
+        } finally {
+            withStub.disposeUIResources();
+        }
+    }
+
+    private static final class RecordingPrompter implements HeaderNamePrompter {
+        private final String response;
+        int calls;
+        List<String> lastSuggestions;
+
+        RecordingPrompter(String response) {
+            this.response = response;
+        }
+
+        @Override
+        public String prompt(java.awt.Component parent, List<String> suggestions) {
+            calls++;
+            lastSuggestions = suggestions;
+            return response;
         }
     }
 }
