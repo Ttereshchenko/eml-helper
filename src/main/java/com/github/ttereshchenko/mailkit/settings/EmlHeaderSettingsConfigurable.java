@@ -1,9 +1,6 @@
 package com.github.ttereshchenko.mailkit.settings;
 
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import com.intellij.openapi.options.Configurable;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.project.ProjectManager;
 import com.intellij.ui.ToolbarDecorator;
 import com.intellij.ui.table.JBTable;
 import java.util.ArrayList;
@@ -43,6 +40,16 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
     private JBTable table;
     private HeaderTableModel tableModel;
     private JPanel tablePanel;
+    private final DaemonRestarter daemonRestarter;
+
+    @SuppressWarnings("unused")
+    public EmlHeaderSettingsConfigurable() {
+        this(DaemonRestarter.DEFAULT);
+    }
+
+    EmlHeaderSettingsConfigurable(DaemonRestarter daemonRestarter) {
+        this.daemonRestarter = daemonRestarter;
+    }
 
     @Override
     public @Nls(capitalization = Nls.Capitalization.Title) String getDisplayName() {
@@ -63,15 +70,15 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         table.getColumnModel().getColumn(1).setMinWidth(80);
 
         var decorator = ToolbarDecorator.createDecorator(table)
-                .setAddAction(_ -> addHeader())
-                .setRemoveAction(_ -> removeHeader());
+                .setAddAction(action -> addHeader())
+                .setRemoveAction(action -> removeHeader());
 
         tablePanel = new JPanel(new java.awt.BorderLayout());
         tablePanel.setBorder(BorderFactory.createTitledBorder("Highlighted Headers"));
         tablePanel.add(decorator.createPanel(), java.awt.BorderLayout.CENTER);
 
         highlightingEnabledCheckbox = new JCheckBox("Enable highlighting", settings.isHighlightingEnabled());
-        highlightingEnabledCheckbox.addActionListener(_ -> updateTableEnabled());
+        highlightingEnabledCheckbox.addActionListener(event -> updateTableEnabled());
         updateTableEnabled();
 
         var root = new JPanel(new java.awt.BorderLayout());
@@ -164,9 +171,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         settings.setHighlightedHeaders(headers);
         settings.setNameOnlyHeaders(nameOnly);
 
-        for (Project project : ProjectManager.getInstance().getOpenProjects()) {
-            DaemonCodeAnalyzer.getInstance(project).restart();
-        }
+        daemonRestarter.restart("EML settings changed");
     }
 
     @Override

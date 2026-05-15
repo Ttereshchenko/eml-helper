@@ -1,0 +1,9 @@
+From: sender@example.com
+To: recipient@example.com
+Subject: Missing closing boundary
+Content-Type: multipart/mixed; boundary="abc"
+
+--abc
+Content-Type: text/plain
+
+This part has no closing --abc-- marker.

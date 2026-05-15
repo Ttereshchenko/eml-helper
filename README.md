@@ -28,7 +28,8 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 ## Requirements
 
 - IntelliJ IDEA 2025.3+
-- Java 25
+
+To build from source you'll need a JDK 21 toolchain — Gradle auto-provisions it via Foojay if absent.
 
 ## Installation
 

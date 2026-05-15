@@ -89,4 +89,16 @@ public class EmlHeaderSettingsConfigurableTest extends BasePlatformTestCase {
         // After apply, persisted list matches the UI view, not the underlying mutation.
         assertEquals(List.of("From", "To"), EmlHeaderSettings.getInstance().getHighlightedHeaders());
     }
+
+    public void testApplyInvokesDaemonRestarter() throws Exception {
+        var reasons = new java.util.ArrayList<String>();
+        var withSpy = new EmlHeaderSettingsConfigurable(reasons::add);
+        try {
+            withSpy.createComponent();
+            withSpy.apply();
+            assertEquals(List.of("EML settings changed"), reasons);
+        } finally {
+            withSpy.disposeUIResources();
+        }
+    }
 }

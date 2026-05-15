@@ -89,7 +89,7 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 25
+          java-version: 21
           cache: gradle
 
       - name: Run check
@@ -125,7 +125,7 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 25
+          java-version: 21
           cache: gradle
 
       - name: Run verifyPlugin

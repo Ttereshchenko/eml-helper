@@ -112,7 +112,7 @@ class EmlLexerTest {
         assertEquals(
                 List.of(
                         EmlTokenTypes.HEADER_LINE,
-                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_CONT_LINE,
                         EmlTokenTypes.BLANK_LINE,
                         EmlTokenTypes.BODY_LINE),
                 types);
@@ -125,7 +125,7 @@ class EmlLexerTest {
         assertEquals(
                 List.of(
                         EmlTokenTypes.HEADER_LINE,
-                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_CONT_LINE,
                         EmlTokenTypes.BLANK_LINE,
                         EmlTokenTypes.BODY_LINE),
                 types);
@@ -353,7 +353,7 @@ class EmlLexerTest {
         assertEquals(
                 List.of(
                         EmlTokenTypes.HEADER_LINE,
-                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_CONT_LINE,
                         EmlTokenTypes.BLANK_LINE,
                         EmlTokenTypes.BODY_LINE),
                 tokenTypes(input));

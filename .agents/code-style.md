@@ -3,7 +3,7 @@
 - Do not use asterisk (`*`) wildcard imports; always import types explicitly
 - use methods from java.util.Objects for null checks
 - use `var` for value declaration
-- use unnamed variables (`_`) for unused catch parameters and unused lambda parameters
+- use a descriptive named throwaway (e.g. `ignored`, `event`) for unused catch parameters and unused lambda parameters — the project targets JDK 21 bytecode, so `_` (Java 22+) is not available
 - prefer switch expressions with pattern matching over chains of `instanceof` checks
 - use record patterns to destructure records in `instanceof` and `switch`
 - use full words for variable names (no abbreviations like "m" for "matcher")

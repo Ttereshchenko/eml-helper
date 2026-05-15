@@ -1,0 +1,11 @@
+From: outer@example.com
+To: archive@example.com
+Subject: Forwarded message
+Content-Type: message/rfc822
+
+From: inner@example.com
+To: original@example.com
+Subject: Original subject
+Content-Type: text/plain
+
+Original body content.
