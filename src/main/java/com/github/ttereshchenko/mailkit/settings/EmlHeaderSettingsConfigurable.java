@@ -165,7 +165,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         settings.setNameOnlyHeaders(nameOnly);
 
         for (Project project : ProjectManager.getInstance().getOpenProjects()) {
-            DaemonCodeAnalyzer.getInstance(project).restart("EML settings changed");
+            DaemonCodeAnalyzer.getInstance(project).restart();
         }
     }
 
