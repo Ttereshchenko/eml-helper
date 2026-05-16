@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.0 - 2026-05-15
+
 ### Changed
 
 - Restructured EML parsing around a real PSI tree (headers, header blocks, MIME parts, nested
