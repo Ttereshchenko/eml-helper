@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- Color Scheme preview now refreshes its demo text after a new custom header
+  is added via *Settings → MailKit → Apply*. Previously, the descriptor tree
+  updated but the preview editor kept the stale sample text, so users could
+  not see how their colour choice would render for the freshly added
+  header.
+
 ## 0.9.0 - 2026-05-15
 
 ### Changed
