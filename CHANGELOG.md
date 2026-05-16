@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **Save Attachment To Disk** — decode a MIME attachment (base64,
+  quoted-printable, 7bit/8bit, binary) and either save it to a chosen
+  location via *Save Attachment As…* or hand it to the OS handler via
+  *Open Attachment with System App*. Available from the editor context
+  menu and as a gutter icon on any qualifying MIME part (Content-
+  Disposition: attachment, a `name=` / `filename=` parameter, or a
+  non-text non-multipart media type). Toggle via *Settings → Editor →
+  MailKit → Show attachment save actions*.
+
 ### Fixed
 
 - Color Scheme preview now refreshes its demo text after a new custom header

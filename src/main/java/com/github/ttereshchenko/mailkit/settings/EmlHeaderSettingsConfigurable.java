@@ -36,6 +36,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
             "Content-Disposition");
 
     private JCheckBox highlightingEnabledCheckbox;
+    private JCheckBox showAttachmentActionsCheckbox;
     private JBTable table;
     private HeaderTableModel tableModel;
     private JPanel tablePanel;
@@ -96,9 +97,13 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         highlightingEnabledCheckbox.addActionListener(event -> updateTableEnabled());
         updateTableEnabled();
 
+        showAttachmentActionsCheckbox =
+                new JCheckBox("Show attachment save actions", settings.isShowAttachmentActions());
+
         var root = new JPanel(new java.awt.BorderLayout());
         root.add(highlightingEnabledCheckbox, java.awt.BorderLayout.NORTH);
         root.add(tablePanel, java.awt.BorderLayout.CENTER);
+        root.add(showAttachmentActionsCheckbox, java.awt.BorderLayout.SOUTH);
         rootPanel = root;
         return root;
     }
@@ -160,6 +165,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
             }
         }
         return highlightingEnabledCheckbox.isSelected() != settings.isHighlightingEnabled()
+                || showAttachmentActionsCheckbox.isSelected() != settings.isShowAttachmentActions()
                 || !currentHeaders.equals(settings.getHighlightedHeaders())
                 || !currentNameOnly.equals(settings.getNameOnlyHeaders());
     }
@@ -168,6 +174,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
     public void apply() {
         var settings = EmlHeaderSettings.getInstance();
         settings.setHighlightingEnabled(highlightingEnabledCheckbox.isSelected());
+        settings.setShowAttachmentActions(showAttachmentActionsCheckbox.isSelected());
         var headers = new ArrayList<String>();
         var nameOnly = new ArrayList<String>();
         for (HeaderEntry entry : tableModel.entries) {
@@ -187,6 +194,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
     public void reset() {
         var settings = EmlHeaderSettings.getInstance();
         highlightingEnabledCheckbox.setSelected(settings.isHighlightingEnabled());
+        showAttachmentActionsCheckbox.setSelected(settings.isShowAttachmentActions());
         updateTableEnabled();
         tableModel.entries.clear();
         for (String header : settings.getHighlightedHeaders()) {
