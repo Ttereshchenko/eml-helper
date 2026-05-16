@@ -11,6 +11,7 @@
           <li>Name-only highlighting mode (highlight header name, not value)</li>
           <li>Global highlighting toggle under Settings → Editor → MailKit</li>
           <li>Add custom headers to the highlight list</li>
+          <li>Save attachments to disk or open them with the system app — gutter icon and editor context menu on any qualifying MIME part, with base64 / quoted-printable / 7bit / 8bit / binary decoding</li>
         </ul>
         <p><a href="https://github.com/ttereshchenko/mailkit">Source Code</a> | <a href="https://www.buymeacoffee.com/ttereshchenko">Donation</a></p>
     ]]></description>
@@ -46,5 +47,27 @@
 
         <additionalTextAttributes scheme="Default" file="colorSchemes/EmlDefault.xml"/>
         <additionalTextAttributes scheme="Darcula" file="colorSchemes/EmlDarcula.xml"/>
+
+        <codeInsight.lineMarkerProvider
+                language="EML"
+                implementationClass="com.github.ttereshchenko.mailkit.attachment.SaveAttachmentLineMarkerProvider"/>
+
+        <notificationGroup id="MailKit" displayType="BALLOON"/>
     </extensions>
+
+    <actions>
+        <action id="mailkit.SaveAttachment"
+                class="com.github.ttereshchenko.mailkit.attachment.SaveAttachmentAction"
+                text="Save Attachment As…"
+                description="Decode the enclosing MIME part and save it to disk">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action id="mailkit.OpenAttachmentWithSystemApp"
+                class="com.github.ttereshchenko.mailkit.attachment.OpenAttachmentWithSystemAppAction"
+                text="Open Attachment with System App"
+                description="Decode the enclosing MIME part to a temp file and hand it to the OS">
+            <add-to-group group-id="EditorPopupMenu" anchor="after"
+                          relative-to-action="mailkit.SaveAttachment"/>
+        </action>
+    </actions>
 </idea-plugin>

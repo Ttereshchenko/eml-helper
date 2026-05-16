@@ -24,6 +24,7 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 - **Name-only highlighting** — Optionally highlight just the header name (e.g. `Subject:`) instead of the full line, configurable per header
 - **Global highlighting toggle** — Disable all EML highlighting at once via **Settings > Editor > MailKit**
 - **Configurable header list** — Add or remove which headers get custom highlighting via **Settings > Editor > MailKit**
+- **Save attachments** — A gutter icon next to any attachment MIME part (or `Save Attachment As…` / `Open Attachment with System App` in the editor context menu) decodes the part body (base64, quoted-printable, 7bit/8bit, binary) and writes it to disk or hands it to the OS. Toggle via **Settings > Editor > MailKit > Show attachment save actions**.
 
 ## Requirements
 
@@ -62,6 +63,7 @@ The plugin zip will be in `build/distributions/`. Install it via **Settings > Pl
 3. MIME parts can be collapsed/expanded using the gutter fold icons
 4. Customize header colors in **Settings > Editor > Color Scheme > MailKit**
 5. Configure which headers are highlighted and toggle per-header name-only mode in **Settings > Editor > MailKit**
+6. Click the save icon in the gutter next to an attachment to decode and write it to disk, or right-click an attachment part for *Save Attachment As…* / *Open Attachment with System App*
 
 ## Contributing with AI
 

@@ -41,6 +41,14 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
         state.highlightingEnabled = enabled;
     }
 
+    public boolean isShowAttachmentActions() {
+        return state.showAttachmentActions;
+    }
+
+    public void setShowAttachmentActions(boolean enabled) {
+        state.showAttachmentActions = enabled;
+    }
+
     public List<String> getHighlightedHeaders() {
         return state.highlightedHeaders;
     }
@@ -75,6 +83,7 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
 
     public static final class State {
         public boolean highlightingEnabled = true;
+        public boolean showAttachmentActions = true;
         public List<String> highlightedHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));
         public List<String> nameOnlyHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));
     }
