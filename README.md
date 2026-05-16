@@ -25,6 +25,17 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 - **Global highlighting toggle** — Disable all EML highlighting at once via **Settings > Editor > MailKit**
 - **Configurable header list** — Add or remove which headers get custom highlighting via **Settings > Editor > MailKit**
 - **Save attachments** — A gutter icon next to any attachment MIME part (or `Save Attachment As…` / `Open Attachment with System App` in the editor context menu) decodes the part body (base64, quoted-printable, 7bit/8bit, binary) and writes it to disk or hands it to the OS. Toggle via **Settings > Editor > MailKit > Show attachment save actions**.
+- **EML inspections & quick-fixes** — RFC 5322 / MIME violations are flagged inline with Alt+Enter fixes. Configurable individually under **Settings > Editor > Inspections > MailKit**:
+  - `MissingRequiredHeader` — `From` or `Date` absent on the message root
+  - `LineTooLong` — line exceeds 998 octets (RFC 5322 §2.1.1)
+  - `UnterminatedBoundary` — declared multipart boundary never closes with `--X--`
+  - `BoundaryNeedsQuoting` — boundary value contains tspecial characters but is unquoted
+  - `UnencodedNonAsciiHeader` — non-ASCII bytes in a structured header outside an RFC 2047 encoded-word
+  - `InvalidBase64Body` — base64 part body contains characters outside the RFC 4648 alphabet
+  - `CharsetMismatch` — declared `charset=` cannot decode the actual body bytes
+  - `UnparseableDate` — `Date:` value does not parse per RFC 2822
+  - `DuplicateMessageId` — header block contains more than one `Message-ID`
+  - `UnknownContentTransferEncoding` — CTE value outside `7bit / 8bit / binary / quoted-printable / base64`
 
 ## Requirements
 
