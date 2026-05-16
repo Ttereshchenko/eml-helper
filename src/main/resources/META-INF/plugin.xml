@@ -12,6 +12,7 @@
           <li>Global highlighting toggle under Settings → Editor → MailKit</li>
           <li>Add custom headers to the highlight list</li>
           <li>Save attachments to disk or open them with the system app — gutter icon and editor context menu on any qualifying MIME part, with base64 / quoted-printable / 7bit / 8bit / binary decoding</li>
+          <li>EML inspections — RFC 5322 / MIME violations are flagged inline with Alt+Enter quick-fixes (missing required headers, unterminated MIME boundaries, base64 alphabet errors, charset mismatches, unparseable dates, and more)</li>
         </ul>
         <p><a href="https://github.com/ttereshchenko/mailkit">Source Code</a> | <a href="https://www.buymeacoffee.com/ttereshchenko">Donation</a></p>
     ]]></description>
@@ -53,6 +54,37 @@
                 implementationClass="com.github.ttereshchenko.mailkit.attachment.SaveAttachmentLineMarkerProvider"/>
 
         <notificationGroup id="MailKit" displayType="BALLOON"/>
+
+        <localInspection language="EML" groupName="MailKit" shortName="MissingRequiredHeader"
+                displayName="Missing required header" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.MissingRequiredHeaderInspection"/>
+        <localInspection language="EML" groupName="MailKit" shortName="LineTooLong"
+                displayName="Line exceeds 998 octets" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.LineTooLongInspection"/>
+        <localInspection language="EML" groupName="MailKit" shortName="UnterminatedBoundary"
+                displayName="Unterminated MIME boundary" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.UnterminatedBoundaryInspection"/>
+        <localInspection language="EML" groupName="MailKit" shortName="BoundaryNeedsQuoting"
+                displayName="MIME boundary needs quoting" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.BoundaryNeedsQuotingInspection"/>
+        <localInspection language="EML" groupName="MailKit" shortName="UnencodedNonAsciiHeader"
+                displayName="Unencoded non-ASCII in structured header" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.UnencodedNonAsciiHeaderInspection"/>
+        <localInspection language="EML" groupName="MailKit" shortName="InvalidBase64Body"
+                displayName="Invalid base64 body" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.InvalidBase64BodyInspection"/>
+        <localInspection language="EML" groupName="MailKit" shortName="CharsetMismatch"
+                displayName="Declared charset cannot decode body" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.CharsetMismatchInspection"/>
+        <localInspection language="EML" groupName="MailKit" shortName="UnparseableDate"
+                displayName="Unparseable Date header" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.UnparseableDateInspection"/>
+        <localInspection language="EML" groupName="MailKit" shortName="DuplicateMessageId"
+                displayName="Duplicate Message-ID header" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.DuplicateMessageIdInspection"/>
+        <localInspection language="EML" groupName="MailKit" shortName="UnknownContentTransferEncoding"
+                displayName="Unknown Content-Transfer-Encoding" enabledByDefault="true" level="WARNING"
+                implementationClass="com.github.ttereshchenko.mailkit.inspections.tools.UnknownContentTransferEncodingInspection"/>
     </extensions>
 
     <actions>

@@ -4,6 +4,13 @@
 
 ### Added
 
+- **EML inspections** — 10 LocalInspectionTools surface RFC 5322 / MIME
+  violations (missing required headers, line too long, unterminated MIME
+  boundary, unquoted boundary, unencoded non-ASCII headers, base64 alphabet
+  errors, charset mismatch, unparseable Date, duplicate Message-ID, unknown
+  Content-Transfer-Encoding) with Alt+Enter quick-fixes. Configurable under
+  *Settings → Editor → Inspections → MailKit*; enabled by default at
+  WARNING severity.
 - **Save Attachment To Disk** — decode a MIME attachment (base64,
   quoted-printable, 7bit/8bit, binary) and either save it to a chosen
   location via *Save Attachment As…* or hand it to the OS handler via
