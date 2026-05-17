@@ -1,8 +1,11 @@
 package com.github.ttereshchenko.mailkit.settings;
 
 import com.intellij.openapi.options.Configurable;
+import com.intellij.ui.TitledSeparator;
 import com.intellij.ui.ToolbarDecorator;
 import com.intellij.ui.table.JBTable;
+import com.intellij.util.ui.FormBuilder;
+import java.awt.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -82,8 +85,16 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
         tableModel = new HeaderTableModel(entries);
         table = new JBTable(tableModel);
-        table.getColumnModel().getColumn(1).setMaxWidth(80);
-        table.getColumnModel().getColumn(1).setMinWidth(80);
+        tableModel.attachParent(table);
+
+        var nameOnlyColumn = table.getColumnModel().getColumn(1);
+        var header = table.getTableHeader();
+        var headerWidth = header.getFontMetrics(header.getFont())
+                        .stringWidth(nameOnlyColumn.getHeaderValue().toString())
+                + 24;
+        nameOnlyColumn.setMinWidth(headerWidth);
+        nameOnlyColumn.setPreferredWidth(headerWidth);
+        nameOnlyColumn.setMaxWidth(headerWidth + 40);
 
         var decorator = ToolbarDecorator.createDecorator(table)
                 .setAddAction(action -> addHeader())
@@ -100,10 +111,14 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         showAttachmentActionsCheckbox =
                 new JCheckBox("Show attachment save actions", settings.isShowAttachmentActions());
 
-        var root = new JPanel(new java.awt.BorderLayout());
-        root.add(highlightingEnabledCheckbox, java.awt.BorderLayout.NORTH);
-        root.add(tablePanel, java.awt.BorderLayout.CENTER);
-        root.add(showAttachmentActionsCheckbox, java.awt.BorderLayout.SOUTH);
+        var root = FormBuilder.createFormBuilder()
+                .addComponent(new TitledSeparator("Headers"))
+                .addComponent(highlightingEnabledCheckbox)
+                .addComponent(tablePanel)
+                .addComponent(new TitledSeparator("Attachments"))
+                .addComponent(showAttachmentActionsCheckbox)
+                .addComponentFillVertically(new JPanel(), 0)
+                .getPanel();
         rootPanel = root;
         return root;
     }
@@ -121,24 +136,11 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         }
 
         var name = result.trim();
-        if (!VALID_HEADER_NAME.matcher(name).matches()) {
-            JOptionPane.showMessageDialog(
-                    table,
-                    "Invalid header name. Only letters, digits, and hyphens are allowed.",
-                    "Validation Error",
-                    JOptionPane.ERROR_MESSAGE);
+        if (!isValidHeaderName(table, name)) {
             return;
         }
-
-        for (HeaderEntry entry : tableModel.entries) {
-            if (entry.name.equalsIgnoreCase(name)) {
-                JOptionPane.showMessageDialog(
-                        table,
-                        "Header \"" + entry.name + "\" already exists.",
-                        "Duplicate Header",
-                        JOptionPane.WARNING_MESSAGE);
-                return;
-            }
+        if (isDuplicateHeader(table, tableModel.entries, name, -1)) {
+            return;
         }
 
         tableModel.entries.add(new HeaderEntry(name, true));
@@ -151,6 +153,36 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
             tableModel.entries.remove(row);
             tableModel.fireTableRowsDeleted(row, row);
         }
+    }
+
+    private static boolean isValidHeaderName(Component parent, String name) {
+        if (VALID_HEADER_NAME.matcher(name).matches()) {
+            return true;
+        }
+        JOptionPane.showMessageDialog(
+                parent,
+                "Invalid header name. Only letters, digits, and hyphens are allowed.",
+                "Validation Error",
+                JOptionPane.ERROR_MESSAGE);
+        return false;
+    }
+
+    private static boolean isDuplicateHeader(Component parent, List<HeaderEntry> entries, String name, int ignoreRow) {
+        for (var index = 0; index < entries.size(); index++) {
+            if (index == ignoreRow) {
+                continue;
+            }
+            var existing = entries.get(index);
+            if (existing.name.equalsIgnoreCase(name)) {
+                JOptionPane.showMessageDialog(
+                        parent,
+                        "Header \"" + existing.name + "\" already exists.",
+                        "Duplicate Header",
+                        JOptionPane.WARNING_MESSAGE);
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -216,9 +248,14 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
     private static final class HeaderTableModel extends AbstractTableModel {
         private static final String[] COLUMN_NAMES = {"Header Name", "Name Only"};
         final List<HeaderEntry> entries;
+        private Component dialogParent;
 
         HeaderTableModel(List<HeaderEntry> entries) {
             this.entries = entries;
+        }
+
+        void attachParent(Component parent) {
+            this.dialogParent = parent;
         }
 
         @Override
@@ -243,7 +280,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
         @Override
         public boolean isCellEditable(int row, int column) {
-            return column == 1;
+            return true;
         }
 
         @Override
@@ -257,7 +294,38 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
             if (column == 1) {
                 entries.get(row).nameOnly = (Boolean) value;
                 fireTableCellUpdated(row, column);
+                return;
             }
+            if (column != 0 || value == null) {
+                return;
+            }
+            var renamed = value.toString().trim();
+            var current = entries.get(row).name;
+            if (renamed.isEmpty() || renamed.equals(current)) {
+                fireTableCellUpdated(row, column);
+                return;
+            }
+            if (!isValidHeaderName(dialogParent, renamed)) {
+                fireTableCellUpdated(row, column);
+                return;
+            }
+            if (isDuplicateHeader(dialogParent, entries, renamed, row)) {
+                fireTableCellUpdated(row, column);
+                return;
+            }
+            entries.get(row).name = renamed;
+            fireTableCellUpdated(row, column);
         }
+    }
+
+    @Override
+    public void disposeUIResources() {
+        if (table != null && table.isEditing()) {
+            table.getCellEditor().stopCellEditing();
+        }
+    }
+
+    javax.swing.table.TableModel getTableModel() {
+        return tableModel;
     }
 }

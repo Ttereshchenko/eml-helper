@@ -1,6 +1,7 @@
 package com.github.ttereshchenko.mailkit.settings;
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
+import java.awt.Container;
 import java.util.List;
 import javax.swing.JCheckBox;
 
@@ -37,12 +38,26 @@ public class EmlHeaderSettingsConfigurableTest extends BasePlatformTestCase {
     private JCheckBox findCheckBox() {
         var root = configurable.createComponent();
         assertNotNull(root);
-        for (var child : root.getComponents()) {
-            if (child instanceof JCheckBox box) {
+        var found = findCheckBoxByLabel(root, "Enable highlighting");
+        if (found == null) {
+            throw new AssertionError("expected an 'Enable highlighting' JCheckBox in the configurable root");
+        }
+        return found;
+    }
+
+    private JCheckBox findCheckBoxByLabel(Container container, String label) {
+        for (var child : container.getComponents()) {
+            if (child instanceof JCheckBox box && label.equals(box.getText())) {
                 return box;
             }
+            if (child instanceof Container nested) {
+                var hit = findCheckBoxByLabel(nested, label);
+                if (hit != null) {
+                    return hit;
+                }
+            }
         }
-        throw new AssertionError("expected a JCheckBox in the configurable root component");
+        return null;
     }
 
     public void testDisplayNameIsMailKit() {
@@ -146,6 +161,29 @@ public class EmlHeaderSettingsConfigurableTest extends BasePlatformTestCase {
         } finally {
             withStub.disposeUIResources();
         }
+    }
+
+    public void testHeaderNameCellIsEditable() {
+        configurable.createComponent();
+        var model = configurable.getTableModel();
+        assertTrue("Header Name column should be editable", model.isCellEditable(0, 0));
+    }
+
+    public void testRenamingHeaderUpdatesEntry() throws Exception {
+        configurable.createComponent();
+        var model = configurable.getTableModel();
+        model.setValueAt("Renamed", 0, 0);
+        configurable.apply();
+        var persisted = EmlHeaderSettings.getInstance().getHighlightedHeaders();
+        assertEquals(List.of("Renamed", "To"), persisted);
+    }
+
+    public void testRenameToBlankIsIgnored() {
+        configurable.createComponent();
+        var model = configurable.getTableModel();
+        var before = model.getValueAt(0, 0);
+        model.setValueAt("   ", 0, 0);
+        assertEquals(before, model.getValueAt(0, 0));
     }
 
     public void testAddHeaderIgnoresNullFromPrompter() {
