@@ -27,6 +27,10 @@
   updated but the preview editor kept the stale sample text, so users could
   not see how their colour choice would render for the freshly added
   header.
+- *Settings → Editor → MailKit* layout refreshed. Settings are grouped into
+  "Headers" and "Attachments" sections, the "Name Only" column header is no
+  longer truncated, and header names in the table can now be edited inline
+  (double-click a row) with the same validation as adding a new header.
 
 ## 0.9.0 - 2026-05-15
 
