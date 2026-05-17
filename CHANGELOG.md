@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.0.0 - 2026-05-16
+
 ### Added
 
 - **EML inspections** — 10 LocalInspectionTools surface RFC 5322 / MIME
