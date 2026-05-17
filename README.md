@@ -25,6 +25,7 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 - **Global highlighting toggle** — Disable all EML highlighting at once via **Settings > Editor > MailKit**
 - **Configurable header list** — Add or remove which headers get custom highlighting via **Settings > Editor > MailKit**
 - **Save attachments** — A gutter icon next to any attachment MIME part (or `Save Attachment As…` / `Open Attachment with System App` in the editor context menu) decodes the part body (base64, quoted-printable, 7bit/8bit, binary) and writes it to disk or hands it to the OS. Toggle via **Settings > Editor > MailKit > Show attachment save actions**.
+- **MSG → EML conversion** — Right-click any Outlook `.msg` file in the Project view and choose **Convert to EML** to produce a standards-compliant `.eml` next to the source and open it in the editor. Handles HTML/text/RTF bodies, attachments, recursively-converted embedded `.msg` messages, and RFC 2047 encoding for non-ASCII headers.
 - **EML inspections & quick-fixes** — RFC 5322 / MIME violations are flagged inline with Alt+Enter fixes. Configurable individually under **Settings > Editor > Inspections > MailKit**:
   - `MissingRequiredHeader` — `From` or `Date` absent on the message root
   - `LineTooLong` — line exceeds 998 octets (RFC 5322 §2.1.1)
@@ -75,6 +76,7 @@ The plugin zip will be in `build/distributions/`. Install it via **Settings > Pl
 4. Customize header colors in **Settings > Editor > Color Scheme > MailKit**
 5. Configure which headers are highlighted and toggle per-header name-only mode in **Settings > Editor > MailKit**
 6. Click the save icon in the gutter next to an attachment to decode and write it to disk, or right-click an attachment part for *Save Attachment As…* / *Open Attachment with System App*
+7. Right-click any `.msg` file in the Project view and choose *Convert to EML* to convert it to a standards-compliant `.eml` and open the result
 
 ## Contributing with AI
 

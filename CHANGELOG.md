@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- **MSG → EML conversion** — `.msg` files (Outlook OLE2 compound documents)
+  are recognised in the Project view with a distinct icon. Right-click →
+  *Convert to EML* writes `<name>.eml` next to the source and opens it in the
+  editor. Header mapping covers `From`, `To`, `Cc`, `Subject`, `Date`, and
+  `Message-ID`; body selection prefers HTML → plain text → stripped RTF;
+  attachments are emitted as `multipart/mixed` parts; embedded `.msg`
+  attachments recurse into the converter and are attached as `message/rfc822`.
+  Non-ASCII header values are RFC 2047 Base64-encoded (`=?UTF-8?B?...?=`).
+  Runs on a cancellable background task with progress and surfaces I/O or
+  malformed-MSG errors as balloon notifications.
+
 ## 1.0.0 - 2026-05-16
 
 ### Added

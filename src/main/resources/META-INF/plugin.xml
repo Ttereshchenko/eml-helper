@@ -13,6 +13,7 @@
           <li>Add custom headers to the highlight list</li>
           <li>Save attachments to disk or open them with the system app — gutter icon and editor context menu on any qualifying MIME part, with base64 / quoted-printable / 7bit / 8bit / binary decoding</li>
           <li>EML inspections — RFC 5322 / MIME violations are flagged inline with Alt+Enter quick-fixes (missing required headers, unterminated MIME boundaries, base64 alphabet errors, charset mismatches, unparseable dates, and more)</li>
+          <li>MSG → EML conversion — right-click an Outlook <code>.msg</code> file in the Project view to convert it to a standards-compliant <code>.eml</code> with header mapping, body selection, attachment handling, and recursive embedded-message support</li>
         </ul>
         <p><a href="https://github.com/ttereshchenko/mailkit">Source Code</a> | <a href="https://www.buymeacoffee.com/ttereshchenko">Donation</a></p>
     ]]></description>
@@ -24,6 +25,11 @@
                   implementationClass="com.github.ttereshchenko.mailkit.EmlFileType"
                   fieldName="INSTANCE"
                   extensions="eml"/>
+
+        <fileType name="MSG"
+                  implementationClass="com.github.ttereshchenko.mailkit.conversion.msg.MsgFileType"
+                  fieldName="INSTANCE"
+                  extensions="msg"/>
 
         <lang.parserDefinition
                 language="EML"
@@ -100,6 +106,12 @@
                 description="Decode the enclosing MIME part to a temp file and hand it to the OS">
             <add-to-group group-id="EditorPopupMenu" anchor="after"
                           relative-to-action="mailkit.SaveAttachment"/>
+        </action>
+        <action id="mailkit.ConvertMsgToEml"
+                class="com.github.ttereshchenko.mailkit.conversion.msg.ConvertMsgToEmlAction"
+                text="Convert to EML"
+                description="Convert the selected Outlook MSG file to a standards-compliant EML file">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>
