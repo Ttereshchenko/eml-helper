@@ -37,6 +37,17 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
   - `UnparseableDate` — `Date:` value does not parse per RFC 2822
   - `DuplicateMessageId` — header block contains more than one `Message-ID`
   - `UnknownContentTransferEncoding` — CTE value outside `7bit / 8bit / binary / quoted-printable / base64`
+- **Sending EML** — a swaks-equivalent embedded SMTP client. Right-click an `.eml` file in the editor or project view and choose **Send EML…** to push the file's bytes through a configured server. Highlights:
+  - **STARTTLS, TLS-on-connect, mTLS** — full JDK-native TLS surface incl. custom CA bundles, client certs, SNI, hostname-verify toggles, peer-cert capture
+  - **SASL AUTH** — `PLAIN`, `LOGIN`, `CRAM-MD5`, `DIGEST-MD5`, `SCRAM-SHA-1`, `SCRAM-SHA-256`, `EXTERNAL`, `XOAUTH2`, `OAUTHBEARER`; plaintext mechanisms are refused over non-TLS sockets unless the profile explicitly opts in
+  - **ESMTP extensions** — `PIPELINING`, `BDAT`/`CHUNKING`, `PRDR`, `SIZE` preflight, `SMTPUTF8`, `8BITMIME` (require / downgrade / never), full DSN (`NOTIFY`, `ORCPT`, `ENVID`, `RET`)
+  - **Relaying primitives** — Postfix `XCLIENT` (with before-STARTTLS toggle) and HAProxy PROXY protocol v1/v2 written before the banner
+  - **Transport knobs** — IP family selection (auto / v4 / v6), local-interface / local-port bind, DNS MX routing from the `MAIL FROM` domain (swaks `--copy-routing`)
+  - **Per-phase stop / drop** — every swaks `--quit-after` / `--drop-after` phase is honoured: `CONNECT`, `BANNER`, `FIRST_HELO`, `STARTTLS`, `TLS`, `HELO`, `AUTH`, `MAIL`, `RCPT`, `DATA`, `BDAT`, `DOT`, `QUIT`
+  - **Profiles + credentials** — saved under **Settings > Tools > MailKit SMTP**; passwords + TLS key passphrases go through IntelliJ's `PasswordSafe`, never the settings XML
+  - **Live console tool window** — every wire byte streams into the *MailKit SMTP* tool window as it's sent, with AUTH lines redacted by default
+  - **Per-project audit log** — successes + failures recorded to `<project>/.idea/mailkit/smtp-log.json` (no credentials, no message bytes); inspect via **Tools > Show Recent SMTP Sends…**
+  - **Egress toggle** — a global checkbox at the top of the SMTP settings page hides every Send action when off
 
 ## Requirements
 
@@ -77,6 +88,7 @@ The plugin zip will be in `build/distributions/`. Install it via **Settings > Pl
 5. Configure which headers are highlighted and toggle per-header name-only mode in **Settings > Editor > MailKit**
 6. Click the save icon in the gutter next to an attachment to decode and write it to disk, or right-click an attachment part for *Save Attachment As…* / *Open Attachment with System App*
 7. Right-click any `.msg` file in the Project view and choose *Convert to EML* to convert it to a standards-compliant `.eml` and open the result
+8. Configure SMTP profiles in **Settings > Tools > MailKit SMTP**, then right-click any `.eml` file and choose *Send EML…* to push it through the configured server. Wire-level activity streams into the *MailKit SMTP* tool window; past sends are catalogued under *Tools > Show Recent SMTP Sends…*
 
 ## Contributing with AI
 
