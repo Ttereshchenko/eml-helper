@@ -4,6 +4,36 @@
 
 ### Added
 
+- **Send EML** — embedded swaks-equivalent SMTP / ESMTP / LMTP client.
+  Right-click an `.eml` file in the editor or project view and choose
+  *Send EML…* to push the file's bytes through a configured server with
+  per-send envelope override.
+  - Wire client: STARTTLS, TLS-on-connect, mTLS with custom CA bundle / SNI /
+    hostname-verify, JDK-native SASL (PLAIN, LOGIN, CRAM-MD5, DIGEST-MD5,
+    EXTERNAL, SCRAM-SHA-1, SCRAM-SHA-256, XOAUTH2, OAUTHBEARER); plaintext
+    mechanisms refused over non-TLS sockets unless explicitly overridden.
+  - ESMTP extensions: PIPELINING, CHUNKING / BDAT, PRDR, SIZE preflight,
+    SMTPUTF8 enforcement, 8BITMIME policy (require / downgrade / never),
+    DSN with NOTIFY / ORCPT / ENVID / RET on MAIL FROM and RCPT TO.
+  - Relaying primitives: Postfix XCLIENT (with before-STARTTLS toggle and
+    raw-command escape hatch) and HAProxy PROXY protocol v1 ASCII / v2
+    binary, written before any SMTP byte.
+  - Transports: TCP only — IP family AUTO / IPv4 / IPv6, local-interface /
+    local-port bind, DNS MX routing from the `MAIL FROM` domain.
+  - Per-phase abort matrix: every swaks `--quit-after` / `--drop-after`
+    target is honoured (CONNECT / BANNER / FIRST_HELO / STARTTLS / TLS /
+    HELO / AUTH / MAIL / RCPT / DATA / BDAT / DOT / QUIT).
+  - Profiles + credentials: persisted under *Settings → Tools → MailKit SMTP*
+    with PasswordSafe-backed passwords + TLS key passphrases. Global egress
+    toggle hides every Send action when off.
+  - Live tool window: *MailKit SMTP* streams every wire byte as it's sent,
+    color-coded by direction, with AUTH lines redacted by default.
+  - Per-project audit log: `.idea/mailkit/smtp-log.json` records every send
+    (no credentials, no message bytes); inspect via *Tools → Show Recent
+    SMTP Sends…*.
+
+  This feature requires a dedicated security review before its release.
+
 - **MSG → EML conversion** — `.msg` files (Outlook OLE2 compound documents)
   are recognised in the Project view with a distinct icon. Right-click →
   *Convert to EML* writes `<name>.eml` next to the source and opens it in the

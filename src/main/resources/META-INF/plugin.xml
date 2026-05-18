@@ -14,6 +14,7 @@
           <li>Save attachments to disk or open them with the system app — gutter icon and editor context menu on any qualifying MIME part, with base64 / quoted-printable / 7bit / 8bit / binary decoding</li>
           <li>EML inspections — RFC 5322 / MIME violations are flagged inline with Alt+Enter quick-fixes (missing required headers, unterminated MIME boundaries, base64 alphabet errors, charset mismatches, unparseable dates, and more)</li>
           <li>MSG → EML conversion — right-click an Outlook <code>.msg</code> file in the Project view to convert it to a standards-compliant <code>.eml</code> with header mapping, body selection, attachment handling, and recursive embedded-message support</li>
+          <li>Send EML — swaks-equivalent embedded client (STARTTLS / TLS-on-connect, SASL incl. SCRAM-SHA-256, ESMTP extensions, XCLIENT, HAProxy PROXY v1/v2) with per-send envelope override, live tool-window transcript, and PasswordSafe-backed profiles under Settings → Tools → MailKit SMTP</li>
         </ul>
         <p><a href="https://github.com/ttereshchenko/mailkit">Source Code</a> | <a href="https://www.buymeacoffee.com/ttereshchenko">Donation</a></p>
     ]]></description>
@@ -44,11 +45,15 @@
                 implementationClass="com.github.ttereshchenko.mailkit.folding.EmlFoldingBuilder"/>
 
         <applicationService serviceImplementation="com.github.ttereshchenko.mailkit.settings.EmlHeaderSettings"/>
+        <applicationService serviceImplementation="com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfileService"/>
 
         <annotator language="EML" implementationClass="com.github.ttereshchenko.mailkit.highlighting.EmlHeaderAnnotator"/>
 
         <applicationConfigurable parentId="editor" id="eml.settings"
                 displayName="MailKit" instance="com.github.ttereshchenko.mailkit.settings.EmlHeaderSettingsConfigurable"/>
+
+        <applicationConfigurable parentId="tools" id="mailkit.smtp.settings"
+                displayName="MailKit SMTP" instance="com.github.ttereshchenko.mailkit.smtp.ui.SmtpSettingsConfigurable"/>
 
         <colorSettingsPage implementation="com.github.ttereshchenko.mailkit.highlighting.EmlColorSettingsPage"/>
 
@@ -60,6 +65,9 @@
                 implementationClass="com.github.ttereshchenko.mailkit.attachment.SaveAttachmentLineMarkerProvider"/>
 
         <notificationGroup id="MailKit" displayType="BALLOON"/>
+
+        <toolWindow id="MailKit SMTP" anchor="bottom" icon="AllIcons.Actions.Lightning"
+                factoryClass="com.github.ttereshchenko.mailkit.smtp.ui.SmtpConsoleToolWindowFactory"/>
 
         <localInspection language="EML" groupName="MailKit" shortName="MissingRequiredHeader"
                 displayName="Missing required header" enabledByDefault="true" level="WARNING"
@@ -112,6 +120,19 @@
                 text="Convert to EML"
                 description="Convert the selected Outlook MSG file to a standards-compliant EML file">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action id="mailkit.SendViaSmtp"
+                class="com.github.ttereshchenko.mailkit.smtp.ui.SendViaSmtpAction"
+                text="Send EML…"
+                description="Send this EML message through a configured SMTP server">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action id="mailkit.ShowRecentSmtpSends"
+                class="com.github.ttereshchenko.mailkit.smtp.ui.ShowRecentSmtpSendsAction"
+                text="Show Recent SMTP Sends…"
+                description="Open the audit log of past SMTP sends from this project">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>

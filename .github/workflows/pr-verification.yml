@@ -81,6 +81,9 @@ jobs:
     name: Check (tests · Checkstyle · Spotless · JaCoCo)
     needs: resolve
     runs-on: ubuntu-latest
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: "false"
+      TESTCONTAINERS_REUSE_ENABLE: "false"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -110,6 +113,7 @@ jobs:
           name: check-reports
           path: |
             build/reports/tests/test/
+            build/reports/tests/integrationTest/
             build/reports/checkstyle/
           retention-days: 14
 

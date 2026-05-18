@@ -29,6 +29,23 @@ repositories {
     }
 }
 
+sourceSets {
+    // Integration tests live in their own source set so Testcontainers' transitive JNA does NOT
+    // share a classloader with the IntelliJ Platform test framework (which bundles its own JNA
+    // for the macOS Foundation bridge and breaks if a different JNA wins the classpath race).
+    integrationTest {
+        java.srcDir 'src/integrationTest/java'
+        resources.srcDir 'src/integrationTest/resources'
+        compileClasspath += sourceSets.main.output + sourceSets.test.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.test.output
+    }
+}
+
+configurations {
+    integrationTestImplementation.extendsFrom testImplementation
+    integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
 dependencies {
     intellijPlatform {
         intellijIdea('2026.1')
@@ -42,6 +59,27 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
+    // Testcontainers + Mailpit drive end-to-end SMTP integration tests against a real server.
+    // Tests are auto-skipped when Docker is not available on the host.
+    integrationTestImplementation platform('org.testcontainers:testcontainers-bom:1.20.4')
+    integrationTestImplementation 'org.testcontainers:testcontainers'
+    integrationTestImplementation 'org.testcontainers:junit-jupiter'
+    // SLF4J binding so Testcontainers diagnostics actually appear in test output instead of being
+    // dropped silently — invaluable when Docker discovery or container startup misbehaves.
+    integrationTestRuntimeOnly 'org.slf4j:slf4j-simple:2.0.16'
+}
+
+def integrationTest = tasks.register('integrationTest', Test) {
+    description = 'Runs SMTP integration tests against real servers via Testcontainers.'
+    group = 'verification'
+    testClassesDirs = sourceSets.integrationTest.output.classesDirs
+    classpath = sourceSets.integrationTest.runtimeClasspath
+    useJUnitPlatform()
+    shouldRunAfter tasks.named('test')
+}
+
+tasks.named('check') {
+    dependsOn integrationTest
 }
 
 tasks.withType(Test).configureEach {
@@ -52,6 +90,13 @@ tasks.withType(Test).configureEach {
         // a CodeSource; without this flag JaCoCo silently skips instrumenting them.
         includeNoLocationClasses = true
         excludes = ['jdk.internal.*']
+    }
+    testLogging {
+        events 'failed', 'standardError'
+        exceptionFormat = 'full'
+        showStackTraces = true
+        showCauses = true
+        showExceptions = true
     }
 }
 
@@ -103,12 +148,12 @@ checkstyle {
     ignoreFailures = false
     maxWarnings = 0
     showViolations = true
-    sourceSets = [sourceSets.main, sourceSets.test]
+    sourceSets = [sourceSets.main, sourceSets.test, sourceSets.integrationTest]
 }
 
 spotless {
     java {
-        target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
+        target 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/integrationTest/java/**/*.java'
         palantirJavaFormat('2.90.0')
         removeUnusedImports()
         trimTrailingWhitespace()
