@@ -124,7 +124,7 @@ public final class SendDialog extends DialogWrapper {
             committedRequest = buildSendRequest();
             super.doOKAction();
         } catch (ConfigurationException failure) {
-            Messages.showErrorDialog(getContentPanel(), failure.getMessage(), "Invalid Send Request");
+            Messages.showErrorDialog(getContentPanel(), failure.getLocalizedMessage(), "Invalid Send Request");
         }
     }
 
