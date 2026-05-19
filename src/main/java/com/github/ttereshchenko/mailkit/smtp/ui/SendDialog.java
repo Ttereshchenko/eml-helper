@@ -86,10 +86,6 @@ public final class SendDialog extends DialogWrapper {
         var defaults = parseEmlHeaders();
         sourceSummaryLabel.setText(
                 sourceFile == null ? "(no file — composing from envelope only)" : formatSource(sourceFile));
-        envelopeFromField.setText(defaults.from);
-        envelopeToField.setText(defaults.toAddresses);
-        envelopeCcField.setText(defaults.ccAddresses);
-        envelopeBccField.setText(defaults.bccAddresses);
         subjectLabel.setText(defaults.subject);
         fromHeaderLabel.setText(defaults.from);
         onProfilePicked();
@@ -160,10 +156,18 @@ public final class SendDialog extends DialogWrapper {
     private void onProfilePicked() {
         var selected = (SmtpProfile) profilePicker.getSelectedItem();
         if (selected == null) {
+            envelopeFromField.setText("");
+            envelopeToField.setText("");
+            envelopeCcField.setText("");
+            envelopeBccField.setText("");
             return;
         }
         hostField.setText(selected.host);
         portSpinner.setValue(selected.port);
+        envelopeFromField.setText(selected.findDefaultHeaderValue("From"));
+        envelopeToField.setText(selected.findDefaultHeaderValue("To"));
+        envelopeCcField.setText(selected.findDefaultHeaderValue("Cc"));
+        envelopeBccField.setText(selected.findDefaultHeaderValue("Bcc"));
     }
 
     private SendRequest buildSendRequest() throws ConfigurationException {
