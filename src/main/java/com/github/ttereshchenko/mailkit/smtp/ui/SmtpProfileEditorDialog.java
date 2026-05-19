@@ -142,7 +142,7 @@ public final class SmtpProfileEditorDialog extends DialogWrapper {
             commitToProfile();
             super.doOKAction();
         } catch (ConfigurationException failure) {
-            Messages.showErrorDialog(getContentPanel(), failure.getMessage(), "Invalid Profile");
+            Messages.showErrorDialog(getContentPanel(), failure.getLocalizedMessage(), "Invalid Profile");
         }
     }
 
@@ -185,7 +185,7 @@ public final class SmtpProfileEditorDialog extends DialogWrapper {
         try {
             commitToProfile();
         } catch (ConfigurationException failure) {
-            Messages.showErrorDialog(getContentPanel(), failure.getMessage(), "Test Connection");
+            Messages.showErrorDialog(getContentPanel(), failure.getLocalizedMessage(), "Test Connection");
             return;
         }
         var config = SmtpProfiles.toConfig(profile, credentials);

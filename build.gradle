@@ -82,6 +82,10 @@ tasks.named('check') {
     dependsOn integrationTest
 }
 
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs.addAll(['-Xlint:deprecation', '-Werror'])
+}
+
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
     finalizedBy jacocoTestReport
