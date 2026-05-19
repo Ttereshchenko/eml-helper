@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.0 - 2026-05-18
+
 ### Added
 
 - **Send EML** — embedded swaks-equivalent SMTP / ESMTP / LMTP client.
@@ -33,7 +35,6 @@
     SMTP Sends…*.
 
   This feature requires a dedicated security review before its release.
-
 - **MSG → EML conversion** — `.msg` files (Outlook OLE2 compound documents)
   are recognised in the Project view with a distinct icon. Right-click →
   *Convert to EML* writes `<name>.eml` next to the source and opens it in the
