@@ -4,6 +4,8 @@ import com.github.ttereshchenko.mailkit.smtp.SmtpTranscript;
 import com.intellij.execution.filters.TextConsoleBuilderFactory;
 import com.intellij.execution.ui.ConsoleView;
 import com.intellij.execution.ui.ConsoleViewContentType;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindowManager;
@@ -70,10 +72,18 @@ public final class SmtpConsoleService {
     }
 
     private void activateToolWindow() {
-        var manager = ToolWindowManager.getInstance(project);
-        var window = manager.getToolWindow(TOOL_WINDOW_ID);
-        if (window != null) {
-            window.show(null);
+        var app = ApplicationManager.getApplication();
+        Runnable show = () -> {
+            var manager = ToolWindowManager.getInstance(project);
+            var window = manager.getToolWindow(TOOL_WINDOW_ID);
+            if (window != null) {
+                window.show(null);
+            }
+        };
+        if (app.isDispatchThread()) {
+            show.run();
+        } else {
+            app.invokeLater(show, ModalityState.nonModal(), project.getDisposed());
         }
     }
 

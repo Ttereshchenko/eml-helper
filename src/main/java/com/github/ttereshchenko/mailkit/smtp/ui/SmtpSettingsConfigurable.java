@@ -11,6 +11,7 @@ import com.intellij.util.ui.FormBuilder;
 import java.awt.BorderLayout;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
@@ -205,7 +206,27 @@ public final class SmtpSettingsConfigurable implements Configurable {
                 && left.authMechanism == right.authMechanism
                 && left.username.equals(right.username)
                 && left.allowPlaintextAuth == right.allowPlaintextAuth
-                && left.isDefault == right.isDefault;
+                && left.isDefault == right.isDefault
+                && defaultHeadersEqual(left.defaultHeaders, right.defaultHeaders);
+    }
+
+    private static boolean defaultHeadersEqual(
+            List<SmtpProfile.DefaultHeader> left, List<SmtpProfile.DefaultHeader> right) {
+        if (left == null || right == null) {
+            return left == right;
+        }
+        if (left.size() != right.size()) {
+            return false;
+        }
+        for (var index = 0; index < left.size(); index++) {
+            var leftEntry = left.get(index);
+            var rightEntry = right.get(index);
+            if (!Objects.equals(leftEntry.name, rightEntry.name)
+                    || !Objects.equals(leftEntry.value, rightEntry.value)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static final class SmtpProfileTableModel extends AbstractTableModel {

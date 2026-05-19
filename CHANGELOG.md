@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 1.1.1 - 2026-05-19
+
+### Added
+
+- SMTP profiles now have a **Default Headers** tab — a freely editable
+  `Header Name` / `Value` table pre-seeded with `From`, `To`, `Cc`, `Bcc`.
+  The *Send EML* dialog populates its envelope `From / To / Cc / Bcc`
+  fields from the active profile's default headers (replacing the prior
+  behaviour of parsing them out of the EML file).
+
+### Changed
+
+- New SMTP profiles default to the `ESMTP` protocol instead of `SMTP`,
+  matching `SmtpConfig.defaults()`.
+
 ## 1.1.0 - 2026-05-18
 
 ### Added

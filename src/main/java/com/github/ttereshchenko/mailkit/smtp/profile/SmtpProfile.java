@@ -1,5 +1,9 @@
 package com.github.ttereshchenko.mailkit.smtp.profile;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -19,7 +23,7 @@ public final class SmtpProfile {
     public String host = "";
     public int port = 587;
     public String ehloHost = "";
-    public Protocol protocol = Protocol.SMTP;
+    public Protocol protocol = Protocol.ESMTP;
     public int timeoutSeconds = 60;
 
     public TlsMode tlsMode = TlsMode.NONE;
@@ -51,7 +55,31 @@ public final class SmtpProfile {
 
     public boolean isDefault = false;
 
+    public List<DefaultHeader> defaultHeaders = defaultHeaderSeed();
+
     public SmtpProfile() {}
+
+    private static List<DefaultHeader> defaultHeaderSeed() {
+        var seed = new ArrayList<DefaultHeader>(4);
+        seed.add(new DefaultHeader("From", ""));
+        seed.add(new DefaultHeader("To", ""));
+        seed.add(new DefaultHeader("Cc", ""));
+        seed.add(new DefaultHeader("Bcc", ""));
+        return seed;
+    }
+
+    public String findDefaultHeaderValue(String name) {
+        if (Objects.isNull(name) || Objects.isNull(defaultHeaders)) {
+            return "";
+        }
+        for (var header : defaultHeaders) {
+            if (Objects.nonNull(header.name)
+                    && header.name.toLowerCase(Locale.ROOT).equals(name.toLowerCase(Locale.ROOT))) {
+                return Objects.requireNonNullElse(header.value, "");
+            }
+        }
+        return "";
+    }
 
     public SmtpProfile copy() {
         var copy = new SmtpProfile();
@@ -86,7 +114,26 @@ public final class SmtpProfile {
         copy.localPort = localPort;
         copy.useMxRouting = useMxRouting;
         copy.isDefault = isDefault;
+        var headerCopies = new ArrayList<DefaultHeader>();
+        if (Objects.nonNull(defaultHeaders)) {
+            for (var header : defaultHeaders) {
+                headerCopies.add(new DefaultHeader(header.name, header.value));
+            }
+        }
+        copy.defaultHeaders = headerCopies;
         return copy;
+    }
+
+    public static final class DefaultHeader {
+        public String name = "";
+        public String value = "";
+
+        public DefaultHeader() {}
+
+        public DefaultHeader(String name, String value) {
+            this.name = name;
+            this.value = value;
+        }
     }
 
     public enum Protocol {

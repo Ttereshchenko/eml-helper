@@ -11,9 +11,14 @@ import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Messages;
+import com.intellij.ui.ToolbarDecorator;
 import com.intellij.ui.components.JBTabbedPane;
+import com.intellij.ui.table.JBTable;
 import com.intellij.util.ui.FormBuilder;
+import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.util.ArrayList;
+import java.util.List;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
@@ -23,6 +28,7 @@ import javax.swing.JPasswordField;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.table.AbstractTableModel;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -51,6 +57,8 @@ public final class SmtpProfileEditorDialog extends DialogWrapper {
     private final JCheckBox usePipeliningBox = new JCheckBox("Use PIPELINING if advertised");
     private final JCheckBox useBdatBox = new JCheckBox("Use BDAT instead of DATA when CHUNKING advertised");
     private final JCheckBox usePrdrBox = new JCheckBox("Use PRDR if advertised");
+    private final DefaultHeadersTableModel defaultHeadersModel = new DefaultHeadersTableModel();
+    private final JBTable defaultHeadersTable = new JBTable(defaultHeadersModel);
 
     public SmtpProfileEditorDialog(@Nullable Project project, SmtpProfile profile, SmtpCredentialStore credentials) {
         super(project);
@@ -70,6 +78,7 @@ public final class SmtpProfileEditorDialog extends DialogWrapper {
         tabs.addTab("Connection", buildConnectionPanel());
         tabs.addTab("Auth", buildAuthPanel());
         tabs.addTab("TLS", buildTlsPanel());
+        tabs.addTab("Default Headers", buildDefaultHeadersPanel());
         tabs.addTab("Protocol", buildProtocolPanel());
         var wrapper = new JPanel(new java.awt.BorderLayout());
         wrapper.setPreferredSize(new Dimension(560, 380));
@@ -110,6 +119,28 @@ public final class SmtpProfileEditorDialog extends DialogWrapper {
                 .getPanel();
     }
 
+    private JPanel buildDefaultHeadersPanel() {
+        var decorator = ToolbarDecorator.createDecorator(defaultHeadersTable)
+                .setAddAction(event -> {
+                    if (defaultHeadersTable.isEditing()) {
+                        defaultHeadersTable.getCellEditor().stopCellEditing();
+                    }
+                    defaultHeadersModel.addRow();
+                })
+                .setRemoveAction(event -> {
+                    var row = defaultHeadersTable.getSelectedRow();
+                    if (row >= 0) {
+                        if (defaultHeadersTable.isEditing()) {
+                            defaultHeadersTable.getCellEditor().stopCellEditing();
+                        }
+                        defaultHeadersModel.removeRow(row);
+                    }
+                });
+        var panel = new JPanel(new BorderLayout());
+        panel.add(decorator.createPanel(), BorderLayout.CENTER);
+        return panel;
+    }
+
     private JPanel buildProtocolPanel() {
         return FormBuilder.createFormBuilder()
                 .addComponent(usePipeliningBox)
@@ -134,6 +165,7 @@ public final class SmtpProfileEditorDialog extends DialogWrapper {
         usePipeliningBox.setSelected(profile.usePipelining);
         useBdatBox.setSelected(profile.useBdat);
         usePrdrBox.setSelected(profile.usePrdr);
+        defaultHeadersModel.load(profile.defaultHeaders);
     }
 
     @Override
@@ -170,6 +202,10 @@ public final class SmtpProfileEditorDialog extends DialogWrapper {
         profile.usePipelining = usePipeliningBox.isSelected();
         profile.useBdat = useBdatBox.isSelected();
         profile.usePrdr = usePrdrBox.isSelected();
+        if (defaultHeadersTable.isEditing()) {
+            defaultHeadersTable.getCellEditor().stopCellEditing();
+        }
+        profile.defaultHeaders = defaultHeadersModel.snapshot();
 
         var typed = new String(passwordField.getPassword());
         if (!typed.isEmpty()) {
@@ -212,5 +248,86 @@ public final class SmtpProfileEditorDialog extends DialogWrapper {
         var spinner = new JSpinner(new SpinnerNumberModel(587, 1, 65535, 1));
         spinner.setEditor(new JSpinner.NumberEditor(spinner, "#"));
         return spinner;
+    }
+
+    private static final class DefaultHeadersTableModel extends AbstractTableModel {
+        private static final String[] COLUMN_NAMES = {"Header Name", "Value"};
+        private final List<SmtpProfile.DefaultHeader> rows = new ArrayList<>();
+
+        void load(List<SmtpProfile.DefaultHeader> source) {
+            rows.clear();
+            if (source != null) {
+                for (var header : source) {
+                    rows.add(new SmtpProfile.DefaultHeader(
+                            header.name == null ? "" : header.name, header.value == null ? "" : header.value));
+                }
+            }
+            fireTableDataChanged();
+        }
+
+        List<SmtpProfile.DefaultHeader> snapshot() {
+            var copy = new ArrayList<SmtpProfile.DefaultHeader>(rows.size());
+            for (var header : rows) {
+                var name = header.name == null ? "" : header.name.trim();
+                if (name.isEmpty()) {
+                    continue;
+                }
+                copy.add(new SmtpProfile.DefaultHeader(name, header.value == null ? "" : header.value));
+            }
+            return copy;
+        }
+
+        void addRow() {
+            rows.add(new SmtpProfile.DefaultHeader("", ""));
+            fireTableRowsInserted(rows.size() - 1, rows.size() - 1);
+        }
+
+        void removeRow(int row) {
+            rows.remove(row);
+            fireTableRowsDeleted(row, row);
+        }
+
+        @Override
+        public int getRowCount() {
+            return rows.size();
+        }
+
+        @Override
+        public int getColumnCount() {
+            return 2;
+        }
+
+        @Override
+        public String getColumnName(int column) {
+            return COLUMN_NAMES[column];
+        }
+
+        @Override
+        public Class<?> getColumnClass(int column) {
+            return String.class;
+        }
+
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return true;
+        }
+
+        @Override
+        public Object getValueAt(int row, int column) {
+            var entry = rows.get(row);
+            return column == 0 ? entry.name : entry.value;
+        }
+
+        @Override
+        public void setValueAt(Object value, int row, int column) {
+            var text = value == null ? "" : value.toString();
+            var entry = rows.get(row);
+            if (column == 0) {
+                entry.name = text;
+            } else {
+                entry.value = text;
+            }
+            fireTableCellUpdated(row, column);
+        }
     }
 }

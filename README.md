@@ -45,6 +45,7 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
   - **Transport knobs** — IP family selection (auto / v4 / v6), local-interface / local-port bind, DNS MX routing from the `MAIL FROM` domain (swaks `--copy-routing`)
   - **Per-phase stop / drop** — every swaks `--quit-after` / `--drop-after` phase is honoured: `CONNECT`, `BANNER`, `FIRST_HELO`, `STARTTLS`, `TLS`, `HELO`, `AUTH`, `MAIL`, `RCPT`, `DATA`, `BDAT`, `DOT`, `QUIT`
   - **Profiles + credentials** — saved under **Settings > Tools > MailKit SMTP**; passwords + TLS key passphrases go through IntelliJ's `PasswordSafe`, never the settings XML
+  - **Per-profile default headers** — each profile carries a *Default Headers* table (seeded with `From`, `To`, `Cc`, `Bcc`) whose values pre-fill the Send EML dialog's envelope fields; rows can be edited, added, or removed freely
   - **Live console tool window** — every wire byte streams into the *MailKit SMTP* tool window as it's sent, with AUTH lines redacted by default
   - **Per-project audit log** — successes + failures recorded to `<project>/.idea/mailkit/smtp-log.json` (no credentials, no message bytes); inspect via **Tools > Show Recent SMTP Sends…**
   - **Egress toggle** — a global checkbox at the top of the SMTP settings page hides every Send action when off
