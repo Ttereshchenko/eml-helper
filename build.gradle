@@ -66,7 +66,7 @@ dependencies {
     integrationTestImplementation 'org.testcontainers:junit-jupiter'
     // SLF4J binding so Testcontainers diagnostics actually appear in test output instead of being
     // dropped silently — invaluable when Docker discovery or container startup misbehaves.
-    integrationTestRuntimeOnly 'org.slf4j:slf4j-simple:2.0.16'
+    integrationTestRuntimeOnly 'org.slf4j:slf4j-simple:2.0.18'
 }
 
 def integrationTest = tasks.register('integrationTest', Test) {
