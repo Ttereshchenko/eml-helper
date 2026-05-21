@@ -54,7 +54,7 @@ dependencies {
     // Apache POI HSMF (poi-scratchpad pulls in poi core) reads Outlook .msg OLE2 compound documents.
     // Adds ~8-12 MB to the plugin distribution; required by the MSG -> EML converter.
     implementation 'org.apache.poi:poi-scratchpad:5.4.0'
-    testImplementation platform('org.junit:junit-bom:6.0.3')
+    testImplementation platform('org.junit:junit-bom:6.1.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'junit:junit:4.13.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
