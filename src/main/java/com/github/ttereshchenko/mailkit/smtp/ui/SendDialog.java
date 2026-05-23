@@ -50,8 +50,6 @@ public final class SendDialog extends DialogWrapper {
     private final JComboBox<SmtpProfile> profilePicker = new JComboBox<>();
     private final JTextField envelopeFromField = new JTextField();
     private final JTextField envelopeToField = new JTextField();
-    private final JTextField envelopeCcField = new JTextField();
-    private final JTextField envelopeBccField = new JTextField();
     private final JTextField hostField = new JTextField();
     private final JSpinner portSpinner = buildPortSpinner();
     private final JLabel sourceSummaryLabel = new JLabel();
@@ -99,8 +97,6 @@ public final class SendDialog extends DialogWrapper {
                 .addSeparator()
                 .addLabeledComponent("Envelope From:", envelopeFromField)
                 .addLabeledComponent("Envelope To:", envelopeToField)
-                .addLabeledComponent("Envelope Cc:", envelopeCcField)
-                .addLabeledComponent("Envelope Bcc:", envelopeBccField)
                 .addSeparator()
                 .addLabeledComponent("Message Subject:", subjectLabel)
                 .addLabeledComponent("Message From:", fromHeaderLabel)
@@ -158,16 +154,12 @@ public final class SendDialog extends DialogWrapper {
         if (selected == null) {
             envelopeFromField.setText("");
             envelopeToField.setText("");
-            envelopeCcField.setText("");
-            envelopeBccField.setText("");
             return;
         }
         hostField.setText(selected.host);
         portSpinner.setValue(selected.port);
         envelopeFromField.setText(selected.findDefaultHeaderValue("From"));
         envelopeToField.setText(selected.findDefaultHeaderValue("To"));
-        envelopeCcField.setText(selected.findDefaultHeaderValue("Cc"));
-        envelopeBccField.setText(selected.findDefaultHeaderValue("Bcc"));
     }
 
     private SendRequest buildSendRequest() throws ConfigurationException {
@@ -186,20 +178,8 @@ public final class SendDialog extends DialogWrapper {
                 recipients.add(trimmed);
             }
         }
-        for (var raw : envelopeCcField.getText().split(",")) {
-            var trimmed = raw.trim();
-            if (!trimmed.isEmpty()) {
-                recipients.add(trimmed);
-            }
-        }
-        for (var raw : envelopeBccField.getText().split(",")) {
-            var trimmed = raw.trim();
-            if (!trimmed.isEmpty()) {
-                recipients.add(trimmed);
-            }
-        }
         if (recipients.isEmpty()) {
-            throw new ConfigurationException("At least one recipient (To / Cc / Bcc) is required.");
+            throw new ConfigurationException("At least one recipient (To) is required.");
         }
         var envelope = SmtpEnvelope.of(from, recipients.toArray(new String[0]));
 
@@ -263,9 +243,6 @@ public final class SendDialog extends DialogWrapper {
                 var value = line.substring(colon + 1).trim();
                 switch (name) {
                     case "from" -> defaults.from = stripAngles(value);
-                    case "to" -> defaults.toAddresses = value;
-                    case "cc" -> defaults.ccAddresses = value;
-                    case "bcc" -> defaults.bccAddresses = value;
                     case "subject" -> defaults.subject = value;
                     default -> {
                         /* ignored */
@@ -320,9 +297,6 @@ public final class SendDialog extends DialogWrapper {
 
     private static final class DefaultsFromHeaders {
         String from = "";
-        String toAddresses = "";
-        String ccAddresses = "";
-        String bccAddresses = "";
         String subject = "";
     }
 

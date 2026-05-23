@@ -5,11 +5,18 @@ import com.github.ttereshchenko.mailkit.smtp.SmtpConfig;
 import com.github.ttereshchenko.mailkit.smtp.auth.AuthConfig;
 import com.github.ttereshchenko.mailkit.smtp.auth.AuthCredentials;
 import com.github.ttereshchenko.mailkit.smtp.auth.AuthMechanism;
+import com.github.ttereshchenko.mailkit.smtp.proxy.ProxyConfig;
 import com.github.ttereshchenko.mailkit.smtp.tls.TlsConfig;
 import com.github.ttereshchenko.mailkit.smtp.transport.IpFamily;
 import com.github.ttereshchenko.mailkit.smtp.transport.TransportConfig;
+import com.github.ttereshchenko.mailkit.smtp.xclient.XclientConfig;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 /** Bridges the persisted {@link SmtpProfile} JavaBean to the runtime {@link SmtpConfig} record. */
 public final class SmtpProfiles {
@@ -26,7 +33,9 @@ public final class SmtpProfiles {
                 .withTls(buildTls(profile))
                 .withEsmtp(buildEsmtp(profile))
                 .withTransport(buildTransport(profile))
-                .withAuth(buildAuth(profile, credentials));
+                .withAuth(buildAuth(profile, credentials))
+                .withProxy(buildProxy(profile))
+                .withXclient(buildXclient(profile));
         return base;
     }
 
@@ -49,8 +58,8 @@ public final class SmtpProfiles {
                 };
         var tls = new TlsConfig(
                 mode,
-                java.util.List.of(),
-                java.util.List.of(),
+                filterBlanks(profile.protocols),
+                filterBlanks(profile.cipherSuites),
                 profile.verifyCa,
                 profile.verifyHostname,
                 blankToNull(profile.hostnameOverride),
@@ -77,7 +86,7 @@ public final class SmtpProfiles {
                 profile.enforceSmtpUtf8,
                 profile.honorSize,
                 policy,
-                true);
+                profile.declareSizeOnMail);
     }
 
     private static TransportConfig buildTransport(SmtpProfile profile) {
@@ -96,10 +105,15 @@ public final class SmtpProfiles {
             return AuthConfig.disabled();
         }
         var passwordSupplier = credentials.passwordSupplier(profile.identifier);
-        var creds = AuthCredentials.of(profile.username, passwordSupplier);
+        var creds = new AuthCredentials(profile.username, passwordSupplier, profile.authzId, Map.of());
         var mechanism = mapMechanism(profile.authMechanism);
-        var auth = mechanism == null ? AuthConfig.auto(creds) : AuthConfig.forMechanism(mechanism, creds);
-        return auth.withAllowPlaintextAuth(profile.allowPlaintextAuth);
+        return new AuthConfig(
+                mechanism,
+                creds,
+                Map.of(),
+                profile.allowPlaintextAuth,
+                profile.authOptional,
+                profile.authOptionalStrict);
     }
 
     private static AuthMechanism mapMechanism(SmtpProfile.AuthMechanismChoice choice) {
@@ -115,6 +129,119 @@ public final class SmtpProfiles {
             case XOAUTH2 -> AuthMechanism.XOAUTH2;
             case OAUTHBEARER -> AuthMechanism.OAUTHBEARER;
         };
+    }
+
+    private static ProxyConfig buildProxy(SmtpProfile profile) {
+        var settings = profile.proxyProtocol;
+        if (settings == null || settings.version == SmtpProfile.ProxyVersion.NONE) {
+            return ProxyConfig.disabled();
+        }
+        return new ProxyConfig(
+                mapProxyVersion(settings.version),
+                mapProxyCommand(settings.command),
+                mapProxyFamily(settings.family),
+                Objects.requireNonNullElse(settings.sourceAddress, ""),
+                settings.sourcePort,
+                Objects.requireNonNullElse(settings.destAddress, ""),
+                settings.destPort);
+    }
+
+    private static XclientConfig buildXclient(SmtpProfile profile) {
+        var settings = profile.xclient;
+        if (settings == null) {
+            return XclientConfig.disabled();
+        }
+        var extra = toAttributeMap(settings.extra);
+        var raw = blankToNull(settings.rawCommand);
+        var anySet = raw != null
+                || !isBlank(settings.addr)
+                || !isBlank(settings.name)
+                || settings.port != null
+                || !isBlank(settings.proto)
+                || !isBlank(settings.helo)
+                || !isBlank(settings.login)
+                || !isBlank(settings.destAddr)
+                || settings.destPort != null
+                || !isBlank(settings.reverseName)
+                || !extra.isEmpty();
+        if (!anySet) {
+            return XclientConfig.disabled();
+        }
+        return new XclientConfig(
+                blankToNull(settings.addr),
+                blankToNull(settings.name),
+                settings.port,
+                blankToNull(settings.proto),
+                blankToNull(settings.helo),
+                blankToNull(settings.login),
+                blankToNull(settings.destAddr),
+                settings.destPort,
+                blankToNull(settings.reverseName),
+                extra,
+                raw,
+                settings.beforeStartTls,
+                settings.optional);
+    }
+
+    private static ProxyConfig.Version mapProxyVersion(SmtpProfile.ProxyVersion value) {
+        return switch (value) {
+            case NONE -> ProxyConfig.Version.NONE;
+            case V1 -> ProxyConfig.Version.V1;
+            case V2 -> ProxyConfig.Version.V2;
+        };
+    }
+
+    private static ProxyConfig.Command mapProxyCommand(SmtpProfile.ProxyCommand value) {
+        return switch (value) {
+            case PROXY -> ProxyConfig.Command.PROXY;
+            case LOCAL -> ProxyConfig.Command.LOCAL;
+        };
+    }
+
+    private static ProxyConfig.Family mapProxyFamily(SmtpProfile.ProxyFamily value) {
+        return switch (value) {
+            case TCP4 -> ProxyConfig.Family.TCP4;
+            case TCP6 -> ProxyConfig.Family.TCP6;
+        };
+    }
+
+    private static Map<String, String> toAttributeMap(List<SmtpProfile.DefaultHeader> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return Map.of();
+        }
+        var map = new LinkedHashMap<String, String>();
+        for (var entry : entries) {
+            if (entry == null) {
+                continue;
+            }
+            var key = entry.name == null ? "" : entry.name.trim();
+            if (key.isEmpty()) {
+                continue;
+            }
+            map.put(key, Objects.requireNonNullElse(entry.value, ""));
+        }
+        return map;
+    }
+
+    private static List<String> filterBlanks(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        var copy = new ArrayList<String>(values.size());
+        for (var value : values) {
+            if (value == null) {
+                continue;
+            }
+            var trimmed = value.trim();
+            if (!trimmed.isEmpty()) {
+                copy.add(trimmed);
+            }
+        }
+        return List.copyOf(copy);
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static String defaultEhloHost() {

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Changed
+
+- SMTP profile dialog redesigned around the documented tab grouping
+  (`smtp-profile-config-groups.md`):
+  - **7 tabs**: Connection · **Security / TLS** · Auth · **ESMTP
+    extensions** *(only when protocol = ESMTP)* · **Transport / Network**
+    · **Relay framing** · **Envelope**.
+  - **Dynamic reveals**: TLS verify / CA / advanced rows appear with
+    `tlsMode ≠ NONE`; Auth fields collapse when mechanism is
+    `DISABLED`; the password row becomes "Access token" for `XOAUTH2` /
+    `OAUTHBEARER`; the ESMTP-extensions tab is greyed out for
+    `SMTP` / `LMTP` protocols; PROXY source/dest fields grey out when
+    version = `NONE`; individual XCLIENT attributes grey out when the
+    raw-command escape hatch is set.
+  - **PROXY protocol (v1 / v2)** and **XCLIENT** relay framing are now
+    persisted per profile, replacing the prior code-only configuration.
+  - **Newly surfaced profile knobs** (previously model-only or
+    code-only): connection `timeoutSeconds`; TLS `hostnameOverride` /
+    `sniHost` / `clientCert` / `clientKey` / `clientChain` paths; TLS
+    `protocols` / `cipherSuites` lists; Auth `authzId` /
+    `authOptional` / `authOptionalStrict`; ESMTP `enforceSmtpUtf8` /
+    `honorSize` / `eightBitMime` policy / `declareSizeOnMail`.
+
+### Removed
+
+- The *Default Headers* tab is gone — replaced by the **Envelope** tab
+  with two fields (`From`, `To`). The Send EML dialog drops its
+  per-send `Cc` / `Bcc` rows; recipients come from the envelope `To`
+  field (comma-separated).
+
 ## 1.1.1 - 2026-05-19
 
 ### Added
