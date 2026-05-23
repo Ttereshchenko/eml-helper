@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class SmtpProfileServiceTest {
@@ -89,6 +90,18 @@ class SmtpProfileServiceTest {
         profile.host = "localhost";
         profile.port = 1025;
         profile.isDefault = true;
+        profile.authzId = "alice@example.com";
+        profile.authOptionalStrict = true;
+        profile.declareSizeOnMail = false;
+        profile.protocols.add("TLSv1.3");
+        profile.cipherSuites.add("TLS_AES_256_GCM_SHA384");
+        profile.proxyProtocol.version = SmtpProfile.ProxyVersion.V1;
+        profile.proxyProtocol.sourceAddress = "10.0.0.1";
+        profile.proxyProtocol.sourcePort = 12345;
+        profile.proxyProtocol.destAddress = "10.0.0.2";
+        profile.proxyProtocol.destPort = 25;
+        profile.xclient.addr = "10.0.0.3";
+        profile.xclient.extra.add(new SmtpProfile.DefaultHeader("VENDOR", "v"));
         state.profiles.add(profile);
 
         service.loadState(state);
@@ -96,9 +109,52 @@ class SmtpProfileServiceTest {
         assertFalse(service.isEgressEnabled());
         var loaded = service.getProfiles();
         assertEquals(1, loaded.size());
-        assertEquals("Mailpit", loaded.get(0).name);
-        assertEquals(1025, loaded.get(0).port);
-        assertTrue(loaded.get(0).isDefault);
+        var roundTripped = loaded.get(0);
+        assertEquals("Mailpit", roundTripped.name);
+        assertEquals(1025, roundTripped.port);
+        assertTrue(roundTripped.isDefault);
+        assertEquals("alice@example.com", roundTripped.authzId);
+        assertTrue(roundTripped.authOptionalStrict);
+        assertFalse(roundTripped.declareSizeOnMail);
+        assertEquals(List.of("TLSv1.3"), roundTripped.protocols);
+        assertEquals(List.of("TLS_AES_256_GCM_SHA384"), roundTripped.cipherSuites);
+        assertEquals(SmtpProfile.ProxyVersion.V1, roundTripped.proxyProtocol.version);
+        assertEquals("10.0.0.1", roundTripped.proxyProtocol.sourceAddress);
+        assertEquals(12345, roundTripped.proxyProtocol.sourcePort);
+        assertEquals("10.0.0.3", roundTripped.xclient.addr);
+        assertEquals(1, roundTripped.xclient.extra.size());
+        assertEquals("VENDOR", roundTripped.xclient.extra.get(0).name);
+    }
+
+    @Test
+    void newProfileDefaultsProxyAndXclientDisabled() {
+        var profile = new SmtpProfile();
+        assertEquals(SmtpProfile.ProxyVersion.NONE, profile.proxyProtocol.version);
+        assertTrue(profile.xclient.optional);
+        assertTrue(profile.xclient.addr.isEmpty());
+        assertTrue(profile.xclient.extra.isEmpty());
+        assertTrue(profile.protocols.isEmpty());
+        assertTrue(profile.cipherSuites.isEmpty());
+    }
+
+    @Test
+    void copyDeepCopiesProxyAndXclient() {
+        var profile = new SmtpProfile();
+        profile.proxyProtocol.version = SmtpProfile.ProxyVersion.V2;
+        profile.proxyProtocol.sourceAddress = "10.0.0.1";
+        profile.xclient.addr = "10.0.0.3";
+        profile.xclient.extra.add(new SmtpProfile.DefaultHeader("VENDOR", "v"));
+
+        var clone = profile.copy();
+        clone.proxyProtocol.version = SmtpProfile.ProxyVersion.NONE;
+        clone.proxyProtocol.sourceAddress = "changed";
+        clone.xclient.addr = "changed";
+        clone.xclient.extra.get(0).value = "changed";
+
+        assertEquals(SmtpProfile.ProxyVersion.V2, profile.proxyProtocol.version);
+        assertEquals("10.0.0.1", profile.proxyProtocol.sourceAddress);
+        assertEquals("10.0.0.3", profile.xclient.addr);
+        assertEquals("v", profile.xclient.extra.get(0).value);
     }
 
     @Test
@@ -110,14 +166,12 @@ class SmtpProfileServiceTest {
     }
 
     @Test
-    void newProfileSeedsFourDefaultHeadersWithEmptyValues() {
+    void newProfileSeedsFromAndToDefaultHeadersWithEmptyValues() {
         var profile = new SmtpProfile();
 
-        assertEquals(4, profile.defaultHeaders.size());
+        assertEquals(2, profile.defaultHeaders.size());
         assertEquals("From", profile.defaultHeaders.get(0).name);
         assertEquals("To", profile.defaultHeaders.get(1).name);
-        assertEquals("Cc", profile.defaultHeaders.get(2).name);
-        assertEquals("Bcc", profile.defaultHeaders.get(3).name);
         assertEquals("", profile.findDefaultHeaderValue("From"));
     }
 
