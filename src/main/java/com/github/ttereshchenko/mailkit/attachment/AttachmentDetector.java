@@ -1,14 +1,13 @@
 package com.github.ttereshchenko.mailkit.attachment;
 
 import com.github.ttereshchenko.mailkit.EmlTokenTypes;
-import com.github.ttereshchenko.mailkit.psi.EmlBodyText;
 import com.github.ttereshchenko.mailkit.psi.EmlHeader;
 import com.github.ttereshchenko.mailkit.psi.EmlHeaderBlock;
 import com.github.ttereshchenko.mailkit.psi.EmlHeaderParsing;
 import com.github.ttereshchenko.mailkit.psi.EmlMimePart;
-import com.github.ttereshchenko.mailkit.psi.EmlNestedMessage;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.PsiElement;
+import com.intellij.psi.SmartPointerManager;
 import com.intellij.psi.util.PsiTreeUtil;
 import java.util.Locale;
 import java.util.Objects;
@@ -43,9 +42,11 @@ public final class AttachmentDetector {
         var rawFilename = firstNonBlank(dispositionFilename, contentTypeFilename, contentTypeName);
         var filename = FilenameSanitizer.sanitize(rawFilename);
         var encoding = ContentTransferEncoding.parse(decoded(headerBlock, CONTENT_TRANSFER_ENCODING));
-        var rawBody = extractRawBody(part, headerBlock);
         var firstLineRange = firstLineRange(part);
-        return Optional.of(new AttachmentPartInfo(filename, encoding, rawBody, firstLineRange));
+        var bodyStart = headerBlock.getTextRange().getEndOffset();
+        var bodyEnd = part.getTextRange().getEndOffset();
+        var pointer = SmartPointerManager.getInstance(part.getProject()).createSmartPsiElementPointer(part);
+        return Optional.of(new AttachmentPartInfo(filename, encoding, firstLineRange, pointer, bodyStart, bodyEnd));
     }
 
     public static @Nullable EmlMimePart findEnclosing(@Nullable PsiElement element) {
@@ -98,35 +99,6 @@ public final class AttachmentDetector {
             }
         }
         return null;
-    }
-
-    private static @NotNull String extractRawBody(EmlMimePart part, EmlHeaderBlock headerBlock) {
-        var file = part.getContainingFile();
-        if (file == null) {
-            return "";
-        }
-        var fileText = file.getText();
-        var partRange = part.getTextRange();
-        var bodyStart = headerBlock.getTextRange().getEndOffset();
-        var bodyEnd = partRange.getEndOffset();
-        if (bodyStart >= bodyEnd) {
-            // No body after the header block — possibly nested structure beyond the block.
-            var nested = PsiTreeUtil.findChildOfAnyType(part, EmlBodyText.class, EmlNestedMessage.class);
-            return nested == null ? "" : nested.getText();
-        }
-        var slice = fileText.substring(bodyStart, bodyEnd);
-        return stripLeadingBlankLine(slice);
-    }
-
-    private static String stripLeadingBlankLine(String body) {
-        var index = 0;
-        if (index < body.length() && body.charAt(index) == '\r') {
-            index++;
-        }
-        if (index < body.length() && body.charAt(index) == '\n') {
-            index++;
-        }
-        return body.substring(index);
     }
 
     private static @NotNull TextRange firstLineRange(EmlMimePart part) {

@@ -8,6 +8,15 @@
   boundary table returned by `EmlBoundaryParser.collect` is now cached by
   buffer identity, so incremental relex / rehighlight passes on large
   multipart EMLs stop running an O(N) scan on the EDT for every keystroke.
+- Attachment detection no longer materializes the part body when the
+  gutter line-marker pass or an action's `update()` call asks "is this a
+  qualifying attachment?". `AttachmentDetector.detect` used to call
+  `PsiFile.getText()` (a full file copy) and slice it for every candidate
+  part; it now captures the body offsets and resolves the body lazily —
+  through the file's `CharSequence` view, allocating one body-sized
+  string — only when the user actually invokes *Save Attachment As…* or
+  *Open with System App*, and only on the background task. Decoding for
+  both actions also moved off the EDT.
 
 ### Fixed
 
@@ -20,6 +29,14 @@
   close is now resolved to the **last** matching `--<name>--` line in the
   document, so the multipart is not terminated prematurely on a quoted
   occurrence.
+- *Open Attachment with System App* no longer stages every attachment to
+  the fixed path `<IDE temp>/mailkit/<filename>`. Two attachments that
+  shared a filename (e.g. two `report.pdf` parts) could overwrite each
+  other, letting the user open one file and see another's bytes; the
+  directory also accumulated forever across IDE sessions. Each invocation
+  now writes to its own random `<IDE temp>/mailkit-attachments/open-XXXX/`
+  directory, the staging dir is deleted on IDE shutdown, and stale
+  leftovers from prior (crashed) sessions are swept on next use.
 
 ### Changed
 

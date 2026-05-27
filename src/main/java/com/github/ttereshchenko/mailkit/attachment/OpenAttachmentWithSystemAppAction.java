@@ -11,14 +11,19 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.io.FileUtil;
 import java.awt.Desktop;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.jetbrains.annotations.NotNull;
 
 public final class OpenAttachmentWithSystemAppAction extends AnAction {
+
+    private static final String STAGING_PARENT = "mailkit-attachments";
 
     public OpenAttachmentWithSystemAppAction() {
         super(
@@ -49,21 +54,24 @@ public final class OpenAttachmentWithSystemAppAction extends AnAction {
     }
 
     static void runOpen(Project project, AttachmentPartInfo info) {
-        byte[] decoded;
-        try {
-            decoded = AttachmentDecoder.decode(info.rawBody(), info.encoding());
-        } catch (DecodingException failure) {
-            AttachmentActionSupport.notifyError(project, "Could not decode attachment: " + failure.getMessage());
-            return;
-        }
-
         ProgressManager.getInstance().run(new Task.Backgroundable(project, "Opening attachment", true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 indicator.setIndeterminate(true);
+                byte[] decoded;
                 try {
-                    var directory = Path.of(PathManager.getTempPath(), "mailkit");
-                    Files.createDirectories(directory);
+                    decoded = AttachmentDecoder.decode(info.rawBody(), info.encoding());
+                } catch (DecodingException failure) {
+                    AttachmentActionSupport.notifyError(
+                            project, "Could not decode attachment: " + failure.getMessage());
+                    return;
+                }
+                try {
+                    var parent = Path.of(PathManager.getTempPath(), STAGING_PARENT);
+                    Files.createDirectories(parent);
+                    pruneStaleSiblings(parent);
+                    var directory = Files.createTempDirectory(parent, "open-");
+                    Disposer.register(ApplicationManager.getApplication(), () -> FileUtil.delete(directory.toFile()));
                     var destination = directory.resolve(info.filename()).toFile();
                     Files.write(destination.toPath(), decoded);
                     openWithSystem(project, destination);
@@ -72,6 +80,16 @@ public final class OpenAttachmentWithSystemAppAction extends AnAction {
                 }
             }
         });
+    }
+
+    private static void pruneStaleSiblings(Path parent) {
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(parent)) {
+            for (var entry : entries) {
+                FileUtil.delete(entry.toFile());
+            }
+        } catch (IOException ignored) {
+            // best-effort: leftovers from a crashed prior session are non-fatal
+        }
     }
 
     private static void openWithSystem(Project project, File destination) {
