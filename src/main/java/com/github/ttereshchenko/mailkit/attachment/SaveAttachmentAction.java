@@ -41,14 +41,6 @@ public final class SaveAttachmentAction extends AnAction {
     }
 
     static void runSave(Project project, AttachmentPartInfo info) {
-        byte[] decoded;
-        try {
-            decoded = AttachmentDecoder.decode(info.rawBody(), info.encoding());
-        } catch (DecodingException failure) {
-            AttachmentActionSupport.notifyError(project, "Could not decode attachment: " + failure.getMessage());
-            return;
-        }
-
         var descriptor = new FileSaverDescriptor("Save Attachment As", "Choose a destination for the attachment");
         var dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project);
         var wrapper = dialog.save((com.intellij.openapi.vfs.VirtualFile) null, info.filename());
@@ -61,6 +53,14 @@ public final class SaveAttachmentAction extends AnAction {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 indicator.setIndeterminate(true);
+                byte[] decoded;
+                try {
+                    decoded = AttachmentDecoder.decode(info.rawBody(), info.encoding());
+                } catch (DecodingException failure) {
+                    AttachmentActionSupport.notifyError(
+                            project, "Could not decode attachment: " + failure.getMessage());
+                    return;
+                }
                 try {
                     Files.write(destination.toPath(), decoded);
                     AttachmentActionSupport.notifySuccess(project, destination, decoded.length);
