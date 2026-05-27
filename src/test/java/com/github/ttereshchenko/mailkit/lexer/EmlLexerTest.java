@@ -599,4 +599,53 @@ class EmlLexerTest {
                 .orElseThrow();
         assertEquals(EmlTokenTypes.BODY_LINE, summarySender.type());
     }
+
+    @Test
+    void testRestartOnSameBufferKeepsTokenizationConsistent() {
+        // Regression: EmlLexer caches EmlBoundaryParser.collect by buffer identity.
+        // Repeated start() calls on the same buffer must produce identical token streams
+        // (cache hit), and a different buffer must produce its own tokens (cache miss).
+        var firstInput = "Content-Type: multipart/mixed; boundary=\"abc\"\n\n--abc\nbody\n--abc--\n";
+        var secondInput = "Content-Type: multipart/mixed; boundary=\"xyz\"\n\n--xyz\nbody\n--xyz--\n";
+
+        var lexer = new EmlLexer();
+
+        lexer.start(firstInput, 0, firstInput.length(), 0);
+        var firstRun = drain(lexer);
+
+        lexer.start(firstInput, 0, firstInput.length(), 0);
+        var secondRun = drain(lexer);
+        assertEquals(firstRun, secondRun);
+
+        lexer.start(secondInput, 0, secondInput.length(), 0);
+        var thirdRun = drain(lexer);
+        var thirdTypes = thirdRun.stream().map(TokenInfo::type).toList();
+        assertTrue(
+                thirdTypes.contains(EmlTokenTypes.BOUNDARY_START),
+                "Switching to a buffer with a different boundary must not reuse the stale cache");
+        assertTrue(thirdTypes.contains(EmlTokenTypes.BOUNDARY_END));
+        var boundaryTexts = thirdRun.stream()
+                .filter(token ->
+                        token.type() == EmlTokenTypes.BOUNDARY_START || token.type() == EmlTokenTypes.BOUNDARY_END)
+                .map(TokenInfo::text)
+                .toList();
+        assertTrue(
+                boundaryTexts.stream().allMatch(text -> text.contains("xyz")),
+                "Cache must invalidate on a new buffer; got " + boundaryTexts);
+    }
+
+    private static List<TokenInfo> drain(EmlLexer lexer) {
+        var tokens = new ArrayList<TokenInfo>();
+        while (lexer.getTokenType() != null) {
+            tokens.add(new TokenInfo(
+                    lexer.getTokenType(),
+                    lexer.getTokenStart(),
+                    lexer.getTokenEnd(),
+                    lexer.getBufferSequence()
+                            .subSequence(lexer.getTokenStart(), lexer.getTokenEnd())
+                            .toString()));
+            lexer.advance();
+        }
+        return tokens;
+    }
 }
