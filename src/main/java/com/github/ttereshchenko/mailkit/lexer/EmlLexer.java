@@ -26,6 +26,13 @@ public final class EmlLexer extends LexerBase {
     private boolean inHeaderMode;
     private boolean rfc822InCurrentBlock;
 
+    // Identity-keyed single-slot cache. EmlBoundaryParser.collect is an O(N) full-document
+    // walk; the IntelliJ platform restarts the lexer on every keystroke during incremental
+    // relex, so without this cache each typing event scanned the entire EML on the EDT.
+    // Document snapshots are immutable, so reference equality implies content equality.
+    private CharSequence cachedBufferRef;
+    private EmlBoundaryParser cachedBoundaries;
+
     @Override
     public void start(@NotNull CharSequence buffer, int startOffset, int endOffset, int initialState) {
         this.buffer = Objects.requireNonNull(buffer, "buffer");
@@ -35,7 +42,11 @@ public final class EmlLexer extends LexerBase {
         this.tokenType = null;
         this.inHeaderMode = (initialState != STATE_BODY);
         this.rfc822InCurrentBlock = (initialState == STATE_HEADER_RFC822);
-        this.boundaries = EmlBoundaryParser.collect(buffer);
+        if (buffer != cachedBufferRef || cachedBoundaries == null) {
+            cachedBoundaries = EmlBoundaryParser.collect(buffer);
+            cachedBufferRef = buffer;
+        }
+        this.boundaries = cachedBoundaries;
 
         advance();
     }

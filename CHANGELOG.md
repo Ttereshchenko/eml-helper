@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Performance
+
+- `EmlLexer` no longer rescans the full document on every restart. The
+  boundary table returned by `EmlBoundaryParser.collect` is now cached by
+  buffer identity, so incremental relex / rehighlight passes on large
+  multipart EMLs stop running an O(N) scan on the EDT for every keystroke.
+
 ### Fixed
 
 - `EmlBoundaryParser` no longer harvests `boundary=…` substrings from body
