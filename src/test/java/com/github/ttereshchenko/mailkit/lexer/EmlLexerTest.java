@@ -1,6 +1,7 @@
 package com.github.ttereshchenko.mailkit.lexer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -310,13 +311,17 @@ class EmlLexerTest {
     }
 
     @Test
-    void testBoundaryPatternInBodyIsStillExtracted() {
-        // boundary= pattern in body text is also extracted by the lexer
-        // (it scans the full buffer with regex)
+    void testBoundaryPatternInBodyIsIgnored() {
+        // `boundary=` text in the body must NOT be harvested into the boundary set —
+        // otherwise later body lines that happen to spell `--phantom` get mis-tokenized
+        // as BOUNDARY_START / BOUNDARY_END.
         String input = "From: a@b.com\n\nboundary=\"bodybound\"\n--bodybound\nContent\n--bodybound--\n";
         List<IElementType> types = tokenTypes(input);
-        assertTrue(types.contains(EmlTokenTypes.BOUNDARY_START));
-        assertTrue(types.contains(EmlTokenTypes.BOUNDARY_END));
+        assertFalse(types.contains(EmlTokenTypes.BOUNDARY_START));
+        assertFalse(types.contains(EmlTokenTypes.BOUNDARY_END));
+        for (int i = 2; i < types.size(); i++) {
+            assertEquals(EmlTokenTypes.BODY_LINE, types.get(i));
+        }
     }
 
     // ===== CRLF Line-Ending Tests =====
@@ -510,6 +515,69 @@ class EmlLexerTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals(EmlTokenTypes.HEADER_LINE, nestedFrom.type());
+    }
+
+    @Test
+    void testProseMentioningBoundaryIsNotMarkers() throws IOException {
+        // Regression: `boundary=` appearing inside a text/plain body must not seed the
+        // boundary set, so the `--phantom` / `--phantom--` lines that follow stay BODY_LINE.
+        String content = Files.readString(Path.of("src/test/resources/samples/eml/edge/prose_mentions_boundary.eml"));
+        List<IElementType> types = tokenTypes(content);
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BODY_LINE),
+                types);
+    }
+
+    @Test
+    void testMultipartWithPhantomBoundaryInBodyText() throws IOException {
+        // Regression for two distinct issues:
+        //   (1) phantom `boundary=` strings in part body must not seed the boundary set, so
+        //       `--phantom` / `--phantom--` stay BODY_LINE;
+        //   (2) when the part body literally contains the real `--real--` close (e.g. a doc
+        //       snippet that quotes its parent boundary), only the LAST `--real--` is the
+        //       structural close — earlier matching lines stay BODY_LINE.
+        String content =
+                Files.readString(Path.of("src/test/resources/samples/eml/edge/multipart_body_mentions_boundary.eml"));
+        List<TokenInfo> tokens = tokenize(content);
+        var realStart = tokens.stream()
+                .filter(token -> token.text().startsWith("--real\n"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(EmlTokenTypes.BOUNDARY_START, realStart.type());
+        var realCloseShaped = tokens.stream()
+                .filter(token -> token.text().startsWith("--real--"))
+                .toList();
+        assertTrue(realCloseShaped.size() >= 2, "fixture must contain at least two `--real--` lines");
+        for (int i = 0; i < realCloseShaped.size() - 1; i++) {
+            assertEquals(
+                    EmlTokenTypes.BODY_LINE,
+                    realCloseShaped.get(i).type(),
+                    "non-last `--real--` line must be body text");
+        }
+        assertEquals(EmlTokenTypes.BOUNDARY_END, realCloseShaped.getLast().type(), "last `--real--` is the close");
+        tokens.stream()
+                .filter(token -> token.text().startsWith("--phantom"))
+                .forEach(token -> assertEquals(EmlTokenTypes.BODY_LINE, token.type()));
+    }
+
+    @Test
+    void testPostCloseEpilogueIsNotReTokenized() {
+        // Under "last close wins", the middle `--b--` is body text and the trailing one is
+        // the real close.
+        String input =
+                "Content-Type: multipart/mixed; boundary=\"b\"\n\n" + "--b\n\nbody\n" + "--b--\nepilogue text\n--b--\n";
+        var tokens = tokenize(input);
+        var closeShaped = tokens.stream()
+                .filter(token -> token.text().startsWith("--b--"))
+                .toList();
+        assertEquals(2, closeShaped.size());
+        assertEquals(EmlTokenTypes.BODY_LINE, closeShaped.get(0).type());
+        assertEquals(EmlTokenTypes.BOUNDARY_END, closeShaped.get(1).type());
     }
 
     @Test

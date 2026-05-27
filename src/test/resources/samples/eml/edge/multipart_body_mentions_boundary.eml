@@ -1,0 +1,13 @@
+Content-Type: multipart/mixed; boundary="real"
+
+--real
+Content-Type: text/plain
+
+Documentation snippet: the multipart boundary="phantom" was historically
+used by version 1. A line that mimics a marker:
+--phantom
+--real--
+phantom
+--phantom--
+But this is body text, not a boundary marker.
+--real--

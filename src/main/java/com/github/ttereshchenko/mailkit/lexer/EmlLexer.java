@@ -3,7 +3,6 @@ package com.github.ttereshchenko.mailkit.lexer;
 import com.github.ttereshchenko.mailkit.EmlTokenTypes;
 import com.intellij.lexer.LexerBase;
 import com.intellij.psi.tree.IElementType;
-import java.util.Locale;
 import java.util.Objects;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -15,9 +14,6 @@ public final class EmlLexer extends LexerBase {
     private static final int STATE_HEADER = 0;
     private static final int STATE_BODY = 1;
     private static final int STATE_HEADER_RFC822 = 2;
-
-    private static final String CONTENT_TYPE_PREFIX = "content-type";
-    private static final String RFC822_TYPE = "message/rfc822";
 
     private CharSequence buffer;
     private int bufferEnd;
@@ -63,7 +59,7 @@ public final class EmlLexer extends LexerBase {
 
         var line = buffer.subSequence(tokenStart, tokenEnd).toString().stripTrailing();
 
-        var boundaryType = classifyBoundary(line);
+        var boundaryType = classifyBoundary(tokenStart);
         if (boundaryType != null) {
             tokenType = boundaryType;
             inHeaderMode = (boundaryType == EmlTokenTypes.BOUNDARY_START);
@@ -82,7 +78,7 @@ public final class EmlLexer extends LexerBase {
                 tokenType = EmlTokenTypes.HEADER_CONT_LINE;
             } else {
                 tokenType = EmlTokenTypes.HEADER_LINE;
-                if (!rfc822InCurrentBlock && isContentTypeRfc822(line)) {
+                if (!rfc822InCurrentBlock && EmlBoundaryParser.isContentTypeRfc822(line)) {
                     rfc822InCurrentBlock = true;
                 }
             }
@@ -91,34 +87,11 @@ public final class EmlLexer extends LexerBase {
         }
     }
 
-    private @Nullable IElementType classifyBoundary(String line) {
+    private @Nullable IElementType classifyBoundary(int tokenStart) {
         if (boundaries.isEmpty()) {
             return null;
         }
-        if (boundaries.isEnd(line)) {
-            return EmlTokenTypes.BOUNDARY_END;
-        }
-        if (boundaries.isStart(line)) {
-            return EmlTokenTypes.BOUNDARY_START;
-        }
-        return null;
-    }
-
-    private static boolean isContentTypeRfc822(String line) {
-        var colonIndex = line.indexOf(':');
-        if (colonIndex <= 0) {
-            return false;
-        }
-        var headerName = line.substring(0, colonIndex).trim().toLowerCase(Locale.ROOT);
-        if (!headerName.equals(CONTENT_TYPE_PREFIX)) {
-            return false;
-        }
-        var value = line.substring(colonIndex + 1);
-        var separator = value.indexOf(';');
-        if (separator >= 0) {
-            value = value.substring(0, separator);
-        }
-        return value.trim().equalsIgnoreCase(RFC822_TYPE);
+        return boundaries.classifyBoundary(tokenStart);
     }
 
     @Override
