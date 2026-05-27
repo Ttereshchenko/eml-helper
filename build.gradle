@@ -62,7 +62,7 @@ dependencies {
     testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
     // Testcontainers + Mailpit drive end-to-end SMTP integration tests against a real server.
     // Tests are auto-skipped when Docker is not available on the host.
-    integrationTestImplementation platform('org.testcontainers:testcontainers-bom:1.20.4')
+    integrationTestImplementation platform('org.testcontainers:testcontainers-bom:2.0.5')
     integrationTestImplementation 'org.testcontainers:testcontainers'
     integrationTestImplementation 'org.testcontainers:junit-jupiter'
     // SLF4J binding so Testcontainers diagnostics actually appear in test output instead of being
