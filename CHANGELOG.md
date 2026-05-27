@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+- `EmlBoundaryParser` no longer harvests `boundary=…` substrings from body
+  lines (prose, base64 payloads, forwarded EMLs quoted in a `text/plain`
+  part) — only `Content-Type` headers contribute to the boundary set, so
+  later body lines that happen to spell `--phantom` / `--phantom--` are
+  no longer mis-tokenized as boundary markers. When the actual boundary
+  string appears literally inside a `text/*` part body, the structural
+  close is now resolved to the **last** matching `--<name>--` line in the
+  document, so the multipart is not terminated prematurely on a quoted
+  occurrence.
+
 ### Changed
 
 - SMTP profile dialog redesigned around the documented tab grouping
