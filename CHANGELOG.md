@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.2 - 2026-05-27
+
 ### Performance
 
 - `EmlLexer` no longer rescans the full document on every restart. The
