@@ -1,0 +1,25 @@
+From: sender@example.com
+To: archive@example.com
+Subject: Forwarded with folded Content-Type
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer-boundary"
+
+--outer-boundary
+Content-Type: text/plain; charset=us-ascii
+
+See the attached forwarded message below.
+--outer-boundary
+Content-Type:
+    message/rfc822
+Content-Disposition: attachment;
+	filename="forwarded.eml"
+
+From: inner-sender@example.com
+To: inner-recipient@example.com
+Subject: Inner message subject
+Content-Type: text/plain
+
+This is the body of the inner RFC 822 message.
+If the lexer unfolds Content-Type correctly, the headers above
+render with header highlighting and the part folds as a nested message.
+--outer-boundary--

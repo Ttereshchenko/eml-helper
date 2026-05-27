@@ -78,6 +78,22 @@ class EmlLexerTest {
     }
 
     @Test
+    void testQuotedBoundaryWithSpaceIsRecognized() {
+        String input =
+                "Content-Type: multipart/mixed; boundary=\"part one\"\n\n" + "--part one\n\nBody part\n--part one--\n";
+        List<IElementType> types = tokenTypes(input);
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                types);
+    }
+
+    @Test
     void testMultipleBoundaries() {
         String input = "Content-Type: multipart/mixed; boundary=\"outer\"\n\n"
                 + "--outer\nContent-Type: multipart/alternative; boundary=\"inner\"\n\n"
@@ -480,6 +496,81 @@ class EmlLexerTest {
         var types = tokenTypes(input);
         // Index 5 is the nested message's "Subject: nested" line.
         assertEquals(EmlTokenTypes.HEADER_LINE, types.get(5));
+    }
+
+    @Test
+    void testFoldedContentTypeAfterColonIsRfc822() {
+        // RFC 5322 §2.2.3: the value of `Content-Type` may be folded onto a continuation line
+        // beginning with SP/TAB. When the type token itself sits on the continuation, the lexer
+        // must still unfold and recognize message/rfc822 — otherwise the nested message's
+        // headers are mis-tokenized as body content.
+        String input = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type:\n message/rfc822\n\n"
+                + "Subject: nested\n\nbody\n--b--\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_CONT_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testFoldedContentTypeMidValueIsRfc822() {
+        // Fold splits the type token itself across two physical lines.
+        String input = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type: message/\n rfc822\n\n"
+                + "Subject: nested\n\nbody\n--b--\n";
+        var types = tokenTypes(input);
+        // Indices: 0=outer header, 1=blank, 2=--b, 3=ct header, 4=ct cont, 5=blank,
+        // 6=nested Subject, 7=blank, 8=body, 9=--b--
+        assertEquals(EmlTokenTypes.HEADER_LINE, types.get(6));
+    }
+
+    @Test
+    void testFoldedContentTypeTabContinuationIsRfc822() {
+        // Continuation line may begin with TAB instead of SP — both are RFC 5322 WSP.
+        String input = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type:\n\tmessage/rfc822\n\n"
+                + "Subject: nested\n\nbody\n--b--\n";
+        var types = tokenTypes(input);
+        assertEquals(EmlTokenTypes.HEADER_LINE, types.get(6));
+    }
+
+    @Test
+    void testFoldedContentTypeWithNestedMultipart() {
+        // Mirror of testMultipartInsideRfc822 with the inner message/rfc822 header folded:
+        // unfolding must compose correctly with the existing boundary tracking and rfc822
+        // re-entry into header mode.
+        String input = "Content-Type: multipart/mixed; boundary=\"outer\"\n\n"
+                + "--outer\nContent-Type:\n message/rfc822\n\n"
+                + "Subject: nested email\nContent-Type: multipart/mixed; boundary=\"inner\"\n\n"
+                + "--inner\nContent-Type: text/plain\n\nHi\n--inner--\n--outer--\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_CONT_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
     }
 
     @Test

@@ -1,0 +1,17 @@
+From: sender@example.com
+To: archive@example.com
+Subject: Quoted boundary with internal whitespace
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="part one"
+
+--part one
+Content-Type: text/plain; charset=us-ascii
+
+First part body.
+--part one
+Content-Type: text/plain; charset=us-ascii
+
+Second part body. If the lexer recognises the quoted boundary value
+with its embedded space, both parts fold and render with header
+highlighting; if not, the whole message lexes as a flat body.
+--part one--
