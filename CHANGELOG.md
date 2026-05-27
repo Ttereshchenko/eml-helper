@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed
+
+- `EmlLexer` now unfolds `Content-Type` across continuation lines when
+  deciding whether a part is `message/rfc822`. Previously only the first
+  physical line of the header was inspected, so RFC 5322-folded values like
+  `Content-Type:\n message/rfc822` — which real MUAs do emit — were missed
+  and the inner RFC 822 message was mis-lexed as a flat body, losing
+  highlighting and folding for the nested headers.
+- `EmlBoundaryParser` now preserves internal whitespace inside a quoted
+  `boundary="…"` value. The previous regex excluded whitespace from its
+  capture group in both branches, so RFC 2046-legal values like
+  `boundary="ab cd"` were captured as just `ab` — the real `--ab cd`
+  marker lines then went unrecognised and the whole multipart lexed as a
+  flat body with no part folding or per-part header highlighting.
+
 ## 1.1.2 - 2026-05-27
 
 ### Performance

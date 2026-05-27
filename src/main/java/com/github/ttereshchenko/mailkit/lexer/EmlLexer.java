@@ -89,7 +89,7 @@ public final class EmlLexer extends LexerBase {
                 tokenType = EmlTokenTypes.HEADER_CONT_LINE;
             } else {
                 tokenType = EmlTokenTypes.HEADER_LINE;
-                if (!rfc822InCurrentBlock && EmlBoundaryParser.isContentTypeRfc822(line)) {
+                if (!rfc822InCurrentBlock && boundaries.isRfc822HeaderStart(tokenStart)) {
                     rfc822InCurrentBlock = true;
                 }
             }

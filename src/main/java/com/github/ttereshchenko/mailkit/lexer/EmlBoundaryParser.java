@@ -18,21 +18,27 @@ import org.jetbrains.annotations.Nullable;
 public final class EmlBoundaryParser {
     private static final Logger LOG = Logger.getInstance(EmlBoundaryParser.class);
 
+    // Quoted branch (group 1) permits internal whitespace per RFC 2046 (bchars = bcharsnospace / " ").
+    // Unquoted branch (group 2) keeps the legacy bare-token shape. The two branches are mutually
+    // exclusive, so exactly one group is non-null on each match.
     private static final Pattern BOUNDARY_PATTERN =
-            Pattern.compile("boundary\\s*=\\s*\"?([^\"\\s;]+)\"?", Pattern.CASE_INSENSITIVE);
+            Pattern.compile("boundary\\s*=\\s*(?:\"([^\"]*)\"|([^\\s;]+))", Pattern.CASE_INSENSITIVE);
 
     private static final String CONTENT_TYPE_PREFIX = "content-type";
     private static final String RFC822_TYPE = "message/rfc822";
 
     private static final EmlBoundaryParser EMPTY =
-            new EmlBoundaryParser(Collections.emptySet(), Collections.emptyMap());
+            new EmlBoundaryParser(Collections.emptySet(), Collections.emptyMap(), Collections.emptySet());
 
     private final Set<String> rawNames;
     private final Map<Integer, IElementType> classification;
+    private final Set<Integer> rfc822HeaderStartOffsets;
 
-    private EmlBoundaryParser(Set<String> rawNames, Map<Integer, IElementType> classification) {
+    private EmlBoundaryParser(
+            Set<String> rawNames, Map<Integer, IElementType> classification, Set<Integer> rfc822HeaderStartOffsets) {
         this.rawNames = rawNames;
         this.classification = classification;
+        this.rfc822HeaderStartOffsets = rfc822HeaderStartOffsets;
     }
 
     public static EmlBoundaryParser collect(CharSequence text) {
@@ -44,9 +50,17 @@ public final class EmlBoundaryParser {
 
         var rawNames = new HashSet<String>();
         var candidates = new ArrayList<MarkerCandidate>();
+        var rfc822HeaderStartOffsets = new HashSet<Integer>();
         var inHeader = true;
         var rfc822Pending = false;
         var lineStart = 0;
+        // RFC 5322 §2.2.3 unfolding: a Content-Type value may be split across continuation lines
+        // (any line whose first char is SP/TAB). Accumulate until the header ends — at the next
+        // non-continuation line, blank line, boundary marker, or EOF — then test the unfolded
+        // value against `message/rfc822`. The line-only check this replaces missed folded values
+        // like `Content-Type:\n message/rfc822`, leaving the inner message mis-lexed as a flat body.
+        var pendingContentTypeStart = -1;
+        var pendingContentTypeValue = new StringBuilder();
 
         while (lineStart < bufferLength) {
             var lineEnd = lineStart;
@@ -57,11 +71,24 @@ public final class EmlBoundaryParser {
 
             var match = matchBoundary(line, rawNames);
             if (match != null) {
+                if (pendingContentTypeStart >= 0 && isRfc822Value(pendingContentTypeValue)) {
+                    rfc822HeaderStartOffsets.add(pendingContentTypeStart);
+                }
+                pendingContentTypeStart = -1;
+                pendingContentTypeValue.setLength(0);
                 candidates.add(new MarkerCandidate(lineStart, match.name(), match.closing()));
                 inHeader = !match.closing();
                 rfc822Pending = false;
             } else if (inHeader) {
                 if (line.isEmpty()) {
+                    if (pendingContentTypeStart >= 0) {
+                        if (isRfc822Value(pendingContentTypeValue)) {
+                            rfc822Pending = true;
+                            rfc822HeaderStartOffsets.add(pendingContentTypeStart);
+                        }
+                        pendingContentTypeStart = -1;
+                        pendingContentTypeValue.setLength(0);
+                    }
                     if (rfc822Pending) {
                         rfc822Pending = false;
                     } else {
@@ -70,12 +97,40 @@ public final class EmlBoundaryParser {
                 } else {
                     var matcher = BOUNDARY_PATTERN.matcher(line);
                     while (matcher.find()) {
-                        addBoundary(rawNames, matcher.group(1));
+                        var quoted = matcher.group(1);
+                        var name = quoted != null ? quoted : matcher.group(2);
+                        if (!name.isEmpty()) {
+                            addBoundary(rawNames, name);
+                        }
                     }
                     var firstChar = line.charAt(0);
                     var continuationLine = firstChar == ' ' || firstChar == '\t';
-                    if (!rfc822Pending && !continuationLine && isContentTypeRfc822(line)) {
-                        rfc822Pending = true;
+                    if (continuationLine) {
+                        if (pendingContentTypeStart >= 0) {
+                            // Collapse FWS at the fold point. Strict RFC 5322 keeps the WSP
+                            // verbatim, but message/rfc822 is parsed as type "/" subtype where
+                            // CFWS may not appear inside a token; some MUAs nevertheless fold
+                            // mid-token, and we want to detect those too.
+                            pendingContentTypeValue.append(line.stripLeading());
+                        }
+                    } else {
+                        if (pendingContentTypeStart >= 0) {
+                            if (isRfc822Value(pendingContentTypeValue)) {
+                                rfc822Pending = true;
+                                rfc822HeaderStartOffsets.add(pendingContentTypeStart);
+                            }
+                            pendingContentTypeStart = -1;
+                            pendingContentTypeValue.setLength(0);
+                        }
+                        var colonIndex = line.indexOf(':');
+                        if (colonIndex > 0
+                                && line.substring(0, colonIndex)
+                                        .trim()
+                                        .toLowerCase(Locale.ROOT)
+                                        .equals(CONTENT_TYPE_PREFIX)) {
+                            pendingContentTypeStart = lineStart;
+                            pendingContentTypeValue.append(line, colonIndex + 1, line.length());
+                        }
                     }
                 }
             }
@@ -83,12 +138,18 @@ public final class EmlBoundaryParser {
             lineStart = (lineEnd < bufferLength) ? lineEnd + 1 : lineEnd;
         }
 
-        if (rawNames.isEmpty()) {
+        if (pendingContentTypeStart >= 0 && isRfc822Value(pendingContentTypeValue)) {
+            rfc822HeaderStartOffsets.add(pendingContentTypeStart);
+        }
+
+        if (rawNames.isEmpty() && rfc822HeaderStartOffsets.isEmpty()) {
             return EMPTY;
         }
 
         return new EmlBoundaryParser(
-                Collections.unmodifiableSet(rawNames), Collections.unmodifiableMap(resolveClassification(candidates)));
+                Collections.unmodifiableSet(rawNames),
+                Collections.unmodifiableMap(resolveClassification(candidates)),
+                Collections.unmodifiableSet(rfc822HeaderStartOffsets));
     }
 
     private static @Nullable BoundaryMatch matchBoundary(String line, Set<String> knownNames) {
@@ -151,16 +212,12 @@ public final class EmlBoundaryParser {
         return rawNames;
     }
 
-    static boolean isContentTypeRfc822(String line) {
-        var colonIndex = line.indexOf(':');
-        if (colonIndex <= 0) {
-            return false;
-        }
-        var headerName = line.substring(0, colonIndex).trim().toLowerCase(Locale.ROOT);
-        if (!headerName.equals(CONTENT_TYPE_PREFIX)) {
-            return false;
-        }
-        var value = line.substring(colonIndex + 1);
+    public boolean isRfc822HeaderStart(int lineOffset) {
+        return rfc822HeaderStartOffsets.contains(lineOffset);
+    }
+
+    private static boolean isRfc822Value(CharSequence accumulatedValue) {
+        var value = accumulatedValue.toString();
         var separator = value.indexOf(';');
         if (separator >= 0) {
             value = value.substring(0, separator);

@@ -65,6 +65,25 @@ class EmlBoundaryParserTest {
     }
 
     @Test
+    void quotedBoundaryWithInternalWhitespaceIsExtracted() {
+        // RFC 2046 bchars allow SP inside a quoted boundary. The legacy regex captured only "ab",
+        // so `--ab cd` lines were never classified — the whole multipart lexed as a flat body.
+        var buffer = "Content-Type: multipart/mixed; boundary=\"ab cd\"\n\n--ab cd\nBody\n--ab cd--\n";
+        var parser = EmlBoundaryParser.collect(buffer);
+        assertEquals(Set.of("ab cd"), parser.rawNames());
+        assertSame(EmlTokenTypes.BOUNDARY_START, classifyLine(parser, buffer, "--ab cd\n"));
+        assertSame(EmlTokenTypes.BOUNDARY_END, classifyLine(parser, buffer, "--ab cd--\n"));
+    }
+
+    @Test
+    void quotedEmptyBoundaryIsIgnored() {
+        // boundary="" is RFC-illegal; ensure we never add the empty string to rawNames, otherwise
+        // matchBoundary's Set.contains check would mis-classify random `--` / `----` body lines.
+        var parser = EmlBoundaryParser.collect("Content-Type: multipart/mixed; boundary=\"\"\n\n--\nbody\n----\n");
+        assertTrue(parser.isEmpty());
+    }
+
+    @Test
     void duplicateBoundariesAreDeduplicated() {
         var parser = EmlBoundaryParser.collect(
                 "Content-Type: multipart/mixed; boundary=\"dup\"\n" + "X-Other: multipart/mixed; boundary=\"dup\"\n");
