@@ -340,6 +340,56 @@ class EmlLexerTest {
         }
     }
 
+    // ===== Edge inputs: body-only, headers-only, BOM, CR-only, oversized =====
+    // These document the lexer's CURRENT behavior for inputs that previously had no coverage.
+
+    @Test
+    void testBodyOnlyFileIsClassifiedAsHeaders() {
+        // Known limitation (review finding #18): with no real headers, the positional heuristic
+        // still treats column-0 lines as HEADER_LINE until the first blank line. Documented here
+        // rather than fixed.
+        String input = "Just some text\nMore text\n";
+        assertEquals(List.of(EmlTokenTypes.HEADER_LINE, EmlTokenTypes.HEADER_LINE), tokenTypes(input));
+    }
+
+    @Test
+    void testHeadersOnlyNoBody() {
+        String input = "From: a@b.com\nSubject: hello\n";
+        assertEquals(List.of(EmlTokenTypes.HEADER_LINE, EmlTokenTypes.HEADER_LINE), tokenTypes(input));
+    }
+
+    @Test
+    void testUtf8BomPrefixOnFirstHeader() {
+        // A leading UTF-8 BOM is not WSP, so the first line is still classified as a header.
+        String input = "﻿From: a@b.com\n\nBody\n";
+        assertEquals(
+                List.of(EmlTokenTypes.HEADER_LINE, EmlTokenTypes.BLANK_LINE, EmlTokenTypes.BODY_LINE),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testCrOnlyLineEndingsProduceSingleToken() {
+        // Known limitation: the lexer splits lines on '\n' only, so a CR-only document is one token.
+        String input = "From: a@b.com\rTo: c@d.com\r\r";
+        List<TokenInfo> tokens = tokenize(input);
+        assertEquals(1, tokens.size());
+        assertEquals(EmlTokenTypes.HEADER_LINE, tokens.getFirst().type());
+        assertEquals(0, tokens.getFirst().start());
+        assertEquals(input.length(), tokens.getFirst().end());
+    }
+
+    @Test
+    void testOversizedLineIsNotSplit() {
+        // Lines longer than the RFC 5322 998-octet limit are emitted whole, not split.
+        String longValue = "a".repeat(1200);
+        String input = "X-Long: " + longValue + "\n\nbody\n";
+        List<TokenInfo> tokens = tokenize(input);
+        assertEquals(
+                List.of(EmlTokenTypes.HEADER_LINE, EmlTokenTypes.BLANK_LINE, EmlTokenTypes.BODY_LINE),
+                tokens.stream().map(TokenInfo::type).toList());
+        assertEquals("X-Long: " + longValue + "\n", tokens.getFirst().text());
+    }
+
     // ===== CRLF Line-Ending Tests =====
 
     @Test

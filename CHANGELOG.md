@@ -4,6 +4,30 @@
 
 ### Fixed
 
+- Quoted-printable decoding no longer corrupts literal (non-escaped) characters
+  above `U+00FF` in an attachment body. The non-ASCII fallback re-encoded each
+  char with ISO-8859-1, which collapses anything past Latin-1 to `?`; it now
+  uses UTF-8 so code points like `ł` survive *Save Attachment As…*.
+- Header highlighting could go stale or render the wrong colors under non-ASCII
+  locales and external state mutation. `EmlHeaderSettings` now hands out
+  immutable copies of its header lists (so the case-insensitive lookup cache
+  can't be desynced), marks the highlighting-enabled flag `volatile` (it is read
+  on the background lexer thread while the EDT can toggle it), and derives color
+  keys with `Locale.ROOT` (so `Title`/`title` no longer diverge under `tr_TR`).
+- A hand-edited or imported `emlHeaderSettings.xml` containing an invalid header
+  name (e.g. one with `<` or `&`) can no longer break the Color Scheme preview.
+  Header names are now validated against the same pattern as the settings UI
+  when state loads, so malformed entries never reach the demo-text generator.
+- The *Settings → Editor → MailKit* page no longer leaks its Swing component
+  tree across dialog reopens. The configurable now releases its table, models,
+  and panels in `disposeUIResources` instead of only stopping cell editing.
+- MIME-part folding, header highlighting, and the attachment gutter icon
+  no longer disappear while the IDE is indexing ("dumb mode"). The folding
+  builder, header annotator, and attachment line-marker provider now
+  implement `DumbAware` — without it the platform skipped these
+  index-free extensions during indexing, so opening an `.eml` (or
+  reindexing) briefly stripped its decorations. Lexer-based boundary
+  syntax coloring was unaffected and is unchanged.
 - `EmlLexer` now unfolds `Content-Type` across continuation lines when
   deciding whether a part is `message/rfc822`. Previously only the first
   physical line of the header was inspected, so RFC 5322-folded values like

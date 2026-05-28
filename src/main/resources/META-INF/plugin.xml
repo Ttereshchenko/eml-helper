@@ -19,7 +19,8 @@
         </ul>
         <p><a href="https://github.com/ttereshchenko/mailkit">Source Code</a> | <a href="https://www.buymeacoffee.com/ttereshchenko">Donation</a></p>
     ]]></description>
-    <idea-version since-build="253"/>
+    <!-- idea-version (since/until-build) is injected by the IntelliJ Platform Gradle Plugin from
+         intellijPlatform.pluginConfiguration.ideaVersion in build.gradle. -->
     <depends>com.intellij.modules.platform</depends>
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="EML"

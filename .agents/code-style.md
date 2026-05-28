@@ -11,5 +11,6 @@
 - don't keep unused import
 - use methods from `java.util.Objects` for `null` checks
 - when reading the message of a `com.intellij.openapi.options.ConfigurationException`, call `getLocalizedMessage()` rather than `getMessage()` — the latter is deprecated on `ConfigurationException` and breaks the build under `-Werror`
+- IntelliJ extensions that extend `PossiblyDumbAware` (`FoldingBuilder`, `Annotator`, `LineMarkerProvider`, etc.) must implement `DumbAware` when their logic only walks PSI / reads settings and never queries indices — otherwise the platform skips them during indexing and their decorations disappear in dumb mode. `SyntaxHighlighter` is exempt: it is not `PossiblyDumbAware` and always runs.
 
 Rules above are enforced by Checkstyle (`config/checkstyle/checkstyle.xml`) and Spotless (Palantir Java Format) where possible. `./gradlew build` fails on violations. Run `./gradlew spotlessApply` to auto-fix formatting. Rules that no static analyser can enforce (use `Objects` for null checks, prefer `var`, prefer switch expressions and record patterns, use `_` for unused parameters, descriptive class names) remain reviewer responsibility.

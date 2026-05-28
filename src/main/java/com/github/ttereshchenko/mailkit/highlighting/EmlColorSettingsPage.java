@@ -9,6 +9,7 @@ import com.intellij.openapi.options.colors.ColorSettingsPage;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import javax.swing.Icon;
@@ -56,11 +57,11 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
         var builder = new StringBuilder(DEMO_HEADERS);
         var seen = new HashSet<String>();
         for (String header : EmlHeaderSettings.getInstance().getHighlightedHeaders()) {
-            var upper = header.toUpperCase();
+            var upper = header.toUpperCase(Locale.ROOT);
             if (PREDEFINED_UPPER.contains(upper) || !seen.add(upper)) {
                 continue;
             }
-            var tag = header.toLowerCase();
+            var tag = header.toLowerCase(Locale.ROOT);
             builder.append('<')
                     .append(tag)
                     .append('>')
@@ -86,7 +87,7 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
 
         // Add dynamic entries for user-configured headers
         for (String header : EmlHeaderSettings.getInstance().getHighlightedHeaders()) {
-            String tag = header.toLowerCase();
+            String tag = header.toLowerCase(Locale.ROOT);
             if (!map.containsKey(tag)) {
                 map.put(tag, EmlHeaderTextAttributeKeys.getKey(header));
             }
@@ -106,7 +107,7 @@ public final class EmlColorSettingsPage implements ColorSettingsPage {
         descriptors.add(new AttributesDescriptor("Headers//Bcc", EmlHeaderTextAttributeKeys.HEADER_BCC));
 
         for (String header : EmlHeaderSettings.getInstance().getHighlightedHeaders()) {
-            if (PREDEFINED_UPPER.contains(header.toUpperCase())) {
+            if (PREDEFINED_UPPER.contains(header.toUpperCase(Locale.ROOT))) {
                 continue;
             }
             descriptors.add(new AttributesDescriptor("Headers//" + header, EmlHeaderTextAttributeKeys.getKey(header)));
