@@ -5,13 +5,14 @@ import com.intellij.lang.ASTNode;
 import com.intellij.lang.folding.FoldingBuilderEx;
 import com.intellij.lang.folding.FoldingDescriptor;
 import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.project.DumbAware;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.util.PsiTreeUtil;
 import java.util.ArrayList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public final class EmlFoldingBuilder extends FoldingBuilderEx {
+public final class EmlFoldingBuilder extends FoldingBuilderEx implements DumbAware {
 
     private static final FoldingDescriptor[] EMPTY = new FoldingDescriptor[0];
 

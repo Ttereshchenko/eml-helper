@@ -9,10 +9,17 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.jetbrains.annotations.NotNull;
 
 @State(name = "EmlHeaderSettings", storages = @Storage("emlHeaderSettings.xml"))
 public final class EmlHeaderSettings implements PersistentStateComponent<EmlHeaderSettings.State> {
+    // Canonical header-name shape, shared with the settings UI. Names are spliced into the color
+    // scheme demo XML (<tag>…</tag>), so a hand-edited/corrupted state file must not smuggle in
+    // characters like '<' or '&'; loadState filters against this pattern.
+    static final Pattern VALID_HEADER_NAME = Pattern.compile("[A-Za-z0-9-]+");
+
     private State state = new State();
     private volatile Set<String> highlightedLookup = caseInsensitiveSet(state.highlightedHeaders);
     private volatile Set<String> nameOnlyLookup = caseInsensitiveSet(state.nameOnlyHeaders);
@@ -28,9 +35,18 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
 
     @Override
     public void loadState(@NotNull State state) {
+        state.highlightedHeaders = sanitizeHeaderNames(state.highlightedHeaders);
+        state.nameOnlyHeaders = sanitizeHeaderNames(state.nameOnlyHeaders);
         this.state = state;
         highlightedLookup = caseInsensitiveSet(state.highlightedHeaders);
         nameOnlyLookup = caseInsensitiveSet(state.nameOnlyHeaders);
+    }
+
+    private static List<String> sanitizeHeaderNames(List<String> headers) {
+        return headers.stream()
+                .filter(header ->
+                        header != null && VALID_HEADER_NAME.matcher(header).matches())
+                .collect(Collectors.toCollection(ArrayList::new));
     }
 
     public boolean isHighlightingEnabled() {
@@ -50,7 +66,7 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
     }
 
     public List<String> getHighlightedHeaders() {
-        return state.highlightedHeaders;
+        return List.copyOf(state.highlightedHeaders);
     }
 
     public void setHighlightedHeaders(List<String> headers) {
@@ -67,7 +83,7 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
     }
 
     public List<String> getNameOnlyHeaders() {
-        return state.nameOnlyHeaders;
+        return List.copyOf(state.nameOnlyHeaders);
     }
 
     public void setNameOnlyHeaders(List<String> headers) {
@@ -82,7 +98,9 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
     }
 
     public static final class State {
-        public boolean highlightingEnabled = true;
+        // volatile: EmlSyntaxHighlighter.getTokenHighlights reads this on a background lexer thread
+        // while the EDT can flip it from the settings dialog.
+        public volatile boolean highlightingEnabled = true;
         public boolean showAttachmentActions = true;
         public List<String> highlightedHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));
         public List<String> nameOnlyHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));

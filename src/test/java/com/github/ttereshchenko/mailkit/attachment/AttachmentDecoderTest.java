@@ -71,6 +71,15 @@ class AttachmentDecoderTest {
     }
 
     @Test
+    void decodeQuotedPrintablePreservesLiteralNonAsciiAboveLatin1() throws DecodingException {
+        // A literal (non-escaped) char > U+00FF in a QP stream — e.g. 'ł' (U+0142). The fallback
+        // must re-encode as UTF-8; ISO-8859-1 would have collapsed it to '?'.
+        var decoded = AttachmentDecoder.decode("ałb", ContentTransferEncoding.QUOTED_PRINTABLE);
+        assertArrayEquals("ałb".getBytes(StandardCharsets.UTF_8), decoded);
+        assertEquals("ałb", new String(decoded, StandardCharsets.UTF_8));
+    }
+
+    @Test
     void decodeQuotedPrintableThrowsForBadEscape() {
         assertThrows(
                 DecodingException.class,

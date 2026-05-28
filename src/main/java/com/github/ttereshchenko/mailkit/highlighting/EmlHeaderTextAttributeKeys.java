@@ -3,6 +3,7 @@ package com.github.ttereshchenko.mailkit.highlighting;
 import static com.intellij.openapi.editor.colors.TextAttributesKey.createTextAttributesKey;
 
 import com.intellij.openapi.editor.colors.TextAttributesKey;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -27,7 +28,7 @@ public final class EmlHeaderTextAttributeKeys {
     private EmlHeaderTextAttributeKeys() {}
 
     public static TextAttributesKey getKey(String headerName) {
-        String upper = headerName.toUpperCase();
+        String upper = headerName.toUpperCase(Locale.ROOT);
         TextAttributesKey predefined = PREDEFINED.get(upper);
         if (predefined != null) {
             return predefined;

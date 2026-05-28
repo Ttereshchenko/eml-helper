@@ -66,8 +66,10 @@ public final class AttachmentDecoder {
                 out.write(current);
                 index++;
             } else {
-                // Non-ASCII byte in QP stream — preserve as Latin-1 fallback.
-                var bytes = String.valueOf(current).getBytes(StandardCharsets.ISO_8859_1);
+                // Non-ASCII char in a QP stream (technically non-conformant, but real MUAs emit it).
+                // The IDE already decoded the file bytes to chars, so re-encode as UTF-8 to preserve
+                // code points > U+00FF — ISO-8859-1 would collapse them to '?'.
+                var bytes = String.valueOf(current).getBytes(StandardCharsets.UTF_8);
                 out.writeBytes(bytes);
                 index++;
             }

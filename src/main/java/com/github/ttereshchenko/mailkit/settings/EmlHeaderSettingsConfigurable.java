@@ -8,7 +8,6 @@ import com.intellij.util.ui.FormBuilder;
 import java.awt.Component;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
@@ -19,8 +18,6 @@ import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.Nullable;
 
 public final class EmlHeaderSettingsConfigurable implements Configurable {
-    private static final Pattern VALID_HEADER_NAME = Pattern.compile("[A-Za-z0-9-]+");
-
     private static final List<String> SUGGESTIONS = List.of(
             "From",
             "To",
@@ -156,7 +153,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
     }
 
     private static boolean isValidHeaderName(Component parent, String name) {
-        if (VALID_HEADER_NAME.matcher(name).matches()) {
+        if (EmlHeaderSettings.VALID_HEADER_NAME.matcher(name).matches()) {
             return true;
         }
         JOptionPane.showMessageDialog(
@@ -323,6 +320,15 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         if (table != null && table.isEditing()) {
             table.getCellEditor().stopCellEditing();
         }
+        // This Configurable instance is held by the long-lived application-level registry; null the
+        // Swing references so the closed dialog's component tree is released. createComponent rebuilds
+        // them all on reopen.
+        table = null;
+        tableModel = null;
+        tablePanel = null;
+        rootPanel = null;
+        highlightingEnabledCheckbox = null;
+        showAttachmentActionsCheckbox = null;
     }
 
     javax.swing.table.TableModel getTableModel() {

@@ -95,6 +95,20 @@ public class EmlFoldingBuilderTest extends BasePlatformTestCase {
         assertEquals(0, descriptors.length);
     }
 
+    public void testUnclosedBoundaryStillFolds() {
+        // A part opened with --sep but never closed (no --sep--). The boundary is still recognised
+        // as a BOUNDARY_START, so the part's content folds from after the opener to end of file.
+        String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" + "--sep\nPart content with no close\n";
+        PsiFile file = myFixture.configureByText("test.eml", content);
+        Document doc = myFixture.getEditor().getDocument();
+
+        FoldingDescriptor[] descriptors = foldingBuilder.buildFoldRegions(file, doc, false);
+        assertEquals(1, descriptors.length);
+        int sepLineEnd = content.indexOf("--sep\n") + "--sep\n".length();
+        assertEquals(sepLineEnd, descriptors[0].getRange().getStartOffset());
+        assertEquals(content.length(), descriptors[0].getRange().getEndOffset());
+    }
+
     public void testEmptyContentBetweenMarkers() {
         String content = "Content-Type: multipart/mixed; boundary=\"sep\"\n\n" + "--sep\n--sep--\n";
         PsiFile file = myFixture.configureByText("test.eml", content);
