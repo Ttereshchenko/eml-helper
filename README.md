@@ -70,15 +70,80 @@ The plugin zip will be in `build/distributions/`. Install it via **Settings > Pl
 
 ### Development
 
+All tasks run through the Gradle wrapper (`./gradlew`), so no local Gradle
+install is needed. A JDK 21 toolchain is auto-provisioned via Foojay on first
+run. Plugin source lives under `src/main/java/com/github/ttereshchenko/mailkit/`
+and tests under `src/test/java/`.
+
+**Run the plugin in a live IDE:**
+
 ```bash
-./gradlew runIde         # Launch a sandboxed IDE with the plugin loaded
-./gradlew compileJava    # Compile only
-./gradlew test           # Run tests
-./gradlew verifyPlugin   # Run JetBrains plugin verifier (compatibility check)
-./gradlew check          # Run tests + Checkstyle + Spotless
-./gradlew spotlessApply  # Auto-fix formatting and unused imports
+./gradlew runIde         # Launch a sandboxed IntelliJ with the plugin loaded
+```
+
+This opens a throwaway IDE instance with MailKit installed — the fastest way to
+try a change by hand. Open any `.eml` file inside it to exercise the plugin.
+
+**Build & test:**
+
+```bash
+./gradlew build          # Compile, run tests, and verify quality (the full gate)
+./gradlew compileJava    # Compile only — quick syntax/type check
+./gradlew test           # Run the test suite
+./gradlew buildPlugin    # Package the installable plugin .zip (build/distributions/)
+./gradlew verifyPlugin   # Run the JetBrains plugin verifier (API compatibility)
+```
+
+**Code quality & formatting:**
+
+```bash
+./gradlew check          # Tests + Checkstyle + Spotless
+./gradlew spotlessApply  # Auto-fix formatting and remove unused imports
 ./gradlew spotlessCheck  # Verify formatting without modifying files
 ```
+
+Run `./gradlew spotlessApply` before committing — `./gradlew build` fails on
+formatting or Checkstyle violations.
+
+### Publishing a release
+
+Releases are published by **pushing a `vX.Y.Z` tag** to `master`. That tag
+triggers the `release` GitHub Actions workflow, which builds, verifies, publishes
+the plugin to the JetBrains Marketplace, and creates the GitHub Release — no
+manual upload step. The `master` branch is protected, so the changelog change has
+to land through a pull request first.
+
+For version `X.Y.Z`:
+
+1. **Prepare the changelog** — move the `[Unreleased]` notes into a versioned
+   section:
+
+   ```bash
+   ./gradlew -PpluginVersion=X.Y.Z patchChangelog
+   ```
+
+2. **Push to a branch** — `master` is protected, so commit the `CHANGELOG.md`
+   change on a feature branch and push it:
+
+   ```bash
+   git checkout -b release/X.Y.Z
+   git commit -am "Prepare changelog for X.Y.Z"
+   git push -u origin release/X.Y.Z
+   ```
+
+3. **Open a PR and merge** it into `master` once green.
+
+4. **Tag `master`** — after the PR is merged, tag the updated `master` and push
+   the tag to kick off the release workflow:
+
+   ```bash
+   git checkout master && git pull
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+The tag's version (with the leading `v` stripped) becomes the published plugin
+version, so it must match the `patchChangelog` version from step 1.
 
 ## Usage
 

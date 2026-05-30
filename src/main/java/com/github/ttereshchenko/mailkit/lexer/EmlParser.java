@@ -31,7 +31,7 @@ final class EmlParser implements PsiParser {
             while (!builder.eof()) {
                 builder.advanceLexer();
             }
-            tail.done(EmlElementTypes.BODY_TEXT);
+            tail.collapse(EmlElementTypes.BODY_TEXT);
         }
         fileMarker.done(fileElementType);
         return builder.getTreeBuilt();
@@ -140,7 +140,7 @@ final class EmlParser implements PsiParser {
         while (!builder.eof() && !isBoundary(builder.getTokenType())) {
             builder.advanceLexer();
         }
-        marker.done(EmlElementTypes.BODY_TEXT);
+        marker.collapse(EmlElementTypes.BODY_TEXT);
     }
 
     private static void consumePreambleOrEpilogue(PsiBuilder builder) {
@@ -151,7 +151,7 @@ final class EmlParser implements PsiParser {
         while (!builder.eof() && !isBoundary(builder.getTokenType())) {
             builder.advanceLexer();
         }
-        marker.done(EmlElementTypes.BODY_TEXT);
+        marker.collapse(EmlElementTypes.BODY_TEXT);
     }
 
     private static boolean isBoundary(@Nullable IElementType type) {

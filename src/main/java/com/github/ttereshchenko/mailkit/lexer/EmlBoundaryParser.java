@@ -67,9 +67,15 @@ public final class EmlBoundaryParser {
             while (lineEnd < bufferLength && text.charAt(lineEnd) != '\n') {
                 lineEnd++;
             }
-            var line = text.subSequence(lineStart, lineEnd).toString().stripTrailing();
+            // Trailing-whitespace-stripped content end (excludes the '\n', any '\r' and trailing WSP),
+            // kept as an index so the line is never allocated. Equivalent to the old
+            // subSequence(...).stripTrailing(); contentEnd == lineStart means the line is blank.
+            var contentEnd = lineEnd;
+            while (contentEnd > lineStart && Character.isWhitespace(text.charAt(contentEnd - 1))) {
+                contentEnd--;
+            }
 
-            var match = matchBoundary(line, rawNames);
+            var match = matchBoundary(text, lineStart, contentEnd, rawNames);
             if (match != null) {
                 if (pendingContentTypeStart >= 0 && isRfc822Value(pendingContentTypeValue)) {
                     rfc822HeaderStartOffsets.add(pendingContentTypeStart);
@@ -80,7 +86,7 @@ public final class EmlBoundaryParser {
                 inHeader = !match.closing();
                 rfc822Pending = false;
             } else if (inHeader) {
-                if (line.isEmpty()) {
+                if (contentEnd == lineStart) {
                     if (pendingContentTypeStart >= 0) {
                         if (isRfc822Value(pendingContentTypeValue)) {
                             rfc822Pending = true;
@@ -95,6 +101,9 @@ public final class EmlBoundaryParser {
                         inHeader = false;
                     }
                 } else {
+                    // Genuine (short) header line. Body lines never reach this branch, so the
+                    // multi-MB base64 body is never materialized here.
+                    var line = text.subSequence(lineStart, contentEnd).toString();
                     var matcher = BOUNDARY_PATTERN.matcher(line);
                     while (matcher.find()) {
                         var quoted = matcher.group(1);
@@ -152,11 +161,17 @@ public final class EmlBoundaryParser {
                 Collections.unmodifiableSet(rfc822HeaderStartOffsets));
     }
 
-    private static @Nullable BoundaryMatch matchBoundary(String line, Set<String> knownNames) {
-        if (knownNames.isEmpty() || !line.startsWith("--")) {
+    private static @Nullable BoundaryMatch matchBoundary(
+            CharSequence text, int lineStart, int contentEnd, Set<String> knownNames) {
+        // Peek for the "--" prefix without allocating: a base64 body line starts with a base64 char,
+        // so it is rejected here in O(1) and never copied. Only a real "--…" line is materialized.
+        if (knownNames.isEmpty()
+                || contentEnd - lineStart < 2
+                || text.charAt(lineStart) != '-'
+                || text.charAt(lineStart + 1) != '-') {
             return null;
         }
-        var stripped = line.substring(2);
+        var stripped = text.subSequence(lineStart + 2, contentEnd).toString();
         if (stripped.length() >= 2 && stripped.endsWith("--")) {
             var endName = stripped.substring(0, stripped.length() - 2);
             if (knownNames.contains(endName)) {

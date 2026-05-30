@@ -35,6 +35,24 @@ class EmlBoundaryParserTest {
     }
 
     @Test
+    void largeBodyLineIsNeverMaterialized() {
+        // Regression: collect() used subSequence(...).stripTrailing() on EVERY line, so a multi-MB
+        // single-line base64 body was copied into a String on each call — thrashing GC and lagging
+        // typing. Drive collect() through a CharSequence that records the largest slice requested;
+        // the giant body line must never be materialized.
+        var prologue = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type: application/octet-stream\nContent-Transfer-Encoding: base64\n\n";
+        var hugeBodyLine = "A".repeat(1_000_000);
+        var recording = new RecordingCharSequence(prologue + hugeBodyLine + "\n--b--\n");
+
+        EmlBoundaryParser.collect(recording);
+
+        assertTrue(
+                recording.maxSliceLength() < 10_000,
+                "collect() must never copy the multi-MB body line; largest slice was " + recording.maxSliceLength());
+    }
+
+    @Test
     void emptyTextProducesEmptyParser() {
         var parser = EmlBoundaryParser.collect("");
         assertTrue(parser.isEmpty());

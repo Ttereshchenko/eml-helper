@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Performance
+
+- Typing in large `.eml` files no longer lags. Messages whose attachment is a
+  single multi-megabyte base64 line used to stutter on every keystroke because
+  each edit re-scanned and re-copied the entire attachment; editing such files
+  (and large message bodies in general) now stays responsive.
+
 ### Fixed
 
 - Quoted-printable decoding no longer corrupts literal (non-escaped) characters

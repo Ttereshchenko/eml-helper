@@ -68,15 +68,16 @@ public final class EmlLexer extends LexerBase {
         }
         tokenEnd = end;
 
-        var line = buffer.subSequence(tokenStart, tokenEnd).toString().stripTrailing();
-
+        // The line text is only needed to tell blank/continuation/header lines apart, which a few
+        // char peeks decide. Never materialize the line as a String — a multi-MB single-line base64
+        // body would otherwise be copied on every keystroke (EDT relex + PSI reparse), thrashing GC.
         var boundaryType = classifyBoundary(tokenStart);
         if (boundaryType != null) {
             tokenType = boundaryType;
             inHeaderMode = (boundaryType == EmlTokenTypes.BOUNDARY_START);
             rfc822InCurrentBlock = false;
         } else if (inHeaderMode) {
-            if (line.isEmpty()) {
+            if (isBlankLine(tokenStart, tokenEnd)) {
                 tokenType = EmlTokenTypes.BLANK_LINE;
                 if (rfc822InCurrentBlock) {
                     // Body of a message/rfc822 part IS another RFC 822 message — stay in header mode
@@ -85,17 +86,32 @@ public final class EmlLexer extends LexerBase {
                 } else {
                     inHeaderMode = false;
                 }
-            } else if (line.charAt(0) == ' ' || line.charAt(0) == '\t') {
-                tokenType = EmlTokenTypes.HEADER_CONT_LINE;
             } else {
-                tokenType = EmlTokenTypes.HEADER_LINE;
-                if (!rfc822InCurrentBlock && boundaries.isRfc822HeaderStart(tokenStart)) {
-                    rfc822InCurrentBlock = true;
+                var firstChar = buffer.charAt(tokenStart);
+                if (firstChar == ' ' || firstChar == '\t') {
+                    tokenType = EmlTokenTypes.HEADER_CONT_LINE;
+                } else {
+                    tokenType = EmlTokenTypes.HEADER_LINE;
+                    if (!rfc822InCurrentBlock && boundaries.isRfc822HeaderStart(tokenStart)) {
+                        rfc822InCurrentBlock = true;
+                    }
                 }
             }
         } else {
             tokenType = EmlTokenTypes.BODY_LINE;
         }
+    }
+
+    // A line is blank when every character up to its newline is whitespace — equivalent to the old
+    // `subSequence(...).toString().stripTrailing().isEmpty()` but without allocating. Returns at the
+    // first non-whitespace char, so even a megabyte-long header-mode line costs O(1) in practice.
+    private boolean isBlankLine(int start, int end) {
+        for (var index = start; index < end; index++) {
+            if (!Character.isWhitespace(buffer.charAt(index))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private @Nullable IElementType classifyBoundary(int tokenStart) {
