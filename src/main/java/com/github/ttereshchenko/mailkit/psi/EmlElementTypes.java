@@ -8,7 +8,9 @@ public final class EmlElementTypes {
     public static final IElementType HEADER_BLOCK = new IElementType("EML_HEADER_BLOCK", EmlLanguage.INSTANCE);
     public static final IElementType MIME_PART = new IElementType("EML_MIME_PART", EmlLanguage.INSTANCE);
     public static final IElementType NESTED_MESSAGE = new IElementType("EML_NESTED_MESSAGE", EmlLanguage.INSTANCE);
-    public static final IElementType BODY_TEXT = new IElementType("EML_BODY_TEXT", EmlLanguage.INSTANCE);
+    // Reparseable chameleon: a leaf part's body collapses into this single lazy node so the AST node
+    // count stays bounded and in-body edits reparse only the body. See EmlBodyContentType.
+    public static final IElementType BODY_TEXT = new EmlBodyContentType();
 
     private EmlElementTypes() {}
 }

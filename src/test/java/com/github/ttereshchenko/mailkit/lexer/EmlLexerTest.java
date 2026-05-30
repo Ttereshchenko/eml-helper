@@ -775,6 +775,52 @@ class EmlLexerTest {
                 "Cache must invalidate on a new buffer; got " + boundaryTexts);
     }
 
+    @Test
+    void testLargeBodyLineIsNeverMaterializedDuringLexing() {
+        // Regression: advance() built subSequence(...).toString().stripTrailing() for EVERY token,
+        // copying a multi-MB single-line base64 body on each keystroke (EDT relex + PSI reparse).
+        // Lexing must now classify lines via cheap peeks and never materialize the giant body line.
+        var prologue = "Content-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "--b\nContent-Type: application/octet-stream\nContent-Transfer-Encoding: base64\n\n";
+        var hugeBodyLine = "A".repeat(1_000_000);
+        var recording = new RecordingCharSequence(prologue + hugeBodyLine + "\n--b--\n");
+
+        var lexer = new EmlLexer();
+        lexer.start(recording, 0, recording.length(), 0);
+        var sawHugeBodyLine = false;
+        while (lexer.getTokenType() != null) {
+            if (lexer.getTokenType() == EmlTokenTypes.BODY_LINE
+                    && lexer.getTokenEnd() - lexer.getTokenStart() > 500_000) {
+                sawHugeBodyLine = true;
+            }
+            lexer.advance();
+        }
+
+        assertTrue(sawHugeBodyLine, "the base64 attachment should lex as one large BODY_LINE token");
+        assertTrue(
+                recording.maxSliceLength() < 10_000,
+                "lexing must never copy the multi-MB body line; largest slice was " + recording.maxSliceLength());
+    }
+
+    @Test
+    void testLargeBase64AttachmentSampleTokenizes() throws IOException {
+        // Manual-verification fixture (open in runIde): a multipart message whose attachment body is
+        // one ~100 KB base64 line. That line must lex as a single BODY_LINE between the part headers
+        // and the closing boundary — the shape that used to lag typing.
+        String content = Files.readString(Path.of("src/test/resources/samples/eml/edge/large_base64_attachment.eml"));
+        List<TokenInfo> tokens = tokenize(content);
+        var bigBodyLine = tokens.stream()
+                .filter(token ->
+                        token.type() == EmlTokenTypes.BODY_LINE && token.text().length() > 50_000)
+                .findFirst()
+                .orElseThrow();
+        assertSame(EmlTokenTypes.BODY_LINE, bigBodyLine.type());
+        assertTrue(
+                tokens.stream().anyMatch(token -> token.type() == EmlTokenTypes.BOUNDARY_START),
+                "should have boundary start markers");
+        assertSame(EmlTokenTypes.BOUNDARY_END, tokens.getLast().type());
+    }
+
     private static List<TokenInfo> drain(EmlLexer lexer) {
         var tokens = new ArrayList<TokenInfo>();
         while (lexer.getTokenType() != null) {
