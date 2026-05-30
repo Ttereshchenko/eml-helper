@@ -103,6 +103,45 @@ To get started:
 2. Open the project root in your terminal
 3. Run `claude` — the agent will load `AGENTS.md` and all sub-files automatically
 
+### Semantic code tools via Serena (optional)
+
+[Serena](https://github.com/oraios/serena) is an MCP server that gives the agent
+IDE-grade, symbol-level tools (find symbol, find references, type hierarchy, safe
+rename, project diagnostics) backed by a language server. On a Java codebase this
+makes navigation more accurate and edits more token-efficient than plain text
+search. It is optional — the agent works without it.
+
+Serena is run here in **HTTP server mode**: one long-lived process that any client
+(Claude Code, Antigravity) connects to over a local port. Serena is stateful and
+binds to **one active project at a time**, so the server below is pinned to this
+repository.
+
+**Prerequisite:** [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
+
+1. Start the Serena server (leave it running in its own terminal):
+
+   ```bash
+   uvx --from git+https://github.com/oraios/serena serena start-mcp-server \
+     --transport streamable-http --port 9121 \
+     --context ide-assistant \
+     --project $(pwd)
+   ```
+
+   It serves the MCP endpoint at `http://localhost:9121/mcp`. Stop it with
+   `Ctrl-C` when you're done (unlike stdio servers, it does not exit with the
+   client). The first launch downloads the Java language server and indexes the
+   project, which can take a minute.
+
+2. **Connect Claude Code** — register the running server as an HTTP MCP server:
+
+   ```bash
+   claude mcp add --transport http serena http://localhost:9121/mcp
+   ```
+
+   Verify with `claude mcp list`, then restart Claude Code.
+
+Serena writes a `.serena/` cache directory in the project root; it is safe to git-ignore.
+
 ## Reporting Issues
 
 Detailed bug reports help us diagnose and fix problems faster. When filing an issue, providing the context below lets us reproduce the problem locally and cuts down the back-and-forth.
