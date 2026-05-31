@@ -9,6 +9,7 @@ import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.fileEditor.FileEditorManager;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
@@ -56,11 +57,8 @@ public final class ConvertMsgToEmlAction extends AnAction {
             public void run(@NotNull ProgressIndicator indicator) {
                 indicator.setIndeterminate(true);
                 indicator.setText("Reading " + source.getName());
-                String eml;
-                try (var stream = source.getInputStream()) {
-                    eml = MsgToEmlConverter.convert(stream);
-                } catch (IOException | ChunkNotFoundException failure) {
-                    notifyError(project, source.getName(), failure.getMessage());
+                var eml = convertOrNotify(project, source);
+                if (eml == null) {
                     return;
                 }
                 indicator.checkCanceled();
@@ -68,6 +66,22 @@ public final class ConvertMsgToEmlAction extends AnAction {
                 writeAndOpen(project, source, targetName, eml.getBytes(StandardCharsets.US_ASCII));
             }
         });
+    }
+
+    static String convertOrNotify(Project project, VirtualFile source) {
+        try (var stream = source.getInputStream()) {
+            return MsgToEmlConverter.convert(stream);
+        } catch (ProcessCanceledException canceled) {
+            throw canceled;
+        } catch (IOException | ChunkNotFoundException | RuntimeException failure) {
+            notifyError(project, source.getName(), describeFailure(failure));
+            return null;
+        }
+    }
+
+    private static String describeFailure(Throwable failure) {
+        var message = failure.getMessage();
+        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
     }
 
     private static void writeAndOpen(Project project, VirtualFile source, String targetName, byte[] bytes) {

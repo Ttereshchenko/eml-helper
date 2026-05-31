@@ -11,16 +11,17 @@
           <li>Name-only highlighting mode (highlight header name, not value)</li>
           <li>Global highlighting toggle under Settings → Editor → MailKit</li>
           <li>Add custom headers to the highlight list</li>
-          <li>Save attachments to disk or open them with the system app — gutter icon and editor context menu on any qualifying MIME part, with base64 / quoted-printable / 7bit / 8bit / binary decoding</li>
+          <li>Save attachments to disk or open them with the system app — gutter icon and editor context menu on any qualifying MIME part, with base64 / quoted-printable / 7bit / 8bit / binary decoding, and a confirmation prompt before opening an executable or active-content attachment</li>
           <li>EML inspections — RFC 5322 / MIME violations are flagged inline with Alt+Enter quick-fixes (missing required headers, unterminated MIME boundaries, base64 alphabet errors, charset mismatches, unparseable dates, and more)</li>
           <li>MSG → EML conversion — right-click an Outlook <code>.msg</code> file in the Project view to convert it to a standards-compliant <code>.eml</code> with header mapping, body selection, attachment handling, and recursive embedded-message support</li>
-          <li>Send EML — swaks-equivalent embedded client (STARTTLS / TLS-on-connect, SASL incl. SCRAM-SHA-256, ESMTP extensions, XCLIENT, HAProxy PROXY v1/v2) with per-send envelope override, live tool-window transcript, and PasswordSafe-backed profiles under Settings → Tools → MailKit SMTP</li>
+          <li>Send EML — swaks-equivalent embedded client (STARTTLS / TLS-on-connect, SASL incl. SCRAM-SHA-256, ESMTP extensions, XCLIENT, HAProxy PROXY v1/v2) with per-send envelope override, a warning before sending over an unencrypted or downgradeable connection, live tool-window transcript, and PasswordSafe-backed profiles under Settings → Tools → MailKit SMTP</li>
           <li>SMTP profile editor surfaces the full config grouping — Connection · Security/TLS · Auth · ESMTP extensions · Transport/Network · Relay framing (PROXY v1/v2 + XCLIENT) · Envelope (<code>From</code> / <code>To</code> defaults) — with mode-driven reveals for TLS, Auth, ESMTP, PROXY, and XCLIENT</li>
         </ul>
         <p><a href="https://github.com/ttereshchenko/mailkit">Source Code</a> | <a href="https://www.buymeacoffee.com/ttereshchenko">Donation</a></p>
     ]]></description>
-    <!-- idea-version (since/until-build) is injected by the IntelliJ Platform Gradle Plugin from
-         intellijPlatform.pluginConfiguration.ideaVersion in build.gradle. -->
+    <!-- idea-version (since/until-build) is injected by the IntelliJ Platform Gradle Plugin,
+         derived from the target platform dependency (intellijIdea('2026.1') in build.gradle).
+         There is no explicit intellijPlatform.pluginConfiguration.ideaVersion block. -->
     <depends>com.intellij.modules.platform</depends>
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="EML"

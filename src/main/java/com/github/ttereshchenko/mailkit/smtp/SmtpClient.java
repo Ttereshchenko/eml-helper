@@ -63,11 +63,15 @@ public final class SmtpClient {
         var transcript = new SmtpTranscript(listener);
         var session = new SmtpSession();
         var startNanos = System.nanoTime();
-        try (var connection = new Connection()) {
+        try (var connection = new Connection();
+                var cancelWatch = new CancellationWatch(connection, cancel)) {
             return runTransaction(connection, config, envelope, source, cancel, transcript, session, startNanos);
         } catch (SmtpException smtpFailure) {
             throw smtpFailure.withTranscript(transcript);
         } catch (SocketTimeoutException timeout) {
+            if (cancel.isCancelled()) {
+                throw cancelled(session, transcript);
+            }
             throw new SmtpException(
                             SmtpException.Kind.TIMEOUT,
                             session.currentPhase(),
@@ -75,10 +79,20 @@ public final class SmtpClient {
                             timeout)
                     .withTranscript(transcript);
         } catch (IOException ioFailure) {
+            // A socket closed by the cancellation watcher unblocks the in-flight read here; surface
+            // it as a clean cancellation rather than a generic I/O error.
+            if (cancel.isCancelled()) {
+                throw cancelled(session, transcript);
+            }
             throw new SmtpException(
                             SmtpException.Kind.IO_ERROR, session.currentPhase(), ioFailure.getMessage(), ioFailure)
                     .withTranscript(transcript);
         }
+    }
+
+    private static SmtpException cancelled(SmtpSession session, SmtpTranscript transcript) {
+        return new SmtpException(SmtpException.Kind.CANCELLED, session.currentPhase(), "cancelled by caller")
+                .withTranscript(transcript);
     }
 
     private SendResult runTransaction(
@@ -918,6 +932,13 @@ public final class SmtpClient {
 
     private void writeCommand(OutputStream output, SmtpTranscript transcript, Phase phase, String line)
             throws IOException {
+        if (line.indexOf('\r') >= 0 || line.indexOf('\n') >= 0) {
+            // Defense in depth against SMTP command injection: a command is a single CRLF-terminated
+            // line (rfc5321 §4.1.1). Envelope and config inputs are validated upstream, so reaching
+            // here with an embedded line break means one slipped through — refuse to write it rather
+            // than smuggle additional commands onto the wire.
+            throw new IOException("refusing to send an SMTP command with an embedded line break in phase " + phase);
+        }
         var bytes = (line + "\r\n").getBytes(StandardCharsets.UTF_8);
         output.write(bytes);
         output.flush();
@@ -998,7 +1019,9 @@ public final class SmtpClient {
     /** Mutable holder so STARTTLS can swap the underlying socket without losing the call stack. */
     static final class Connection implements AutoCloseable {
 
-        private Socket socket;
+        // volatile: the cancellation watcher reads this from another thread to close the socket,
+        // and runTransaction may swap it during a STARTTLS upgrade.
+        private volatile Socket socket;
         private OutputStream output;
         private BufferedReader reader;
 
@@ -1030,6 +1053,63 @@ public final class SmtpClient {
         public void close() throws IOException {
             if (socket != null && !socket.isClosed()) {
                 socket.close();
+            }
+        }
+    }
+
+    /**
+     * Bridges the polled {@link CancellationToken} to the blocking socket. The token is only
+     * consulted between phases, so a read parked on the socket's {@code SO_TIMEOUT} (up to the full
+     * configured timeout, default 60s) would otherwise ignore a cancel request until it returns.
+     * This daemon watcher polls the token on a short interval and, on the first observed cancel,
+     * closes the socket — unblocking the in-flight read/write, which then surfaces as a CANCELLED
+     * result. For {@link CancellationToken#NEVER} no thread is started.
+     */
+    private static final class CancellationWatch implements AutoCloseable {
+
+        private static final long POLL_INTERVAL_MILLIS = 100L;
+
+        private final Thread thread;
+        private volatile boolean stopped;
+
+        CancellationWatch(Connection connection, CancellationToken cancel) {
+            if (cancel == CancellationToken.NEVER) {
+                this.thread = null;
+                return;
+            }
+            this.thread = new Thread(() -> watch(connection, cancel), "mailkit-smtp-cancel-watch");
+            this.thread.setDaemon(true);
+            this.thread.start();
+        }
+
+        private void watch(Connection connection, CancellationToken cancel) {
+            while (!stopped) {
+                if (cancel.isCancelled()) {
+                    closeQuietly(connection);
+                    return;
+                }
+                try {
+                    Thread.sleep(POLL_INTERVAL_MILLIS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+
+        private static void closeQuietly(Connection connection) {
+            try {
+                connection.close();
+            } catch (IOException ignored) {
+                // already torn down — nothing to do
+            }
+        }
+
+        @Override
+        public void close() {
+            stopped = true;
+            if (thread != null) {
+                thread.interrupt();
             }
         }
     }

@@ -27,6 +27,8 @@ public record SmtpEnvelope(String mailFrom, List<Recipient> recipients, String e
     public record Recipient(String address, List<DsnNotify> notifyOn, String orcpt) {
         public Recipient {
             Objects.requireNonNull(address, "address");
+            requireNoLineBreaks(address, "recipient address");
+            requireNoLineBreaks(orcpt, "ORCPT");
             notifyOn = notifyOn == null ? List.of() : List.copyOf(notifyOn);
         }
 
@@ -38,6 +40,8 @@ public record SmtpEnvelope(String mailFrom, List<Recipient> recipients, String e
     public SmtpEnvelope {
         Objects.requireNonNull(mailFrom, "mailFrom");
         Objects.requireNonNull(recipients, "recipients");
+        requireNoLineBreaks(mailFrom, "MAIL FROM");
+        requireNoLineBreaks(envid, "ENVID");
         if (recipients.isEmpty()) {
             throw new IllegalArgumentException("recipients must not be empty");
         }
@@ -51,5 +55,24 @@ public record SmtpEnvelope(String mailFrom, List<Recipient> recipients, String e
             list.add(Recipient.of(address));
         }
         return new SmtpEnvelope(mailFrom, list, null, RetMode.DEFAULT);
+    }
+
+    /**
+     * Rejects CR, LF, and NUL in any value that is later written onto an SMTP command line. SMTP
+     * commands are single lines terminated by CRLF (rfc5321 §4.1.1, §2.3.8), so an embedded line
+     * break in an envelope address or DSN parameter would let extra commands be smuggled onto the
+     * wire (SMTP command injection). {@code null} is permitted — these fields are optional.
+     */
+    static void requireNoLineBreaks(String value, String field) {
+        if (value == null) {
+            return;
+        }
+        for (var index = 0; index < value.length(); index++) {
+            var character = value.charAt(index);
+            if (character == '\r' || character == '\n' || character == '\0') {
+                throw new IllegalArgumentException(
+                        field + " must not contain a line break or NUL (SMTP command injection) at index " + index);
+            }
+        }
     }
 }

@@ -15,6 +15,12 @@ import org.jetbrains.annotations.Nullable;
 
 final class EmlParser implements PsiParser {
 
+    // Hard cap on MIME nesting depth (multipart parts and message/rfc822 chains). Real messages
+    // nest only a handful of levels; a crafted message with thousands of nested parts would
+    // otherwise recurse until the parser stack overflows. Past the cap, the remaining content is
+    // consumed as flat body text so parsing still completes (and stays well-formed) on such input.
+    private static final int MAX_NESTING_DEPTH = 100;
+
     private final IFileElementType fileElementType;
 
     EmlParser(IFileElementType fileElementType) {
@@ -42,7 +48,7 @@ final class EmlParser implements PsiParser {
         if (builder.getTokenType() == EmlTokenTypes.BLANK_LINE) {
             builder.advanceLexer();
         }
-        parseBody(builder, contentTypeValue, null);
+        parseBody(builder, contentTypeValue, null, 0);
     }
 
     private static @Nullable String parseHeaderBlock(PsiBuilder builder) {
@@ -83,23 +89,30 @@ final class EmlParser implements PsiParser {
     }
 
     private static void parseBody(
-            PsiBuilder builder, @Nullable String contentTypeValue, @Nullable String enclosingBoundary) {
+            PsiBuilder builder, @Nullable String contentTypeValue, @Nullable String enclosingBoundary, int depth) {
+        if (depth > MAX_NESTING_DEPTH) {
+            // Stop descending into pathologically nested MIME so a crafted message cannot overflow
+            // the parser stack. Remaining tokens are consumed as flat body text here; the top-level
+            // parse() also collapses any trailing tokens into BODY_TEXT, so the tree stays valid.
+            parsePlainBodyText(builder);
+            return;
+        }
         if (EmlHeaderParsing.isMultipart(contentTypeValue)) {
             var boundary = EmlHeaderParsing.mediaTypeParam(contentTypeValue, "boundary");
             if (boundary != null) {
-                parseMultipartBody(builder, boundary, enclosingBoundary);
+                parseMultipartBody(builder, boundary, enclosingBoundary, depth);
                 return;
             }
         }
         if (EmlHeaderParsing.isMessageRfc822(contentTypeValue)) {
-            parseNestedMessage(builder, enclosingBoundary);
+            parseNestedMessage(builder, enclosingBoundary, depth);
             return;
         }
         parsePlainBodyText(builder);
     }
 
     private static void parseMultipartBody(
-            PsiBuilder builder, @NotNull String boundary, @Nullable String enclosingBoundary) {
+            PsiBuilder builder, @NotNull String boundary, @Nullable String enclosingBoundary, int depth) {
         consumePreambleOrEpilogue(builder);
 
         while (builder.getTokenType() == EmlTokenTypes.BOUNDARY_START
@@ -110,7 +123,7 @@ final class EmlParser implements PsiParser {
             if (builder.getTokenType() == EmlTokenTypes.BLANK_LINE) {
                 builder.advanceLexer();
             }
-            parseBody(builder, partContentType, boundary);
+            parseBody(builder, partContentType, boundary, depth + 1);
             partMarker.done(EmlElementTypes.MIME_PART);
         }
 
@@ -122,13 +135,13 @@ final class EmlParser implements PsiParser {
         consumePreambleOrEpilogue(builder);
     }
 
-    private static void parseNestedMessage(PsiBuilder builder, @Nullable String enclosingBoundary) {
+    private static void parseNestedMessage(PsiBuilder builder, @Nullable String enclosingBoundary, int depth) {
         var marker = builder.mark();
         var contentTypeValue = parseHeaderBlock(builder);
         if (builder.getTokenType() == EmlTokenTypes.BLANK_LINE) {
             builder.advanceLexer();
         }
-        parseBody(builder, contentTypeValue, enclosingBoundary);
+        parseBody(builder, contentTypeValue, enclosingBoundary, depth + 1);
         marker.done(EmlElementTypes.NESTED_MESSAGE);
     }
 

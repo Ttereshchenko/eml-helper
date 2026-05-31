@@ -137,4 +137,62 @@ public class EmlParserTest extends BasePlatformTestCase {
         var nested = PsiTreeUtil.findChildOfType(file, EmlNestedMessage.class);
         assertNull(nested);
     }
+
+    public void testDeeplyNestedMultipartIsDepthCapped() {
+        // F2 regression: each multipart nesting level used to recurse with no bound, risking a
+        // StackOverflowError on a crafted message. The parser now caps nesting depth and treats
+        // anything deeper as flat body text. With 400 nested levels the OLD parser structured all
+        // 400 parts; the cap keeps the structured-part count far below the input depth. (We assert
+        // the cap rather than a raw overflow because the test JVM's stack may absorb deep recursion.)
+        var levels = 400;
+        var file = parseFromText(buildNestedMultipart(levels));
+        var parts = PsiTreeUtil.findChildrenOfType(file, EmlMimePart.class);
+        assertFalse(parts.isEmpty());
+        assertTrue("nesting must be capped well below the " + levels + " input levels", parts.size() < 200);
+    }
+
+    public void testDeeplyNestedMessageRfc822IsDepthCapped() {
+        // Same cap on the message/rfc822 recursion path: the OLD parser nested all 400 messages.
+        var levels = 400;
+        var file = parseFromText(buildNestedRfc822(levels));
+        var nested = PsiTreeUtil.findChildrenOfType(file, EmlNestedMessage.class);
+        assertFalse(nested.isEmpty());
+        assertTrue("nested-message depth must be capped well below " + levels, nested.size() < 200);
+    }
+
+    public void testDeeplyNestedMultipartSampleParses() throws IOException {
+        var content = Files.readString(Path.of("src/test/resources/samples/eml/edge/deeply_nested_multipart.eml"));
+        var file = parseFromText(content);
+        // The sample nests past the parser's depth cap; it must parse without error and still yield
+        // the structured MIME parts produced up to the cap.
+        var parts = PsiTreeUtil.findChildrenOfType(file, EmlMimePart.class);
+        assertFalse(parts.isEmpty());
+    }
+
+    private static String buildNestedMultipart(int levels) {
+        var builder = new StringBuilder();
+        for (var level = 0; level < levels; level++) {
+            builder.append("Content-Type: multipart/mixed; boundary=\"b")
+                    .append(level)
+                    .append("\"\n\n--b")
+                    .append(level)
+                    .append('\n');
+        }
+        builder.append("Content-Type: text/plain\n\nleaf\n");
+        for (var level = levels - 1; level >= 0; level--) {
+            builder.append("--b").append(level).append("--\n");
+        }
+        return builder.toString();
+    }
+
+    private static String buildNestedRfc822(int levels) {
+        var builder = new StringBuilder();
+        for (var level = 0; level < levels; level++) {
+            builder.append("Content-Type: message/rfc822\nSubject: level ")
+                    .append(level)
+                    .append("\n\n");
+        }
+        builder.append("Subject: leaf\n\nleaf body\n");
+        return builder.toString();
+    }
 }

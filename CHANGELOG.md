@@ -8,9 +8,59 @@
   single multi-megabyte base64 line used to stutter on every keystroke because
   each edit re-scanned and re-copied the entire attachment; editing such files
   (and large message bodies in general) now stays responsive.
+- *Save Attachment As…* and *Open Attachment with System App* now decode straight
+  to the target file instead of building the whole decoded payload in memory
+  first, so saving or opening a very large attachment uses far less memory. The
+  *Send EML* dialog likewise reads only the first part of the source file when
+  filling in its From / Subject preview, so opening it on a huge `.eml` no longer
+  pulls the entire message into memory on the UI thread.
 
 ### Fixed
 
+- The *Send EML* dialog's *Password (one-time)* field is now genuinely one-time:
+  the password you type is used for that single send only and is no longer written
+  to stored credentials, where it previously overwrote the profile's saved
+  password.
+- An SMTP server can no longer pin the *Send EML* thread in a runaway password
+  computation. A hostile or buggy server advertising an absurd SCRAM iteration
+  count is now rejected up front instead of burning CPU on key derivation.
+
+- The *Verify CA chain* checkbox in an SMTP profile now actually takes effect.
+  Unchecking it previously did nothing — the server certificate chain was still
+  validated against the system trust store — so the control was misleading.
+  Clearing it now relaxes CA-chain validation as intended, while hostname
+  verification stays governed by its own setting.
+- Converting a malformed or corrupt Outlook `.msg` file now shows a clean
+  "Could not convert…" notification instead of an IDE "internal error" report.
+  Failures that previously slipped through — a truncated or hand-tampered file,
+  or a message whose address carries non-ASCII text — are now reported the same
+  way as any other conversion error.
+- The *Send EML* dialog no longer lets an envelope address smuggle extra SMTP
+  commands onto the connection. An *Envelope From* / *To* (or DSN ORCPT / ENVID)
+  value containing a carriage return or line feed is now rejected up front with a
+  clear error, instead of being written verbatim into the `MAIL FROM:` /
+  `RCPT TO:` line where a server would interpret the trailing text as additional
+  commands.
+- Opening or editing an `.eml` whose MIME parts are nested thousands of levels
+  deep (deeply chained `multipart/*` or `message/rfc822`) no longer risks
+  overflowing the parser and erroring out. Nesting is now capped at a generous
+  depth and anything beyond it is shown as plain body text, so even a
+  hand-crafted, pathologically nested message stays editable.
+- *Open Attachment with System App* now asks for confirmation before handing an
+  executable, script, or other active-content file (for example
+  `invoice.pdf.exe` or a `.html` attachment) to the operating system. Ordinary
+  documents such as PDFs and images still open without a prompt.
+- The *Send EML* dialog now warns before sending over a connection that is not
+  guaranteed to be encrypted — TLS mode *None* (cleartext) or an *optional*
+  STARTTLS mode a server can silently downgrade — so an unprotected send is a
+  deliberate choice rather than a surprise. Profiles using required STARTTLS or
+  TLS-on-connect send without a prompt.
+- Cancelling an SMTP send now takes effect immediately, even while the client is
+  blocked waiting on the server, instead of only after the connection timeout
+  elapses.
+- Converting an Outlook `.msg` whose RTF-only body carries an out-of-range
+  Unicode escape no longer fails with an IDE internal error; the invalid
+  character is skipped and conversion completes.
 - Quoted-printable decoding no longer corrupts literal (non-escaped) characters
   above `U+00FF` in an attachment body. The non-ASCII fallback re-encoded each
   char with ISO-8859-1, which collapses anything past Latin-1 to `?`; it now

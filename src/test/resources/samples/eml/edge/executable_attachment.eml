@@ -1,0 +1,18 @@
+From: sender@example.com
+To: recipient@example.com
+Subject: Quarterly report (please open)
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary-demo"
+
+--boundary-demo
+Content-Type: text/plain; charset=UTF-8
+
+Please find the quarterly report attached.
+
+--boundary-demo
+Content-Type: application/octet-stream
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="invoice.pdf.exe"
+
+TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAA=
+--boundary-demo--
