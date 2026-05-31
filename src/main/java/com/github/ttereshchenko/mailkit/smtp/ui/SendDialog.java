@@ -3,10 +3,13 @@ package com.github.ttereshchenko.mailkit.smtp.ui;
 import com.github.ttereshchenko.mailkit.smtp.Phase;
 import com.github.ttereshchenko.mailkit.smtp.SmtpConfig;
 import com.github.ttereshchenko.mailkit.smtp.SmtpEnvelope;
+import com.github.ttereshchenko.mailkit.smtp.auth.AuthConfig;
+import com.github.ttereshchenko.mailkit.smtp.auth.AuthCredentials;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpCredentialStore;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfile;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfileService;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfiles;
+import com.github.ttereshchenko.mailkit.smtp.tls.TlsConfig;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectUtil;
@@ -41,6 +44,14 @@ import org.jetbrains.annotations.Nullable;
  * {@code SendDialogTest} asserts this.
  */
 public final class SendDialog extends DialogWrapper {
+
+    /**
+     * Upper bound on how many leading bytes {@link #parseEmlHeaders()} reads to pull the From /
+     * Subject preview. Headers precede the body, so a bounded prefix is enough — and because this
+     * runs on the EDT during dialog construction, we must never pull a whole multi-megabyte {@code
+     * .eml} into memory just to read its top few lines.
+     */
+    private static final int MAX_HEADER_SCAN_BYTES = 64 * 1024;
 
     private final Project project;
     private final VirtualFile sourceFile;
@@ -113,11 +124,38 @@ public final class SendDialog extends DialogWrapper {
     @Override
     protected void doOKAction() {
         try {
-            committedRequest = buildSendRequest();
+            var request = buildSendRequest();
+            if (!confirmInsecureTransport(request.config())) {
+                return;
+            }
+            committedRequest = request;
             super.doOKAction();
         } catch (ConfigurationException failure) {
             Messages.showErrorDialog(getContentPanel(), failure.getLocalizedMessage(), "Invalid Send Request");
         }
+    }
+
+    /**
+     * Warns before sending over a channel that is not guaranteed-encrypted — TLS mode NONE
+     * (cleartext) or an OPTIONAL STARTTLS mode that can be stripped to cleartext. Returns
+     * {@code true} when the send should proceed.
+     */
+    private boolean confirmInsecureTransport(SmtpConfig config) {
+        if (config.tls().guaranteesEncryption()) {
+            return true;
+        }
+        var detail = config.tls().mode() == TlsConfig.Mode.NONE
+                ? "without TLS — the message and envelope cross the network in cleartext"
+                : "with optional STARTTLS, which an active attacker can strip to force cleartext";
+        var answer = Messages.showYesNoDialog(
+                project,
+                "This profile will connect to " + config.host() + ":" + config.port() + " " + detail
+                        + ".\n\nSend anyway?",
+                "Insecure SMTP Transport",
+                "Send Anyway",
+                "Cancel",
+                Messages.getWarningIcon());
+        return answer == Messages.YES;
     }
 
     public SendRequest getCommittedRequest() {
@@ -162,7 +200,7 @@ public final class SendDialog extends DialogWrapper {
         envelopeToField.setText(selected.findDefaultHeaderValue("To"));
     }
 
-    private SendRequest buildSendRequest() throws ConfigurationException {
+    SendRequest buildSendRequest() throws ConfigurationException {
         var selected = (SmtpProfile) profilePicker.getSelectedItem();
         if (selected == null) {
             throw new ConfigurationException("Pick a profile or add one in Settings → Tools → MailKit SMTP.");
@@ -181,11 +219,11 @@ public final class SendDialog extends DialogWrapper {
         if (recipients.isEmpty()) {
             throw new ConfigurationException("At least one recipient (To) is required.");
         }
-        var envelope = SmtpEnvelope.of(from, recipients.toArray(new String[0]));
-
-        var typedPassword = new String(passwordField.getPassword());
-        if (!typedPassword.isEmpty()) {
-            credentialStore.setPassword(selected.identifier, typedPassword);
+        SmtpEnvelope envelope;
+        try {
+            envelope = SmtpEnvelope.of(from, recipients.toArray(new String[0]));
+        } catch (IllegalArgumentException invalid) {
+            throw new ConfigurationException(invalid.getMessage());
         }
 
         var stopChoice = (StopAfterChoice) stopAfterPicker.getSelectedItem();
@@ -212,7 +250,39 @@ public final class SendDialog extends DialogWrapper {
         } else if (portOverride != selected.port) {
             config = config.withPort(portOverride);
         }
+
+        // The "Password (one-time)" field is exactly that: used for this send only, never persisted
+        // to PasswordSafe. Override the auth credentials with a transient supplier instead.
+        var oneTimePassword = passwordField.getPassword();
+        if (oneTimePassword.length > 0) {
+            config = applyOneTimePassword(config, oneTimePassword);
+        }
         return new SendRequest(config, envelope, sourceFile);
+    }
+
+    /**
+     * Returns a copy of {@code config} whose AUTH password is supplied by the typed one-time value
+     * instead of whatever is stored in {@code PasswordSafe}. The override is transient — it lives
+     * only inside the returned {@link SmtpConfig}, so the send uses it once and nothing is written
+     * back to the credential store. When auth is disabled the password has no destination and the
+     * config is returned unchanged.
+     */
+    private static SmtpConfig applyOneTimePassword(SmtpConfig config, char[] oneTimePassword) {
+        var auth = config.auth();
+        if (auth.isDisabled()) {
+            return config;
+        }
+        var current = auth.credentials();
+        var transientCredentials = new AuthCredentials(
+                current.username(), () -> oneTimePassword.clone(), current.authzId(), current.authExtra());
+        var transientAuth = new AuthConfig(
+                auth.mechanism(),
+                transientCredentials,
+                auth.authMap(),
+                auth.allowPlaintextAuth(),
+                auth.optional(),
+                auth.optionalStrict());
+        return config.withAuth(transientAuth);
     }
 
     private DefaultsFromHeaders parseEmlHeaders() {
@@ -221,7 +291,10 @@ public final class SendDialog extends DialogWrapper {
             return defaults;
         }
         try {
-            var bytes = sourceFile.contentsToByteArray();
+            byte[] bytes;
+            try (var input = sourceFile.getInputStream()) {
+                bytes = input.readNBytes(MAX_HEADER_SCAN_BYTES);
+            }
             var text = new String(bytes, StandardCharsets.UTF_8);
             var headerEnd = text.indexOf("\r\n\r\n");
             if (headerEnd < 0) {
@@ -325,6 +398,29 @@ public final class SendDialog extends DialogWrapper {
         public String toString() {
             return label;
         }
+    }
+
+    // --- Test seams (package-private) ---
+
+    void setEnvelopeForTest(String from, String toAddresses) {
+        envelopeFromField.setText(from);
+        envelopeToField.setText(toAddresses);
+    }
+
+    void setOneTimePasswordForTest(String password) {
+        passwordField.setText(password);
+    }
+
+    SmtpCredentialStore credentialStore() {
+        return credentialStore;
+    }
+
+    String messageFromLabelText() {
+        return fromHeaderLabel.getText();
+    }
+
+    String messageSubjectLabelText() {
+        return subjectLabel.getText();
     }
 
     private static JSpinner buildPortSpinner() {

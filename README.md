@@ -24,7 +24,7 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
 - **Name-only highlighting** — Optionally highlight just the header name (e.g. `Subject:`) instead of the full line, configurable per header
 - **Global highlighting toggle** — Disable all EML highlighting at once via **Settings > Editor > MailKit**
 - **Configurable header list** — Add or remove which headers get custom highlighting via **Settings > Editor > MailKit**
-- **Save attachments** — A gutter icon next to any attachment MIME part (or `Save Attachment As…` / `Open Attachment with System App` in the editor context menu) decodes the part body (base64, quoted-printable, 7bit/8bit, binary) and writes it to disk or hands it to the OS. Toggle via **Settings > Editor > MailKit > Show attachment save actions**.
+- **Save attachments** — A gutter icon next to any attachment MIME part (or `Save Attachment As…` / `Open Attachment with System App` in the editor context menu) decodes the part body (base64, quoted-printable, 7bit/8bit, binary) and writes it to disk or hands it to the OS. *Open Attachment with System App* asks for confirmation first when the file is an executable, script, or other active-content type. Toggle via **Settings > Editor > MailKit > Show attachment save actions**.
 - **MSG → EML conversion** — Right-click any Outlook `.msg` file in the Project view and choose **Convert to EML** to produce a standards-compliant `.eml` next to the source and open it in the editor. Handles HTML/text/RTF bodies, attachments, recursively-converted embedded `.msg` messages, and RFC 2047 encoding for non-ASCII headers.
 - **EML inspections & quick-fixes** — RFC 5322 / MIME violations are flagged inline with Alt+Enter fixes. Configurable individually under **Settings > Editor > Inspections > MailKit**:
   - `MissingRequiredHeader` — `From` or `Date` absent on the message root
@@ -38,7 +38,7 @@ An IntelliJ IDEA plugin that brings first-class support for `.eml` (Email Messag
   - `DuplicateMessageId` — header block contains more than one `Message-ID`
   - `UnknownContentTransferEncoding` — CTE value outside `7bit / 8bit / binary / quoted-printable / base64`
 - **Sending EML** — a swaks-equivalent embedded SMTP client. Right-click an `.eml` file in the editor or project view and choose **Send EML…** to push the file's bytes through a configured server. Highlights:
-  - **STARTTLS, TLS-on-connect, mTLS** — full JDK-native TLS surface incl. custom CA bundles, client certs, SNI, hostname-verify toggles, peer-cert capture
+  - **STARTTLS, TLS-on-connect, mTLS** — full JDK-native TLS surface incl. custom CA bundles, client certs, SNI, hostname-verify toggles, peer-cert capture; the Send dialog warns before sending over a connection that isn't guaranteed encrypted (TLS *None*, or an *optional* STARTTLS mode a server can downgrade)
   - **SASL AUTH** — `PLAIN`, `LOGIN`, `CRAM-MD5`, `DIGEST-MD5`, `SCRAM-SHA-1`, `SCRAM-SHA-256`, `EXTERNAL`, `XOAUTH2`, `OAUTHBEARER`; plaintext mechanisms are refused over non-TLS sockets unless the profile explicitly opts in
   - **ESMTP extensions** — `PIPELINING`, `BDAT`/`CHUNKING`, `PRDR`, `SIZE` preflight, `SMTPUTF8`, `8BITMIME` (require / downgrade / never), full DSN (`NOTIFY`, `ORCPT`, `ENVID`, `RET`)
   - **Relaying primitives** — Postfix `XCLIENT` (with before-STARTTLS toggle) and HAProxy PROXY protocol v1/v2 written before the banner

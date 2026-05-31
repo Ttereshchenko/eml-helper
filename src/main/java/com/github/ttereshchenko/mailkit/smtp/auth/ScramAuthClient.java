@@ -29,6 +29,14 @@ public class ScramAuthClient implements AuthClient {
         COMPLETE
     }
 
+    /**
+     * Upper bound on the server-supplied PBKDF2 iteration count. RFC 7677 mandates only a minimum
+     * (4096); a hostile or buggy server could otherwise send {@code i=2000000000} and pin the send
+     * thread in PBKDF2 (which is not cancellation-aware). One million keeps a worst-case derivation
+     * well under a second while comfortably covering every legitimate server policy.
+     */
+    private static final int MAX_ITERATIONS = 1_000_000;
+
     private final AuthMechanism mechanism;
     private final AuthCredentials credentials;
     private final String hashAlgorithm;
@@ -94,7 +102,7 @@ public class ScramAuthClient implements AuthClient {
             throw new IllegalStateException("SCRAM server nonce does not echo client nonce");
         }
         var salt = Base64.getDecoder().decode(saltBase64);
-        var iterations = Integer.parseInt(iterCountText);
+        var iterations = parseIterationCount(iterCountText);
 
         var passwordChars = credentials.password().get();
         byte[] saltedPassword;
@@ -207,5 +215,23 @@ public class ScramAuthClient implements AuthClient {
         var bytes = new byte[24];
         new SecureRandom().nextBytes(bytes);
         return Base64.getEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    /**
+     * Parses and bounds the server-supplied SCRAM iteration count. Rejects a non-numeric, non-positive,
+     * or above-{@link #MAX_ITERATIONS} value so a hostile server cannot drive PBKDF2 into a CPU-burn.
+     */
+    private static int parseIterationCount(String iterCountText) {
+        int iterations;
+        try {
+            iterations = Integer.parseInt(iterCountText);
+        } catch (NumberFormatException invalid) {
+            throw new IllegalStateException("malformed SCRAM iteration count: " + iterCountText, invalid);
+        }
+        if (iterations < 1 || iterations > MAX_ITERATIONS) {
+            throw new IllegalStateException(
+                    "SCRAM iteration count out of range (1.." + MAX_ITERATIONS + "): " + iterations);
+        }
+        return iterations;
     }
 }

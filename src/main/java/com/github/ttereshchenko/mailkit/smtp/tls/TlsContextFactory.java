@@ -23,10 +23,16 @@ import javax.net.ssl.X509TrustManager;
 /**
  * Builds JDK-native {@link SSLContext} and {@link SSLParameters} from a {@link TlsConfig}.
  *
- * <p>Trust resolution: if a CA bundle path is set, only the certs in that bundle (PEM file or
- * directory of PEM files) are trusted. If {@link TlsConfig#allowSelfSigned()} is true any cert
- * presented by the peer is accepted — this flag is per-send only and intentionally NOT persisted.
- * Otherwise the JDK default trust store applies.
+ * <p>Trust resolution: if {@link TlsConfig#verifyCa()} is false (or the per-send
+ * {@link TlsConfig#allowSelfSigned()} is set), any certificate the peer presents is accepted without
+ * chain validation — {@code allowSelfSigned} is per-send only and intentionally NOT persisted,
+ * whereas {@code verifyCa} is the persisted "Verify CA chain" profile knob. Otherwise, if a CA
+ * bundle path is set, only the certs in that bundle (PEM file or directory of PEM files) are trusted;
+ * failing that, the JDK default trust store applies.
+ *
+ * <p>Hostname identification is an independent control governed solely by
+ * {@link TlsConfig#verifyHostname()}: relaxing chain trust does not switch off the hostname check, so
+ * accepting a self-signed certificate cannot silently turn into a full MITM bypass.
  *
  * <p>Key resolution: if client cert / key paths are set, they are loaded fresh per send into a
  * transient in-memory keystore and wired into a {@link KeyManagerFactory}. Plugin state never
@@ -51,7 +57,12 @@ public final class TlsContextFactory {
         if (!config.cipherSuites().isEmpty()) {
             parameters.setCipherSuites(config.cipherSuites().toArray(new String[0]));
         }
-        if (config.verifyHostname() && !config.allowSelfSigned()) {
+        // Hostname identification is governed solely by verifyHostname. Relaxing chain trust
+        // (allowSelfSigned / verifyCa==false) deliberately does NOT also switch off the hostname
+        // check — those are independent controls. A caller that genuinely wants both must clear
+        // verifyHostname too, rather than getting a silent hostname bypass as a side effect of
+        // accepting a self-signed certificate.
+        if (config.verifyHostname()) {
             parameters.setEndpointIdentificationAlgorithm("HTTPS");
         } else {
             parameters.setEndpointIdentificationAlgorithm(null);
@@ -68,8 +79,12 @@ public final class TlsContextFactory {
         return "TLS";
     }
 
-    private static TrustManager[] resolveTrustManagers(TlsConfig config) throws GeneralSecurityException, IOException {
-        if (config.allowSelfSigned()) {
+    static TrustManager[] resolveTrustManagers(TlsConfig config) throws GeneralSecurityException, IOException {
+        // A per-send allowSelfSigned, or an unchecked "Verify CA chain" (verifyCa == false), both mean
+        // the same thing for chain trust: do not validate the server certificate against any trust store.
+        // Neither touches hostname identification — that is governed independently by verifyHostname in
+        // build(). Either way, install a trust-everything manager instead of the JDK default / CA bundle.
+        if (config.allowSelfSigned() || !config.verifyCa()) {
             return new TrustManager[] {new TrustEverythingManager()};
         }
         if (config.caBundlePath() != null) {
@@ -169,12 +184,12 @@ public final class TlsContextFactory {
     static final class TrustEverythingManager implements X509TrustManager {
         @Override
         public void checkClientTrusted(X509Certificate[] chain, String authType) {
-            // intentional: per-send allow-self-signed
+            // intentional: chain trust relaxed (allowSelfSigned / verifyCa==false); hostname still checked
         }
 
         @Override
         public void checkServerTrusted(X509Certificate[] chain, String authType) {
-            // intentional: per-send allow-self-signed
+            // intentional: chain trust relaxed (allowSelfSigned / verifyCa==false); hostname still checked
         }
 
         @Override

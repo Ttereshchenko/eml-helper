@@ -10,7 +10,9 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
+import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import org.jetbrains.annotations.NotNull;
 
 public final class SaveAttachmentAction extends AnAction {
@@ -53,21 +55,31 @@ public final class SaveAttachmentAction extends AnAction {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 indicator.setIndeterminate(true);
-                byte[] decoded;
-                try {
-                    decoded = AttachmentDecoder.decode(info.rawBody(), info.encoding());
+                // Stream-decode straight to the chosen file so the full decoded payload is never held
+                // in memory (a large base64 attachment otherwise pins ~its whole size as a byte[]).
+                var target = destination.toPath();
+                try (var out = Files.newOutputStream(target)) {
+                    AttachmentDecoder.decodeTo(info.rawBody(), info.encoding(), out);
                 } catch (DecodingException failure) {
+                    deleteQuietly(target);
                     AttachmentActionSupport.notifyError(
                             project, "Could not decode attachment: " + failure.getMessage());
                     return;
-                }
-                try {
-                    Files.write(destination.toPath(), decoded);
-                    AttachmentActionSupport.notifySuccess(project, destination, decoded.length);
-                } catch (java.io.IOException failure) {
+                } catch (IOException failure) {
+                    deleteQuietly(target);
                     AttachmentActionSupport.notifyError(project, "Could not write attachment: " + failure.getMessage());
+                    return;
                 }
+                AttachmentActionSupport.notifySuccess(project, destination, destination.length());
             }
         });
+    }
+
+    private static void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+            // best-effort cleanup of a partial file left by a failed decode/write
+        }
     }
 }

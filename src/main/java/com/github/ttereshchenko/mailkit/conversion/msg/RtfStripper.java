@@ -80,7 +80,10 @@ final class RtfStripper {
                         if (codepoint < 0) {
                             codepoint += 0x10000;
                         }
-                        if (skipDepth == 0 && codepoint >= 0) {
+                        // Guard the full Unicode range, not just the lower bound: a Unicode control word may
+                        // carry an in-int-range but out-of-range value (e.g. 2000000), which appendCodePoint
+                        // rejects with an IllegalArgumentException that would otherwise escape the converter.
+                        if (skipDepth == 0 && Character.isValidCodePoint(codepoint)) {
                             output.appendCodePoint(codepoint);
                         }
                     } catch (NumberFormatException ignored) {

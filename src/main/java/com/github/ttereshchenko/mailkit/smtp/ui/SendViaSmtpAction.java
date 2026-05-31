@@ -3,7 +3,6 @@ package com.github.ttereshchenko.mailkit.smtp.ui;
 import com.github.ttereshchenko.mailkit.smtp.CancellationToken;
 import com.github.ttereshchenko.mailkit.smtp.MessageSource;
 import com.github.ttereshchenko.mailkit.smtp.SmtpClient;
-import com.github.ttereshchenko.mailkit.smtp.SmtpEnvelope;
 import com.github.ttereshchenko.mailkit.smtp.SmtpException;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfileService;
 import com.intellij.notification.NotificationGroupManager;
@@ -89,8 +88,7 @@ public final class SendViaSmtpAction extends AnAction {
             var result = new SmtpClient().send(request.config(), request.envelope(), source, cancel, listener);
             var elapsed = (System.nanoTime() - startNanos) / 1_000_000;
             recordAuditEntry(project, request, profileName, sourceBytes, started, elapsed, result, null);
-            notifySuccess(
-                    project, request.envelope(), result.recipientDispositions().size(), result.cleanlyClosed());
+            notifySuccess(project, result.recipientDispositions().size(), result.cleanlyClosed());
         } catch (SmtpException failure) {
             var elapsed = (System.nanoTime() - startNanos) / 1_000_000;
             recordAuditEntry(project, request, profileName, sourceBytes, started, elapsed, null, failure);
@@ -161,15 +159,13 @@ public final class SendViaSmtpAction extends AnAction {
         return MessageSource.ofPath(path);
     }
 
-    private static void notifySuccess(
-            Project project, SmtpEnvelope envelope, int recipientCount, boolean cleanlyClosed) {
+    private static void notifySuccess(Project project, int recipientCount, boolean cleanlyClosed) {
         var text = "Delivered to " + recipientCount + " recipient" + (recipientCount == 1 ? "" : "s") + " — "
                 + (cleanlyClosed ? "QUIT 221 OK" : "socket closed without 221");
         NotificationGroupManager.getInstance()
                 .getNotificationGroup("MailKit")
                 .createNotification("SMTP send succeeded", text, NotificationType.INFORMATION)
                 .notify(project);
-        var unused = envelope; // reserved for future per-recipient notification detail
     }
 
     private static void notifyFailure(Project project, SmtpException failure) {

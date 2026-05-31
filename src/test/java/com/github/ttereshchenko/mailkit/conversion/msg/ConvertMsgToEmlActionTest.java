@@ -76,6 +76,27 @@ public class ConvertMsgToEmlActionTest extends BasePlatformTestCase {
         assertTrue("EML should contain MIME-Version", content.contains("MIME-Version: 1.0"));
     }
 
+    public void testMalformedMsgFailsGracefullyInsteadOfPropagating() throws Exception {
+        // F4 regression: Apache POI and the converter raise UNCHECKED exceptions on malformed input. Here a
+        // non-ASCII recipient email address leaks verbatim into the To: header (only display names are
+        // RFC2047-encoded), tripping the converter's ASCII self-check -> IllegalStateException. The action
+        // used to catch only IOException|ChunkNotFoundException, so the unchecked failure escaped the
+        // background task and surfaced as an IDE "internal error". convertOrNotify now reports it and
+        // returns null. (Email built at runtime so this source file stays pure ASCII.)
+        var nonAsciiEmail = "rcpt" + (char) 0x00F8 + "@example.com";
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("graceful-failure")
+                .sender("Sender", "sender@example.com")
+                .recipientTo("Recipient", nonAsciiEmail)
+                .textBody("body")
+                .toBytes();
+        var msgFile = createFileInProject("malformed.msg", bytes);
+
+        var eml = ConvertMsgToEmlAction.convertOrNotify(getProject(), msgFile);
+
+        assertNull("A malformed MSG must fail gracefully (notify + return null), not propagate", eml);
+    }
+
     private AnActionEvent makeEvent(VirtualFile file) {
         var builder = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, getProject());
         if (file != null) {

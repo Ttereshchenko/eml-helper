@@ -11,6 +11,7 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.io.FileUtil;
 import java.awt.Desktop;
@@ -58,26 +59,31 @@ public final class OpenAttachmentWithSystemAppAction extends AnAction {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 indicator.setIndeterminate(true);
-                byte[] decoded;
-                try {
-                    decoded = AttachmentDecoder.decode(info.rawBody(), info.encoding());
-                } catch (DecodingException failure) {
-                    AttachmentActionSupport.notifyError(
-                            project, "Could not decode attachment: " + failure.getMessage());
-                    return;
-                }
+                File destination;
                 try {
                     var parent = Path.of(PathManager.getTempPath(), STAGING_PARENT);
                     Files.createDirectories(parent);
                     pruneStaleSiblings(parent);
                     var directory = Files.createTempDirectory(parent, "open-");
                     Disposer.register(ApplicationManager.getApplication(), () -> FileUtil.delete(directory.toFile()));
-                    var destination = directory.resolve(info.filename()).toFile();
-                    Files.write(destination.toPath(), decoded);
-                    openWithSystem(project, destination);
+                    destination = directory.resolve(info.filename()).toFile();
                 } catch (IOException failure) {
                     AttachmentActionSupport.notifyError(project, "Could not stage attachment: " + failure.getMessage());
+                    return;
                 }
+                // Stream-decode straight to the temp file so the full decoded payload is never held in
+                // memory; the staging directory is Disposer-registered, so a partial file is cleaned up.
+                try (var out = Files.newOutputStream(destination.toPath())) {
+                    AttachmentDecoder.decodeTo(info.rawBody(), info.encoding(), out);
+                } catch (DecodingException failure) {
+                    AttachmentActionSupport.notifyError(
+                            project, "Could not decode attachment: " + failure.getMessage());
+                    return;
+                } catch (IOException failure) {
+                    AttachmentActionSupport.notifyError(project, "Could not stage attachment: " + failure.getMessage());
+                    return;
+                }
+                openWithSystem(project, destination);
             }
         });
     }
@@ -94,6 +100,9 @@ public final class OpenAttachmentWithSystemAppAction extends AnAction {
 
     private static void openWithSystem(Project project, File destination) {
         ApplicationManager.getApplication().invokeLater(() -> {
+            if (!confirmOpenIfDangerous(project, destination)) {
+                return;
+            }
             if (Desktop.isDesktopSupported()) {
                 var desktop = Desktop.getDesktop();
                 if (desktop.isSupported(Desktop.Action.OPEN)) {
@@ -109,5 +118,26 @@ public final class OpenAttachmentWithSystemAppAction extends AnAction {
             }
             RevealFileAction.openFile(destination);
         });
+    }
+
+    /**
+     * For an attachment whose type the OS might execute or open as active content, asks the user to
+     * confirm before handing the (untrusted) decoded bytes to the system handler. Returns
+     * {@code true} when the open should proceed. Must be called on the EDT.
+     */
+    private static boolean confirmOpenIfDangerous(Project project, File destination) {
+        if (!DangerousAttachmentExtensions.isDangerous(destination.getName())) {
+            return true;
+        }
+        var answer = Messages.showYesNoDialog(
+                project,
+                "\"" + destination.getName()
+                        + "\" came from an email and its type can run code or open active content when handed to the"
+                        + " system application.\n\nOpen it anyway?",
+                "Potentially Unsafe Attachment",
+                "Open Anyway",
+                "Cancel",
+                Messages.getWarningIcon());
+        return answer == Messages.YES;
     }
 }

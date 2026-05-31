@@ -10,7 +10,6 @@ import com.intellij.openapi.components.Service;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindowManager;
 import java.nio.charset.StandardCharsets;
-import java.time.format.DateTimeFormatter;
 import java.util.Objects;
 
 /**
@@ -109,10 +108,5 @@ public final class SmtpConsoleService {
                     case INFO -> ConsoleViewContentType.SYSTEM_OUTPUT;
                 };
         console.print(line, contentType);
-    }
-
-    @SuppressWarnings("unused")
-    private static DateTimeFormatter unusedKeptForFutureTimestampFormatting() {
-        return DateTimeFormatter.ISO_INSTANT;
     }
 }

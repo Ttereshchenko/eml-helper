@@ -82,6 +82,16 @@ public record TlsConfig(
         return mode != Mode.NONE;
     }
 
+    /**
+     * Whether this mode guarantees an encrypted channel. Only {@link Mode#STARTTLS_REQUIRED} and
+     * {@link Mode#TLS_ON_CONNECT} do: {@link Mode#NONE} is cleartext, and the {@code OPTIONAL}
+     * STARTTLS modes can be downgraded to cleartext by a server that omits the advertisement (an
+     * active attacker can strip it). Used to warn before an insecure send.
+     */
+    public boolean guaranteesEncryption() {
+        return mode == Mode.STARTTLS_REQUIRED || mode == Mode.TLS_ON_CONNECT;
+    }
+
     public TlsConfig withAllowSelfSigned(boolean allow) {
         return new TlsConfig(
                 mode,
@@ -96,6 +106,38 @@ public record TlsConfig(
                 clientChainPath,
                 sniHost,
                 allow);
+    }
+
+    public TlsConfig withVerifyCa(boolean verify) {
+        return new TlsConfig(
+                mode,
+                protocols,
+                cipherSuites,
+                verify,
+                verifyHostname,
+                hostnameOverride,
+                caBundlePath,
+                clientCertPath,
+                clientKeyPath,
+                clientChainPath,
+                sniHost,
+                allowSelfSigned);
+    }
+
+    public TlsConfig withVerifyHostname(boolean verify) {
+        return new TlsConfig(
+                mode,
+                protocols,
+                cipherSuites,
+                verifyCa,
+                verify,
+                hostnameOverride,
+                caBundlePath,
+                clientCertPath,
+                clientKeyPath,
+                clientChainPath,
+                sniHost,
+                allowSelfSigned);
     }
 
     public TlsConfig withProtocols(List<String> newProtocols) {

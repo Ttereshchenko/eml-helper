@@ -4,8 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Random;
 import org.junit.jupiter.api.Test;
 
 class AttachmentDecoderTest {
@@ -102,6 +104,53 @@ class AttachmentDecoderTest {
         assertArrayEquals(
                 input.getBytes(StandardCharsets.ISO_8859_1),
                 AttachmentDecoder.decode(input, ContentTransferEncoding.BINARY));
+    }
+
+    // --- F14: streaming decodeTo must match decode() byte-for-byte without buffering the whole payload ---
+    // Manual-verification sample: src/test/resources/samples/eml/edge/large_base64_attachment.eml
+
+    @Test
+    void decodeToStreamsBase64IdenticallyToDecodeForALargePayload() throws Exception {
+        var payload = new byte[300_000];
+        new Random(42).nextBytes(payload);
+        var encoded = Base64.getMimeEncoder().encodeToString(payload);
+
+        var streamed = new ByteArrayOutputStream();
+        AttachmentDecoder.decodeTo(encoded, ContentTransferEncoding.BASE64, streamed);
+
+        assertArrayEquals(payload, streamed.toByteArray());
+        assertArrayEquals(AttachmentDecoder.decode(encoded, ContentTransferEncoding.BASE64), streamed.toByteArray());
+    }
+
+    @Test
+    void decodeToIgnoresInternalWhitespaceLikeDecode() throws Exception {
+        var input = "SGVsbG8s\r\nIE1haWxL\naXQh";
+        var streamed = new ByteArrayOutputStream();
+        AttachmentDecoder.decodeTo(input, ContentTransferEncoding.BASE64, streamed);
+        assertEquals("Hello, MailKit!", streamed.toString(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void decodeToMatchesDecodeForQuotedPrintableAndIdentity() throws Exception {
+        var quotedPrintable = "=E2=98=83 snowman";
+        var qpOut = new ByteArrayOutputStream();
+        AttachmentDecoder.decodeTo(quotedPrintable, ContentTransferEncoding.QUOTED_PRINTABLE, qpOut);
+        assertArrayEquals(
+                AttachmentDecoder.decode(quotedPrintable, ContentTransferEncoding.QUOTED_PRINTABLE),
+                qpOut.toByteArray());
+
+        var raw = "plain 7bit body";
+        var rawOut = new ByteArrayOutputStream();
+        AttachmentDecoder.decodeTo(raw, ContentTransferEncoding.BIT_7, rawOut);
+        assertArrayEquals(AttachmentDecoder.decode(raw, ContentTransferEncoding.BIT_7), rawOut.toByteArray());
+    }
+
+    @Test
+    void decodeToSurfacesInvalidBase64AsDecodingException() {
+        var out = new ByteArrayOutputStream();
+        assertThrows(
+                DecodingException.class,
+                () -> AttachmentDecoder.decodeTo("!!!not_base64!!!*", ContentTransferEncoding.BASE64, out));
     }
 
     @Test

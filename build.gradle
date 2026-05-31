@@ -47,6 +47,12 @@ configurations {
     integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
 }
 
+// Never package macOS Finder droppings (.DS_Store) into the plugin jar — they otherwise slip in
+// from src/main/resources via processResources even though they are git-ignored.
+tasks.named('processResources').configure {
+    exclude '**/.DS_Store'
+}
+
 dependencies {
     intellijPlatform {
         intellijIdea('2026.1')
@@ -136,7 +142,7 @@ intellijPlatform {
             select { filter ->
                 filter.types = [IntelliJPlatformType.IntellijIdea]
                 filter.channels = [ProductRelease.Channel.RELEASE]
-                filter.sinceBuild = '253'
+                filter.sinceBuild = '261'
                 filter.untilBuild = '261.*'
             }
         }

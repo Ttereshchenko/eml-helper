@@ -50,4 +50,13 @@ class RtfStripperTest {
     void emptyInputReturnsEmptyString() {
         assertEquals("", RtfStripper.strip(""));
     }
+
+    @Test
+    void outOfRangeUnicodeEscapeIsSkippedInsteadOfThrowing() {
+        // A \\u control word above U+10FFFF is a valid int but an invalid code point. The pre-fix
+        // guard only checked codepoint >= 0, so appendCodePoint threw IllegalArgumentException and
+        // escaped the converter. The surrounding run text must survive and the bad escape be dropped.
+        var rtf = "{\\rtf1\\ansi A\\u2000000?B}";
+        assertEquals("AB", RtfStripper.strip(rtf));
+    }
 }
