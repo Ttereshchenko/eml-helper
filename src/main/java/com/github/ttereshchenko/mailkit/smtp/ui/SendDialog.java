@@ -92,12 +92,18 @@ public final class SendDialog extends DialogWrapper {
                 "(unnamed)", profile -> profile.name == null || profile.name.isBlank() ? "(unnamed)" : profile.name));
         populateProfilePicker();
         populateStopAfterPicker();
-        var defaults = parseEmlHeaders();
         sourceSummaryLabel.setText(
                 sourceFile == null ? "(no file — composing from envelope only)" : formatSource(sourceFile));
-        subjectLabel.setText(defaults.subject);
-        fromHeaderLabel.setText(defaults.from);
+        subjectLabel.setText("");
+        fromHeaderLabel.setText("");
         onProfilePicked();
+        com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            var defaults = parseEmlHeaders();
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+                subjectLabel.setText(defaults.subject);
+                fromHeaderLabel.setText(defaults.from);
+            });
+        });
         profilePicker.addActionListener(event -> onProfilePicked());
 
         var panel = FormBuilder.createFormBuilder()

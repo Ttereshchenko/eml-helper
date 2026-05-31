@@ -167,6 +167,7 @@ public final class EmlBoundaryParser {
         // so it is rejected here in O(1) and never copied. Only a real "--…" line is materialized.
         if (knownNames.isEmpty()
                 || contentEnd - lineStart < 2
+                || contentEnd - lineStart > 100
                 || text.charAt(lineStart) != '-'
                 || text.charAt(lineStart + 1) != '-') {
             return null;

@@ -7,6 +7,8 @@
 !.claude/hooks/**
 .claude/settings.local.json
 .claude/worktrees/
+.antigravitycli
+.agents/mcp_config.json
 .tmp
 .issues
 .serena

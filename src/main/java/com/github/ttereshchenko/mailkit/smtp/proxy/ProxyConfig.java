@@ -41,6 +41,18 @@ public record ProxyConfig(
         Objects.requireNonNull(version, "version");
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(family, "family");
+        if (sourceAddress != null
+                && (sourceAddress.indexOf('\r') >= 0
+                        || sourceAddress.indexOf('\n') >= 0
+                        || sourceAddress.indexOf('\0') >= 0)) {
+            throw new IllegalArgumentException("sourceAddress contains line breaks or NUL");
+        }
+        if (destAddress != null
+                && (destAddress.indexOf('\r') >= 0
+                        || destAddress.indexOf('\n') >= 0
+                        || destAddress.indexOf('\0') >= 0)) {
+            throw new IllegalArgumentException("destAddress contains line breaks or NUL");
+        }
         sourceAddress = sourceAddress == null ? "" : sourceAddress;
         destAddress = destAddress == null ? "" : destAddress;
     }

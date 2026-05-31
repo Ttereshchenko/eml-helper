@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- EML headers containing RFC 2047 encoded words (e.g. `=?UTF-8?Q?Hello?=\`) are now
+  automatically folded into their decoded, human-readable text. Clicking the
+  folded text expands it back to the raw encoded format.
+
+### Changed
+
+- MailKit settings are now cleanly organized under a single `Tools → MailKit` parent
+  node. The generic settings (syntax highlighting, attachments) are nested under
+  `Tools → MailKit → General`, and SMTP profile settings are nested under
+  `Tools → MailKit → SMTP`.
+
+
 ### Performance
 
 - Typing in large `.eml` files no longer lags. Messages whose attachment is a
@@ -14,13 +28,35 @@
   *Send EML* dialog likewise reads only the first part of the source file when
   filling in its From / Subject preview, so opening it on a huge `.eml` no longer
   pulls the entire message into memory on the UI thread.
+- Converting large Outlook `.msg` files to `.eml` now streams the output directly
+  to disk. This resolves memory exhaustion and IDE freezes when converting messages
+  with massive attachments.
+- The *Send EML* dialog now opens instantly even when triggered on a multi-gigabyte
+  `.eml` file. The file's payload is now loaded on a background thread instead of
+  blocking the IDE's user interface.
 
 ### Fixed
 
+- Converting an Outlook `.msg` file to `.eml` now faithfully preserves all original internet transport headers (such as `Received` traces, spam scores, and DKIM signatures) instead of silently dropping them. It also successfully extracts `Bcc` recipients and preserves multiple message bodies (like both HTML and Plain Text) in a standard `multipart/alternative` layout rather than throwing away all but one body.
+- The list of headers in the Color Scheme settings now updates immediately when a new 
+  custom header is added and applied. A UI note was added to clarify that the demo text 
+  preview itself requires reopening the Settings dialog to reflect new headers, due to 
+  IntelliJ platform UI caching limitations.
 - The *Send EML* dialog's *Password (one-time)* field is now genuinely one-time:
   the password you type is used for that single send only and is no longer written
   to stored credentials, where it previously overwrote the profile's saved
   password.
+- The *Send EML* dialog's MX routing feature can no longer be coerced into
+  connecting to local or internal networks. When MX routing is enabled,
+  connections to loopback and site-local IP addresses are now blocked, preventing
+  a malicious message from probing internal services.
+- The *Send EML* dialog now rejects carriage returns, line feeds, and null bytes
+  in a configured PROXY protocol source or destination IP address, preventing an
+  attacker from injecting extra SMTP commands through a malformed connection profile.
+- Opening or editing an `.eml` file with malformed MIME boundary declarations
+  no longer causes the IDE to freeze or run out of memory. Boundary strings are
+  now capped at a reasonable length, preventing pathological files with missing
+  newlines from exhausting system resources during parsing.
 - An SMTP server can no longer pin the *Send EML* thread in a runaway password
   computation. A hostile or buggy server advertising an absurd SCRAM iteration
   count is now rejected up front instead of burning CPU on key derivation.

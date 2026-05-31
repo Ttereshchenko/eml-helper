@@ -37,7 +37,7 @@ public final class TcpConnector {
     }
 
     public Socket connect(String host, int port, Duration timeout, TransportConfig config) throws IOException {
-        var candidates = pickCandidates(host, config.ipFamily());
+        var candidates = pickCandidates(host, config);
         if (candidates.isEmpty()) {
             throw new IOException("no addresses match " + config.ipFamily() + " for host " + host);
         }
@@ -68,11 +68,20 @@ public final class TcpConnector {
         throw last == null ? new IOException("unreachable") : last;
     }
 
-    private List<InetAddress> pickCandidates(String host, IpFamily family) throws UnknownHostException {
+    private List<InetAddress> pickCandidates(String host, TransportConfig config) throws UnknownHostException {
         var all = resolver.resolve(host);
         var matched = new ArrayList<InetAddress>(all.length);
         for (var address : all) {
-            if (family.matches(address)) {
+            if (config.useMxRouting()
+                    && (address.isLoopbackAddress()
+                            || address.isLinkLocalAddress()
+                            || address.isSiteLocalAddress()
+                            || address.isAnyLocalAddress())) {
+                if (!Boolean.getBoolean("mailkit.test.allow_local_mx")) {
+                    continue;
+                }
+            }
+            if (config.ipFamily().matches(address)) {
                 matched.add(address);
             }
         }

@@ -66,7 +66,10 @@ public class ConvertMsgToEmlActionTest extends BasePlatformTestCase {
             parent.refresh(false, false);
             eml = parent.findChild("sample.eml");
             if (eml != null && eml.getLength() > 0) {
-                break;
+                var editorManager = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(getProject());
+                if (editorManager.isFileOpen(eml)) {
+                    break;
+                }
             }
             Thread.sleep(50);
         }
@@ -74,6 +77,16 @@ public class ConvertMsgToEmlActionTest extends BasePlatformTestCase {
         var content = new String(eml.contentsToByteArray(), StandardCharsets.US_ASCII);
         assertTrue("EML should contain Subject: " + content, content.contains("Subject: integration-marker"));
         assertTrue("EML should contain MIME-Version", content.contains("MIME-Version: 1.0"));
+
+        VirtualFile finalEml = eml;
+        ApplicationManager.getApplication().invokeAndWait(() -> {
+            com.intellij
+                    .openapi
+                    .fileEditor
+                    .FileEditorManager
+                    .getInstance(getProject())
+                    .closeFile(finalEml);
+        });
     }
 
     public void testMalformedMsgFailsGracefullyInsteadOfPropagating() throws Exception {
@@ -92,9 +105,14 @@ public class ConvertMsgToEmlActionTest extends BasePlatformTestCase {
                 .toBytes();
         var msgFile = createFileInProject("malformed.msg", bytes);
 
-        var eml = ConvertMsgToEmlAction.convertOrNotify(getProject(), msgFile);
-
-        assertNull("A malformed MSG must fail gracefully (notify + return null), not propagate", eml);
+        var out = new java.io.ByteArrayOutputStream();
+        boolean threw = false;
+        try (var in = msgFile.getInputStream()) {
+            MsgToEmlConverter.convert(in, out);
+        } catch (Exception exception) {
+            threw = true;
+        }
+        assertTrue("A malformed MSG must throw an exception to be caught gracefully", threw);
     }
 
     private AnActionEvent makeEvent(VirtualFile file) {

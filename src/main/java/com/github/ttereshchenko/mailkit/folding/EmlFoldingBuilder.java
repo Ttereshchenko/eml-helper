@@ -1,5 +1,6 @@
 package com.github.ttereshchenko.mailkit.folding;
 
+import com.github.ttereshchenko.mailkit.psi.EmlHeader;
 import com.github.ttereshchenko.mailkit.psi.EmlMimePart;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.folding.FoldingBuilderEx;
@@ -22,28 +23,47 @@ public final class EmlFoldingBuilder extends FoldingBuilderEx implements DumbAwa
         if (quick) {
             return EMPTY;
         }
+        var descriptors = new ArrayList<FoldingDescriptor>();
+
         var parts = PsiTreeUtil.findChildrenOfType(root, EmlMimePart.class);
-        if (parts.isEmpty()) {
-            return EMPTY;
-        }
-        var descriptors = new ArrayList<FoldingDescriptor>(parts.size());
         for (var part : parts) {
             var range = part.getContentRange();
-            if (range == null || range.isEmpty()) {
-                continue;
+            if (range != null && !range.isEmpty()) {
+                descriptors.add(new FoldingDescriptor(part.getNode(), range));
             }
-            descriptors.add(new FoldingDescriptor(part.getNode(), range));
         }
+
+        var headers = PsiTreeUtil.findChildrenOfType(root, EmlHeader.class);
+        for (var header : headers) {
+            var rawValue = header.getRawValue();
+            if (rawValue != null && rawValue.contains("=?")) {
+                var decodedValue = header.getDecodedValue();
+                if (decodedValue != null && !decodedValue.equals(rawValue)) {
+                    var range = header.getValueTextRange();
+                    if (range != null && !range.isEmpty()) {
+                        descriptors.add(new FoldingDescriptor(header.getNode(), range));
+                    }
+                }
+            }
+        }
+
         return descriptors.toArray(FoldingDescriptor[]::new);
     }
 
     @Override
     public @Nullable String getPlaceholderText(@NotNull ASTNode node) {
+        var psi = node.getPsi();
+        if (psi instanceof EmlHeader header) {
+            var decoded = header.getDecodedValue();
+            if (decoded != null) {
+                return " " + decoded;
+            }
+        }
         return "...";
     }
 
     @Override
     public boolean isCollapsedByDefault(@NotNull ASTNode node) {
-        return false;
+        return node.getPsi() instanceof EmlHeader;
     }
 }

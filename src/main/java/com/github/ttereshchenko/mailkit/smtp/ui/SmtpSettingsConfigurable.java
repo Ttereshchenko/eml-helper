@@ -22,7 +22,7 @@ import javax.swing.table.AbstractTableModel;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Settings page at {@code Settings → Tools → MailKit SMTP}. Surfaces the global egress toggle
+ * Settings page at {@code Settings → Tools → MailKit → SMTP}. Surfaces the global egress toggle
  * and a CRUD list of profiles. Per-row edits open {@link SmtpProfileEditorDialog}; passwords are
  * captured in that dialog and round-trip through {@link SmtpCredentialStore} (never the profile
  * state).
@@ -40,7 +40,7 @@ public final class SmtpSettingsConfigurable implements Configurable {
 
     @Override
     public String getDisplayName() {
-        return "MailKit SMTP";
+        return "SMTP";
     }
 
     @Override
