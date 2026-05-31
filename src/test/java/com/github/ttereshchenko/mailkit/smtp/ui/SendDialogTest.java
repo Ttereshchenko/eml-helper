@@ -93,6 +93,11 @@ public class SendDialogTest extends BasePlatformTestCase {
 
         var dialog = new SendDialog(getProject(), file);
         try {
+            int retries = 50;
+            while (retries-- > 0 && dialog.messageFromLabelText().isEmpty()) {
+                Thread.sleep(100);
+                com.intellij.util.ui.UIUtil.dispatchAllInvocationEvents();
+            }
             // The From/Subject preview must still be correct even though only a bounded prefix is read
             // on the EDT (F12 regression — the whole multi-MB body must not be pulled into memory).
             assertEquals("big-sender@example.com", dialog.messageFromLabelText());

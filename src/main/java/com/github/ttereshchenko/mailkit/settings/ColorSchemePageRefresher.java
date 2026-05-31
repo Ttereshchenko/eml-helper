@@ -19,6 +19,7 @@ interface ColorSchemePageRefresher {
             return;
         }
         refreshConfigurable(settings.find(COLOR_AND_FONT_OPTIONS_ID));
+        refreshConfigurable(settings.find("reference.settingsdialog.IDE.editor.colors.MailKit"));
     };
 
     // Force the Color & Fonts page to rebuild its UI on next navigation so the demo preview

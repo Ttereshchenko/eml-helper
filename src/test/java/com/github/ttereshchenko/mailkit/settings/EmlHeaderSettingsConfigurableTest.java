@@ -60,8 +60,8 @@ public class EmlHeaderSettingsConfigurableTest extends BasePlatformTestCase {
         return null;
     }
 
-    public void testDisplayNameIsMailKit() {
-        assertEquals("MailKit", configurable.getDisplayName());
+    public void testDisplayNameIsGeneral() {
+        assertEquals("General", configurable.getDisplayName());
     }
 
     public void testCreateComponentReturnsNonNullRoot() {

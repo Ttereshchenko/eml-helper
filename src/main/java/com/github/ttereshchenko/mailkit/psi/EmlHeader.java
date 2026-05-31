@@ -48,6 +48,26 @@ public final class EmlHeader extends ASTWrapperPsiElement {
         return new TextRange(start, start + colon + 1);
     }
 
+    public @Nullable TextRange getValueTextRange() {
+        var nameRange = getNameRange();
+        if (nameRange == null) {
+            return null;
+        }
+        var start = nameRange.getEndOffset();
+        var end = getTextRange().getEndOffset();
+
+        var text = getText();
+        var textStart = getTextRange().getStartOffset();
+        while (end > start && Character.isWhitespace(text.charAt(end - textStart - 1))) {
+            end--;
+        }
+
+        if (start >= end) {
+            return null;
+        }
+        return new TextRange(start, end);
+    }
+
     private @Nullable ASTNode firstLineNode() {
         for (var child : getNode().getChildren(null)) {
             if (child.getElementType() == EmlTokenTypes.HEADER_LINE) {

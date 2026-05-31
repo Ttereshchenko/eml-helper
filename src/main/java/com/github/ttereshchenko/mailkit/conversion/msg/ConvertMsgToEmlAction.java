@@ -15,9 +15,6 @@ import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import org.apache.poi.hsmf.exceptions.ChunkNotFoundException;
 import org.jetbrains.annotations.NotNull;
 
 public final class ConvertMsgToEmlAction extends AnAction {
@@ -56,53 +53,72 @@ public final class ConvertMsgToEmlAction extends AnAction {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 indicator.setIndeterminate(true);
-                indicator.setText("Reading " + source.getName());
-                var eml = convertOrNotify(project, source);
-                if (eml == null) {
-                    return;
+                indicator.setText("Converting " + source.getName());
+
+                try {
+                    boolean useNio = false;
+                    java.nio.file.Path targetPath = null;
+                    try {
+                        targetPath = source.toNioPath().getParent().resolve(targetName);
+                        useNio = true;
+                    } catch (UnsupportedOperationException exception) {
+                        // TempFileSystem in tests doesn't support NIO Path
+                    }
+
+                    if (useNio) {
+                        try (var stream = source.getInputStream();
+                                var out = java.nio.file.Files.newOutputStream(targetPath)) {
+                            MsgToEmlConverter.convert(stream, out);
+                        }
+                        indicator.checkCanceled();
+
+                        var finalPath = targetPath;
+                        ApplicationManager.getApplication().invokeLater(() -> {
+                            var targetVirtual =
+                                    com.intellij.openapi.vfs.VfsUtil.findFileByIoFile(finalPath.toFile(), true);
+                            if (targetVirtual != null) {
+                                FileEditorManager.getInstance(project).openFile(targetVirtual, true);
+                            }
+                        });
+                    } else {
+                        var out = new java.io.ByteArrayOutputStream();
+                        try (var stream = source.getInputStream()) {
+                            MsgToEmlConverter.convert(stream, out);
+                        }
+
+                        indicator.checkCanceled();
+                        ApplicationManager.getApplication().invokeLater(() -> {
+                            try {
+                                WriteAction.runAndWait(() -> {
+                                    try {
+                                        var parent = source.getParent();
+                                        if (parent == null) throw new java.io.IOException("No parent directory");
+                                        var target = parent.findChild(targetName);
+                                        if (target == null)
+                                            target = parent.createChildData(ConvertMsgToEmlAction.class, targetName);
+                                        target.setBinaryContent(out.toByteArray());
+                                        FileEditorManager.getInstance(project).openFile(target, true);
+                                    } catch (java.io.IOException exception) {
+                                        notifyError(project, source.getName(), describeFailure(exception));
+                                    }
+                                });
+                            } catch (Exception exception) {
+                                notifyError(project, source.getName(), describeFailure(exception));
+                            }
+                        });
+                    }
+                } catch (ProcessCanceledException canceled) {
+                    throw canceled;
+                } catch (Exception failure) {
+                    notifyError(project, source.getName(), describeFailure(failure));
                 }
-                indicator.checkCanceled();
-                indicator.setText("Writing " + targetName);
-                writeAndOpen(project, source, targetName, eml.getBytes(StandardCharsets.US_ASCII));
             }
         });
-    }
-
-    static String convertOrNotify(Project project, VirtualFile source) {
-        try (var stream = source.getInputStream()) {
-            return MsgToEmlConverter.convert(stream);
-        } catch (ProcessCanceledException canceled) {
-            throw canceled;
-        } catch (IOException | ChunkNotFoundException | RuntimeException failure) {
-            notifyError(project, source.getName(), describeFailure(failure));
-            return null;
-        }
     }
 
     private static String describeFailure(Throwable failure) {
         var message = failure.getMessage();
         return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
-    }
-
-    private static void writeAndOpen(Project project, VirtualFile source, String targetName, byte[] bytes) {
-        try {
-            WriteAction.runAndWait(() -> {
-                var parent = source.getParent();
-                if (parent == null) {
-                    notifyError(project, source.getName(), "No parent directory");
-                    return;
-                }
-                var existing = parent.findChild(targetName);
-                var target =
-                        existing != null ? existing : parent.createChildData(ConvertMsgToEmlAction.class, targetName);
-                target.setBinaryContent(bytes);
-                ApplicationManager.getApplication()
-                        .invokeLater(
-                                () -> FileEditorManager.getInstance(project).openFile(target, true));
-            });
-        } catch (IOException failure) {
-            notifyError(project, source.getName(), failure.getMessage());
-        }
     }
 
     private static void notifyError(Project project, String sourceName, String message) {

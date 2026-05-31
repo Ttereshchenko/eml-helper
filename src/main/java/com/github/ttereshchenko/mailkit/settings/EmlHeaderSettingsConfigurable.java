@@ -69,7 +69,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
     @Override
     public @Nls(capitalization = Nls.Capitalization.Title) String getDisplayName() {
-        return "MailKit";
+        return "General";
     }
 
     @Override
@@ -108,10 +108,17 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         showAttachmentActionsCheckbox =
                 new JCheckBox("Show attachment save actions", settings.isShowAttachmentActions());
 
+        var infoLabel = new com.intellij.ui.components.JBLabel(
+                "Note: Reopen the Settings dialog to see newly added headers in the Color Scheme preview.",
+                com.intellij.icons.AllIcons.General.Information,
+                javax.swing.SwingConstants.LEFT);
+        infoLabel.setForeground(com.intellij.util.ui.UIUtil.getContextHelpForeground());
+
         var root = FormBuilder.createFormBuilder()
                 .addComponent(new TitledSeparator("Headers"))
                 .addComponent(highlightingEnabledCheckbox)
                 .addComponent(tablePanel)
+                .addComponent(infoLabel)
                 .addComponent(new TitledSeparator("Attachments"))
                 .addComponent(showAttachmentActionsCheckbox)
                 .addComponentFillVertically(new JPanel(), 0)

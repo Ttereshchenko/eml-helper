@@ -57,6 +57,7 @@ dependencies {
     intellijPlatform {
         intellijIdea('2026.1')
         testFramework(TestFrameworkType.Platform.INSTANCE)
+        bundledPlugin('Git4Idea')
     }
     // Apache POI HSMF (poi-scratchpad pulls in poi core) reads Outlook .msg OLE2 compound documents.
     // Adds ~8-12 MB to the plugin distribution; required by the MSG -> EML converter.

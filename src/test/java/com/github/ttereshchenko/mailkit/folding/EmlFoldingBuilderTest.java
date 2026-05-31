@@ -75,6 +75,30 @@ public class EmlFoldingBuilderTest extends BasePlatformTestCase {
         assertFalse(foldingBuilder.isCollapsedByDefault(file.getNode()));
     }
 
+    public void testEncodedHeaderFolding() {
+        String content = "Subject: =?UTF-8?Q?Hello_=E4=B8=96=E7=95=8C?=\n\nBody\n";
+        PsiFile file = myFixture.configureByText("test.eml", content);
+        Document doc = myFixture.getEditor().getDocument();
+
+        FoldingDescriptor[] descriptors = foldingBuilder.buildFoldRegions(file, doc, false);
+        assertEquals(1, descriptors.length);
+
+        int colon = content.indexOf(":");
+        assertEquals(colon + 1, descriptors[0].getRange().getStartOffset());
+        assertEquals(content.indexOf("\n\n"), descriptors[0].getRange().getEndOffset());
+        assertEquals(" Hello 世界", foldingBuilder.getPlaceholderText(descriptors[0].getElement()));
+    }
+
+    public void testFakeCharsetNoFolding() {
+        String content = "Subject: =?fake-charset?Q?Hello?=\n\nBody\n";
+        PsiFile file = myFixture.configureByText("test.eml", content);
+        Document doc = myFixture.getEditor().getDocument();
+
+        FoldingDescriptor[] descriptors = foldingBuilder.buildFoldRegions(file, doc, false);
+        // Should not fold if decoding fails (decoded equals raw)
+        assertEquals(0, descriptors.length);
+    }
+
     // ===== Negative Tests =====
 
     public void testQuickModeReturnsEmpty() {

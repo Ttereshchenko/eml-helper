@@ -26,7 +26,7 @@ class MsgToEmlConverterTest {
                 .textBody("Hello there!")
                 .toBytes();
 
-        var eml = MsgToEmlConverter.convert(new ByteArrayInputStream(bytes));
+        var eml = convertString(bytes);
 
         assertTrue(eml.contains("From: \"Alice\" <alice@example.com>"), eml);
         assertTrue(eml.contains("To: \"Bob\" <bob@example.com>"), eml);
@@ -45,17 +45,19 @@ class MsgToEmlConverterTest {
                 .sender("Alice", "alice@example.com")
                 .recipientTo("Bob", "bob@example.com")
                 .htmlBody("<p>Hello</p>")
-                .textBody("Hello fallback that should NOT be used")
+                .textBody("Hello fallback that should NOW be used")
                 .toBytes();
 
-        var eml = MsgToEmlConverter.convert(new ByteArrayInputStream(bytes));
+        var eml = convertString(bytes);
 
+        assertTrue(eml.contains("Content-Type: multipart/alternative;"), eml);
         assertTrue(eml.contains("Content-Type: text/html; charset=UTF-8"), eml);
-        var bodyStart = eml.indexOf("\r\n\r\n");
-        assertNotEquals(-1, bodyStart, eml);
-        var encodedBody = eml.substring(bodyStart + 4).replaceAll("\\s", "");
-        var decoded = new String(Base64.getMimeDecoder().decode(encodedBody), StandardCharsets.UTF_8);
-        assertEquals("<p>Hello</p>", decoded);
+        assertTrue(eml.contains("Content-Type: text/plain; charset=UTF-8"), eml);
+
+        var encodedHtml = Base64.getEncoder().encodeToString("<p>Hello</p>".getBytes(StandardCharsets.UTF_8));
+        assertTrue(
+                eml.contains(encodedHtml) || eml.contains(encodedHtml.substring(0, Math.min(encodedHtml.length(), 70))),
+                eml);
     }
 
     @Test
@@ -67,7 +69,7 @@ class MsgToEmlConverterTest {
                 .textBody("body")
                 .toBytes();
 
-        var eml = MsgToEmlConverter.convert(new ByteArrayInputStream(bytes));
+        var eml = convertString(bytes);
 
         var subjectPattern = Pattern.compile("(?m)^Subject: =\\?UTF-8\\?B\\?[A-Za-z0-9+/=]+\\?=$");
         assertTrue(subjectPattern.matcher(eml).find(), "Subject not RFC 2047 encoded: " + eml);
@@ -85,7 +87,7 @@ class MsgToEmlConverterTest {
                 .attachment("report.pdf", "application/pdf", payload)
                 .toBytes();
 
-        var eml = MsgToEmlConverter.convert(new ByteArrayInputStream(bytes));
+        var eml = convertString(bytes);
 
         assertTrue(eml.contains("Content-Type: multipart/mixed; boundary=\"MAILKIT_"), eml);
         assertTrue(eml.contains("Content-Disposition: attachment; filename=\"report.pdf\""), eml);
@@ -120,7 +122,7 @@ class MsgToEmlConverterTest {
                 .embeddedAttachment("nested", inner)
                 .toBytes();
 
-        var eml = MsgToEmlConverter.convert(new ByteArrayInputStream(outerBytes));
+        var eml = convertString(outerBytes);
 
         assertTrue(eml.contains("Content-Type: message/rfc822"), eml);
         var nestedStart = eml.indexOf("Content-Type: message/rfc822");
@@ -145,7 +147,7 @@ class MsgToEmlConverterTest {
                 .textBody("body")
                 .toBytes();
 
-        var eml = MsgToEmlConverter.convert(new ByteArrayInputStream(bytes));
+        var eml = convertString(bytes);
 
         assertTrue(eml.contains("To: \"ToOne\" <to1@x>"), eml);
         assertTrue(eml.contains("Cc: \"CcOne\" <cc1@x>"), eml);
@@ -158,7 +160,7 @@ class MsgToEmlConverterTest {
     void emptyStreamFailsLoudly() {
         var bytes = new byte[] {0x00, 0x01, 0x02};
         try {
-            MsgToEmlConverter.convert(new ByteArrayInputStream(bytes));
+            convertString(bytes);
         } catch (IOException expected) {
             assertNotNull(expected);
             return;
@@ -167,5 +169,11 @@ class MsgToEmlConverterTest {
             return;
         }
         throw new AssertionError("expected an exception for non-OLE input");
+    }
+
+    private String convertString(byte[] input) throws Exception {
+        var out = new java.io.ByteArrayOutputStream();
+        MsgToEmlConverter.convert(new ByteArrayInputStream(input), out);
+        return out.toString(java.nio.charset.StandardCharsets.US_ASCII);
     }
 }
