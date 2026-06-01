@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.3 - 2026-05-31
+
 ### Added
 
 - EML headers containing RFC 2047 encoded words (e.g. `=?UTF-8?Q?Hello?=\`) are now
@@ -14,7 +16,6 @@
   node. The generic settings (syntax highlighting, attachments) are nested under
   `Tools → MailKit → General`, and SMTP profile settings are nested under
   `Tools → MailKit → SMTP`.
-
 
 ### Performance
 
@@ -60,7 +61,6 @@
 - An SMTP server can no longer pin the *Send EML* thread in a runaway password
   computation. A hostile or buggy server advertising an absurd SCRAM iteration
   count is now rejected up front instead of burning CPU on key derivation.
-
 - The *Verify CA chain* checkbox in an SMTP profile now actually takes effect.
   Unchecking it previously did nothing — the server certificate chain was still
   validated against the system trust store — so the control was misleading.
