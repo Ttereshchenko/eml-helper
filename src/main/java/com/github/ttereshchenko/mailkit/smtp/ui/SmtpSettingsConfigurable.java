@@ -37,6 +37,8 @@ public final class SmtpSettingsConfigurable implements Configurable {
     private final SmtpCredentialStore credentials = new SmtpCredentialStore();
     private List<SmtpProfile> editedProfiles = new ArrayList<>();
     private boolean editedEgress;
+    private JCheckBox showEditorToolbarButton;
+    private boolean editedShowToolbarButton;
 
     @Override
     public String getDisplayName() {
@@ -47,9 +49,13 @@ public final class SmtpSettingsConfigurable implements Configurable {
     public @Nullable JComponent createComponent() {
         editedProfiles = service.getProfiles();
         editedEgress = service.isEgressEnabled();
+        editedShowToolbarButton = service.isShowEditorToolbarButton();
 
         egressEnabled = new JCheckBox("Enable SMTP egress", editedEgress);
         egressEnabled.setToolTipText("When off, all Send via SMTP… actions are hidden / disabled.");
+
+        showEditorToolbarButton = new JCheckBox("Show 'Send EML...' button in editor toolbar", editedShowToolbarButton);
+        showEditorToolbarButton.setToolTipText("Show a quick access button in the top right of the EML editor");
 
         tableModel = new SmtpProfileTableModel(editedProfiles);
         profileTable = new JBTable(tableModel);
@@ -74,6 +80,7 @@ public final class SmtpSettingsConfigurable implements Configurable {
 
         rootPanel = FormBuilder.createFormBuilder()
                 .addComponent(egressEnabled)
+                .addComponent(showEditorToolbarButton)
                 .addComponent(tablePanel)
                 .addComponent(hint)
                 .addComponentFillVertically(new JPanel(), 0)
@@ -87,6 +94,9 @@ public final class SmtpSettingsConfigurable implements Configurable {
             return false;
         }
         if (egressEnabled.isSelected() != service.isEgressEnabled()) {
+            return true;
+        }
+        if (showEditorToolbarButton.isSelected() != service.isShowEditorToolbarButton()) {
             return true;
         }
         var current = service.getProfiles();
@@ -104,16 +114,22 @@ public final class SmtpSettingsConfigurable implements Configurable {
     @Override
     public void apply() {
         service.setEgressEnabled(egressEnabled.isSelected());
+        service.setShowEditorToolbarButton(showEditorToolbarButton.isSelected());
         service.setProfiles(editedProfiles);
         editedEgress = egressEnabled.isSelected();
+        editedShowToolbarButton = showEditorToolbarButton.isSelected();
     }
 
     @Override
     public void reset() {
         editedProfiles = service.getProfiles();
         editedEgress = service.isEgressEnabled();
+        editedShowToolbarButton = service.isShowEditorToolbarButton();
         if (egressEnabled != null) {
             egressEnabled.setSelected(editedEgress);
+        }
+        if (showEditorToolbarButton != null) {
+            showEditorToolbarButton.setSelected(editedShowToolbarButton);
         }
         if (tableModel != null) {
             tableModel.replaceAll(editedProfiles);
@@ -124,6 +140,7 @@ public final class SmtpSettingsConfigurable implements Configurable {
     public void disposeUIResources() {
         rootPanel = null;
         egressEnabled = null;
+        showEditorToolbarButton = null;
         profileTable = null;
         tableModel = null;
     }
@@ -134,6 +151,10 @@ public final class SmtpSettingsConfigurable implements Configurable {
 
     JCheckBox egressCheckboxForTests() {
         return egressEnabled;
+    }
+
+    JCheckBox showEditorToolbarCheckboxForTests() {
+        return showEditorToolbarButton;
     }
 
     List<SmtpProfile> editedProfilesForTests() {

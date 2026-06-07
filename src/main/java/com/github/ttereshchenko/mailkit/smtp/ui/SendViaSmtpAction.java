@@ -37,6 +37,14 @@ public final class SendViaSmtpAction extends AnAction {
         var enabled = SmtpProfileService.getInstance().isEgressEnabled();
         var file = event.getData(CommonDataKeys.VIRTUAL_FILE);
         var isEml = file != null && "eml".equalsIgnoreCase(file.getExtension());
+        var place = event.getPlace();
+        var isToolbar =
+                event.isFromActionToolbar() || "EditorContextBarMenu".equals(place) || "ContextToolbar".equals(place);
+
+        if (!SmtpProfileService.getInstance().isShowEditorToolbarButton() && isToolbar) {
+            event.getPresentation().setEnabledAndVisible(false);
+            return;
+        }
         event.getPresentation().setEnabledAndVisible(enabled && isEml);
     }
 

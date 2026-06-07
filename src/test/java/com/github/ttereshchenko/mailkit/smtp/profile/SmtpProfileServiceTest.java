@@ -84,6 +84,7 @@ class SmtpProfileServiceTest {
         var service = new SmtpProfileService();
         var state = new SmtpProfileService.State();
         state.egressEnabled = false;
+        state.showEditorToolbarButton = false;
         var profile = new SmtpProfile();
         profile.identifier = "abc";
         profile.name = "Mailpit";
@@ -107,6 +108,7 @@ class SmtpProfileServiceTest {
         service.loadState(state);
 
         assertFalse(service.isEgressEnabled());
+        assertFalse(service.isShowEditorToolbarButton());
         var loaded = service.getProfiles();
         assertEquals(1, loaded.size());
         var roundTripped = loaded.get(0);
@@ -163,6 +165,14 @@ class SmtpProfileServiceTest {
         assertTrue(service.isEgressEnabled());
         service.setEgressEnabled(false);
         assertFalse(service.isEgressEnabled());
+    }
+
+    @Test
+    void showEditorToolbarButtonDefaultsToTrue() {
+        var service = new SmtpProfileService();
+        assertTrue(service.isShowEditorToolbarButton());
+        service.setShowEditorToolbarButton(false);
+        assertFalse(service.isShowEditorToolbarButton());
     }
 
     @Test

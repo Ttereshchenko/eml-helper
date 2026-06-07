@@ -10,6 +10,7 @@ public class SmtpSettingsConfigurableTest extends BasePlatformTestCase {
 
     private SmtpProfileService service;
     private boolean originalEgress;
+    private boolean originalShowToolbar;
     private List<SmtpProfile> originalProfiles;
 
     @Override
@@ -17,6 +18,7 @@ public class SmtpSettingsConfigurableTest extends BasePlatformTestCase {
         super.setUp();
         service = SmtpProfileService.getInstance();
         originalEgress = service.isEgressEnabled();
+        originalShowToolbar = service.isShowEditorToolbarButton();
         originalProfiles = service.getProfiles();
     }
 
@@ -24,6 +26,7 @@ public class SmtpSettingsConfigurableTest extends BasePlatformTestCase {
     protected void tearDown() throws Exception {
         try {
             service.setEgressEnabled(originalEgress);
+            service.setShowEditorToolbarButton(originalShowToolbar);
             service.setProfiles(originalProfiles);
         } finally {
             super.tearDown();
@@ -36,27 +39,31 @@ public class SmtpSettingsConfigurableTest extends BasePlatformTestCase {
             assertNotNull(configurable.createComponent());
             assertNotNull(configurable.tableModelForTests());
             assertNotNull(configurable.egressCheckboxForTests());
+            assertNotNull(configurable.showEditorToolbarCheckboxForTests());
         } finally {
             configurable.disposeUIResources();
         }
     }
 
-    public void testEgressToggleReflectsServiceState() {
+    public void testTogglesReflectServiceState() {
         service.setEgressEnabled(false);
+        service.setShowEditorToolbarButton(false);
         var configurable = new SmtpSettingsConfigurable();
         try {
             configurable.createComponent();
             assertFalse(configurable.egressCheckboxForTests().isSelected());
+            assertFalse(configurable.showEditorToolbarCheckboxForTests().isSelected());
         } finally {
             configurable.disposeUIResources();
         }
     }
 
-    public void testApplyPersistsEgressToggleAndProfiles() throws Exception {
+    public void testApplyPersistsTogglesAndProfiles() throws Exception {
         var configurable = new SmtpSettingsConfigurable();
         try {
             configurable.createComponent();
             configurable.egressCheckboxForTests().setSelected(false);
+            configurable.showEditorToolbarCheckboxForTests().setSelected(false);
             var profiles = configurable.editedProfilesForTests();
             var profile = new SmtpProfile();
             profile.name = "added";
@@ -66,6 +73,7 @@ public class SmtpSettingsConfigurableTest extends BasePlatformTestCase {
             configurable.apply();
 
             assertFalse(service.isEgressEnabled());
+            assertFalse(service.isShowEditorToolbarButton());
             var stored = service.getProfiles();
             assertTrue(stored.stream().anyMatch(candidate -> "added".equals(candidate.name)));
         } finally {
@@ -75,6 +83,7 @@ public class SmtpSettingsConfigurableTest extends BasePlatformTestCase {
 
     public void testResetReloadsFromService() {
         service.setEgressEnabled(false);
+        service.setShowEditorToolbarButton(false);
         service.setProfiles(new ArrayList<>());
         var seeded = new SmtpProfile();
         seeded.name = "seed";
@@ -85,11 +94,13 @@ public class SmtpSettingsConfigurableTest extends BasePlatformTestCase {
         try {
             configurable.createComponent();
             configurable.egressCheckboxForTests().setSelected(true);
+            configurable.showEditorToolbarCheckboxForTests().setSelected(true);
             configurable.editedProfilesForTests().clear();
 
             configurable.reset();
 
             assertFalse(configurable.egressCheckboxForTests().isSelected());
+            assertFalse(configurable.showEditorToolbarCheckboxForTests().isSelected());
             assertEquals(1, configurable.editedProfilesForTests().size());
             assertEquals("seed", configurable.editedProfilesForTests().get(0).name);
         } finally {
