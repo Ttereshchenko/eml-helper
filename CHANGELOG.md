@@ -12,6 +12,8 @@
 - Support for extracting `legacyExchangeDN` addresses (e.g. `/O=EXCHANGELABS/OU=EXCHANGE ADMINISTRATIVE GROUP...`) from PST/OST archives and rendering them into EML headers.
 - PST/OST conversion can now recover messages the normal folder walk misses: soft-deleted items still attached to a folder are written into a `Recovered Items` folder, and fully detached (orphaned) message nodes into an `Orphaned Items` folder. Both are enabled by default and can be turned off in the conversion dialog.
 - PST/OST conversion now exports calendar items: appointments and meeting requests are written as EML with an attached calendar invite (`invite.ics`) carrying the start/end time and location, instead of being silently skipped.
+- The PST conversion dialog now displays a list of supported and ignored message classes, and includes a link to open a GitHub issue to request support for new ones.
+- Added a "Send EML..." button directly to the editor toolbar for quick access. This button can be toggled off via the "Show 'Send EML...' button in editor toolbar" setting under **Tools > MailKit > SMTP**.
 
 ### Changed
 

@@ -43,6 +43,14 @@ public final class SmtpProfileService implements PersistentStateComponent<SmtpPr
         state.egressEnabled = enabled;
     }
 
+    public boolean isShowEditorToolbarButton() {
+        return state.showEditorToolbarButton;
+    }
+
+    public void setShowEditorToolbarButton(boolean show) {
+        state.showEditorToolbarButton = show;
+    }
+
     public List<SmtpProfile> getProfiles() {
         var copy = new ArrayList<SmtpProfile>(state.profiles.size());
         for (var profile : state.profiles) {
@@ -131,6 +139,7 @@ public final class SmtpProfileService implements PersistentStateComponent<SmtpPr
 
     public static final class State {
         public boolean egressEnabled = true;
+        public boolean showEditorToolbarButton = true;
         public List<SmtpProfile> profiles = new ArrayList<>();
     }
 }

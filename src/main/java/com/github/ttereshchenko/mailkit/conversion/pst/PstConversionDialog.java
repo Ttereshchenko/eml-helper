@@ -6,6 +6,7 @@ import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.ui.ContextHelpLabel;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBTextField;
 import com.intellij.util.ui.FormBuilder;
@@ -59,6 +60,19 @@ public class PstConversionDialog extends DialogWrapper {
         maxNodeSizeField = new JBTextField("64");
         maxNodeSizeField.getEmptyText().setText("Max size in MB (default 64)");
 
+        var helpLabel = ContextHelpLabel.create("<b>Supported items:</b> Emails (IPM.Note), Reports (REPORT.*),<br>"
+                + "Calendar/Meetings (IPM.Appointment, IPM.Schedule.Meeting.*).<br><br>"
+                + "<i>Other types (Contacts, Tasks, Notes, etc.) are ignored.</i>");
+        var helpPanel = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+        helpPanel.add(new com.intellij.ui.components.JBLabel("Which items are converted? "));
+        helpPanel.add(helpLabel);
+
+        var issueLink = new com.intellij.ui.components.ActionLink(
+                "Missing a message type? Request it on GitHub", (java.awt.event.ActionListener) event ->
+                        com.intellij.ide.BrowserUtil.browse("https://github.com/Ttereshchenko/mailkit/issues"));
+        helpPanel.add(javax.swing.Box.createHorizontalStrut(15));
+        helpPanel.add(issueLink);
+
         centerPanel = FormBuilder.createFormBuilder()
                 .addLabeledComponent("Target directory:", targetDirectoryField)
                 .addLabeledComponent("Duplicate handling:", duplicateHandlingCombo)
@@ -69,6 +83,7 @@ public class PstConversionDialog extends DialogWrapper {
                 .addComponent(recoverDeletedItemsCheck)
                 .addComponent(scanOrphansCheck)
                 .addLabeledComponent("Max single attachment size (MB):", maxNodeSizeField)
+                .addComponent(helpPanel)
                 .getPanel();
 
         init();
