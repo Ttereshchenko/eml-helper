@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### Added
+
+- Outlook PST and OST archive files are now recognized with distinct icons in the Project view.
+- Added a new action to convert Outlook PST and OST archives into a directory tree of standard EML files, complete with configurable duplicate handling, optional message-count limits, and SMTP header extraction.
+- The PST converter now seamlessly supports "Highly Encrypted" (Enigma cipher) and "Password Protected" archive files.
+- Recipient and sender addresses are now preserved for Exchange-only correspondents: when a message carries no cached SMTP address, the converter keeps the Exchange address (legacyExchangeDN) instead of leaving the field blank.
+- Multi-tab support for conversion logging in the MailKit tool window, displaying separate real-time logs for MSG and PST/OST conversions. Added detailed logging for discovered attachments, embedded messages, and reasons for skipped messages.
+- Support for extracting `legacyExchangeDN` addresses (e.g. `/O=EXCHANGELABS/OU=EXCHANGE ADMINISTRATIVE GROUP...`) from PST/OST archives and rendering them into EML headers.
+- PST/OST conversion can now recover messages the normal folder walk misses: soft-deleted items still attached to a folder are written into a `Recovered Items` folder, and fully detached (orphaned) message nodes into an `Orphaned Items` folder. Both are enabled by default and can be turned off in the conversion dialog.
+- PST/OST conversion now exports calendar items: appointments and meeting requests are written as EML with an attached calendar invite (`invite.ics`) carrying the start/end time and location, instead of being silently skipped.
+
+### Changed
+
+- All MailKit context-menu actions (Convert to EML, Send EML, Save Attachment) now feature the standard MailKit EML icon for better visibility and consistency.
+
+### Fixed
+
+- Converting a malformed or malicious PST/OST archive no longer crashes the IDE: deeply nested folder trees, corrupt or oversized internal structures, and messages with an excessive number or size of attachments are now skipped cleanly with a logged warning instead of aborting the whole conversion.
+- Converted EML files are now hardened against header injection — control characters smuggled into a message's email addresses, Message-ID, or attachment metadata can no longer add or spoof headers in the output.
+- The `Date:` header of a converted message now reflects the original submission time rather than the delivery time, in line with RFC 5322.
+- Folders whose names match reserved Windows device names (`CON`, `NUL`, `COM1`, …) or end in a dot or space are now safely renamed so they extract correctly on Windows.
+- PST/OST conversion now reliably extracts every message from large folders; previously some messages in folders with very large contents tables could be silently dropped.
+- Inline images referenced from an HTML body (`cid:`) now display in mail clients: such parts are grouped with the body in a `multipart/related` section instead of being appended as separate attachments.
+- Recipients are no longer silently lost when a message's recipient table cannot be read — the `To:`, `Cc:`, and `Bcc:` headers now fall back to the stored display names.
+- More message code pages are decoded correctly (Japanese, Korean, Chinese, and ISO-2022 encodings), reducing garbled text in converted messages.
+- Inline images in converted MSG files now display in mail clients: the attachment's `Content-ID` is preserved so `cid:` references in the HTML body resolve.
+- International attachment filenames now follow RFC 2231 (`filename*=UTF-8''…`), so mail clients such as Apple Mail and Thunderbird show the correct name instead of a raw encoded string.
+- Converting an MSG whose stored internet headers contain non-ASCII characters no longer aborts the conversion.
+- RTF-only message bodies now honor the document's code page (instead of always assuming Windows-1252) and respect the `\uc` Unicode skip count, reducing garbled non-Western text in the plain-text fallback.
+- Very deeply nested embedded MSG messages now truncate with a placeholder instead of failing the entire conversion, matching the PST/OST behavior.
+- A failed conversion no longer leaves a truncated `.eml` behind: output is written to a temporary file and moved into place only on success.
+- PST/OST archives whose folder hierarchy references itself (corrupt or hostile input) no longer loop forever; already-visited folders are skipped.
+- Conversion failures (unreadable folders, messages, or recipients) are now reported in the PST/OST conversion log instead of only the IDE log, so problems are visible while converting.
+- Converted messages now always carry a `Date` header, even when the source message stored neither a send nor a delivery time (required by RFC 5322).
+- When a message's stored internet headers are present but incomplete, MailKit now fills in any missing `From`, `To`, `Cc`, `Bcc`, `Subject`, or `Date` from the MAPI properties instead of dropping them.
+- Outlook messages whose body is stored only as HTML-encapsulated RTF now convert to a proper HTML body instead of a plain-text approximation that lost the markup.
+- PST/OST export keeps generated file paths within the Windows 260-character limit by trimming long subjects while preserving a unique filename.
+- A malformed or non-Outlook `.msg` file now fails with a clear conversion error instead of a raw library exception.
+- Converting an Outlook appointment `.msg` no longer attaches a misleading, empty calendar invite (placeholder "now" start/end times and no location); the appointment's subject, body, and date are still exported as a normal email.
+
+### Security
+
+- Generated EML files can no longer be written outside the chosen output directory when a PST folder carries an unusual name such as `.` or `..`.
+
 ## 1.1.3 - 2026-05-31
 
 ### Added
@@ -243,7 +287,7 @@
   - Profiles + credentials: persisted under *Settings → Tools → MailKit SMTP*
     with PasswordSafe-backed passwords + TLS key passphrases. Global egress
     toggle hides every Send action when off.
-  - Live tool window: *MailKit SMTP* streams every wire byte as it's sent,
+  - Live tool window: *MailKit* streams every wire byte as it's sent,
     color-coded by direction, with AUTH lines redacted by default.
   - Per-project audit log: `.idea/mailkit/smtp-log.json` records every send
     (no credentials, no message bytes); inspect via *Tools → Show Recent

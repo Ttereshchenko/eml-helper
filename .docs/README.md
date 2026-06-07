@@ -36,3 +36,11 @@ reference files** (e.g. `05-mail-retrieval/rfc9051.txt` is ~8,700 lines).
 | `11-foundational` | ABNF, key words, DNS | rfc5234, rfc2119/8174, rfc1035 |
 
 Confirm exact filenames with `ls .docs/rfc/<folder>/` before opening.
+
+## `pst/` — PST/OST file-format reference
+
+[`pst/format.md`](pst/format.md) — the variant table (ANSI / Outlook 2003+ /
+Outlook 2013+), per-variant layout constants, encryption types, and the NDB→LTP→
+Messaging object model for the `conversion/pst/` parser. Constants are derived
+from the parser itself and cross-referenced to **[MS-PST]**. Read it before
+touching PST/OST parsing; grep to the relevant row rather than reading whole.
