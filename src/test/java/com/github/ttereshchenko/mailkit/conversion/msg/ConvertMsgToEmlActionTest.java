@@ -89,30 +89,25 @@ public class ConvertMsgToEmlActionTest extends BasePlatformTestCase {
         });
     }
 
-    public void testMalformedMsgFailsGracefullyInsteadOfPropagating() throws Exception {
-        // F4 regression: Apache POI and the converter raise UNCHECKED exceptions on malformed input. Here a
-        // non-ASCII recipient email address leaks verbatim into the To: header (only display names are
-        // RFC2047-encoded), tripping the converter's ASCII self-check -> IllegalStateException. The action
-        // used to catch only IOException|ChunkNotFoundException, so the unchecked failure escaped the
-        // background task and surfaced as an IDE "internal error". convertOrNotify now reports it and
-        // returns null. (Email built at runtime so this source file stays pure ASCII.)
+    public void testNonAsciiRecipientEmailIsPreservedNotCrashing() throws Exception {
+        // Previously the US-ASCII output writer aborted (UnmappableCharacterException) when a non-ASCII
+        // address leaked verbatim into a header — only display names are RFC 2047-encoded. The converter
+        // now writes UTF-8 (matching the PST path), preserving the address instead of failing the whole
+        // conversion. Genuinely malformed (non-OLE) input still throws — see
+        // MsgToEmlConverterTest.emptyStreamFailsLoudly. (Email built at runtime so this file stays ASCII.)
         var nonAsciiEmail = "rcpt" + (char) 0x00F8 + "@example.com";
         var bytes = MsgFixtureBuilder.topLevel()
-                .subject("graceful-failure")
+                .subject("graceful")
                 .sender("Sender", "sender@example.com")
                 .recipientTo("Recipient", nonAsciiEmail)
                 .textBody("body")
                 .toBytes();
-        var msgFile = createFileInProject("malformed.msg", bytes);
 
         var out = new java.io.ByteArrayOutputStream();
-        boolean threw = false;
-        try (var in = msgFile.getInputStream()) {
-            MsgToEmlConverter.convert(in, out);
-        } catch (Exception exception) {
-            threw = true;
-        }
-        assertTrue("A malformed MSG must throw an exception to be caught gracefully", threw);
+        MsgToEmlConverter.convert(new java.io.ByteArrayInputStream(bytes), out, null);
+        var eml = out.toString(StandardCharsets.UTF_8);
+
+        assertTrue("Non-ASCII recipient email should be preserved, not crash: " + eml, eml.contains(nonAsciiEmail));
     }
 
     private AnActionEvent makeEvent(VirtualFile file) {

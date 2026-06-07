@@ -1,6 +1,7 @@
 package com.github.ttereshchenko.mailkit.smtp.auth;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
@@ -33,7 +34,7 @@ public final class PlainAuthClient implements AuthClient {
             buffer.write(passwordBytes);
             complete = true;
             return buffer.toByteArray();
-        } catch (java.io.IOException unreachable) {
+        } catch (IOException unreachable) {
             throw new IllegalStateException("ByteArrayOutputStream does not throw", unreachable);
         } finally {
             Arrays.fill(passwordBytes, (byte) 0);

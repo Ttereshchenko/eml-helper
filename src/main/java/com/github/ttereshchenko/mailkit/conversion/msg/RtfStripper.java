@@ -1,16 +1,20 @@
 package com.github.ttereshchenko.mailkit.conversion.msg;
 
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
- * Best-effort RTF → plain text fallback used only when an MSG has neither an HTML nor a plain text
- * body. Strips groups, control words, and common escapes; not a faithful RTF renderer.
+ * RTF helpers for the MSG converter. {@link #strip} is a best-effort RTF → plain text fallback used
+ * when an MSG has neither an HTML nor a plain text body; {@link #deEncapsulateHtml} recovers HTML from
+ * HTML-encapsulated RTF (MS-OXRTFEX). Neither is a faithful RTF renderer.
  */
 final class RtfStripper {
 
-    private static final Charset RTF_CHARSET = Charset.forName("windows-1252");
+    private static final Charset DEFAULT_RTF_CHARSET = Charset.forName("windows-1252");
+    private static final Pattern ANSICPG_PATTERN = Pattern.compile("\\\\ansicpg(\\d+)");
     private static final Set<String> SKIPPED_GROUP_DESTINATIONS =
             Set.of("fonttbl", "colortbl", "stylesheet", "info", "pict", "header", "footer", "object");
 
@@ -22,8 +26,10 @@ final class RtfStripper {
             return "";
         }
         var source = rtfText;
+        var charset = resolveCharset(source);
         var output = new StringBuilder(source.length());
         var skipDepth = 0;
+        var unicodeSkip = 1;
         var index = 0;
         while (index < source.length()) {
             var character = source.charAt(index);
@@ -52,7 +58,7 @@ final class RtfStripper {
                             var value = Integer.parseInt(hex, 16);
                             if (skipDepth == 0) {
                                 var bytes = new byte[] {(byte) value};
-                                output.append(new String(bytes, RTF_CHARSET));
+                                output.append(new String(bytes, charset));
                             }
                             index += 4;
                             continue;
@@ -90,13 +96,12 @@ final class RtfStripper {
                         // skip
                     }
                     index = end;
-                    if (index < source.length() && source.charAt(index) == '?') {
-                        index++;
-                    } else if (index < source.length() && source.charAt(index) == ' ') {
-                        index++;
-                    } else if (index < source.length()) {
+                    // A control word's numeric argument may be followed by a single delimiting space.
+                    if (index < source.length() && source.charAt(index) == ' ') {
                         index++;
                     }
+                    // Skip the uc-many ANSI fallback characters that follow each Unicode escape (default 1).
+                    index = skipUnicodeFallback(source, index, unicodeSkip);
                     continue;
                 }
                 if (Character.isLetter(next)) {
@@ -116,6 +121,13 @@ final class RtfStripper {
                         }
                     }
                     var hadParam = end > paramStart;
+                    if (name.equals("uc") && hadParam) {
+                        try {
+                            unicodeSkip = Math.max(0, Integer.parseInt(source.substring(paramStart, end)));
+                        } catch (NumberFormatException ignored) {
+                            // keep the current skip count
+                        }
+                    }
                     var replacement = controlReplacement(name, hadParam);
                     if (skipDepth == 0 && replacement != null) {
                         output.append(replacement);
@@ -156,6 +168,177 @@ final class RtfStripper {
             index++;
         }
         return output.toString().trim();
+    }
+
+    /** True if the RTF is HTML-encapsulated (RTF-to-HTML, MS-OXRTFEX) rather than ordinary rich text. */
+    static boolean isHtmlEncapsulated(String rtfText) {
+        return rtfText != null && rtfText.contains("\\fromhtml");
+    }
+
+    /**
+     * De-encapsulates HTML wrapped in RTF (MS-OXRTFEX): honors {@code \\htmlrtf}/{@code \\htmlrtf0}
+     * toggling, extracts <code>{\*\htmltag ...}</code> runs, and decodes {@code \\'hh} / {@code \\uN}
+     * escapes. Mirrors the PST converter's de-encapsulation so HTML-encapsulated MSG bodies are
+     * recovered as text/html instead of leaking literal tags into a stripped-to-plain fallback.
+     */
+    static String deEncapsulateHtml(String rtfText) {
+        Objects.requireNonNull(rtfText, "rtfText");
+        var charset = resolveCharset(rtfText);
+        var html = new StringBuilder(rtfText.length());
+        var index = 0;
+        var inHtmlRtf = false;
+        while (index < rtfText.length()) {
+            if (rtfText.startsWith("\\htmlrtf0", index)) {
+                inHtmlRtf = false;
+                index += 9;
+                if (index < rtfText.length() && rtfText.charAt(index) == ' ') index++;
+                continue;
+            } else if (rtfText.startsWith("\\htmlrtf", index)) {
+                inHtmlRtf = true;
+                index += 8;
+                if (index < rtfText.length() && rtfText.charAt(index) == ' ') index++;
+                continue;
+            }
+
+            if (rtfText.startsWith("{\\*\\htmltag", index)) {
+                var end = rtfText.indexOf('}', index);
+                if (end != -1) {
+                    var tag = rtfText.substring(index + 11, end).trim();
+                    tag = tag.replaceFirst("^\\d+\\s*", "");
+                    if (!tag.equals("\\par") && !tag.matches("\\d+")) {
+                        html.append(tag);
+                    } else if (tag.equals("\\par")) {
+                        html.append("\r\n");
+                    }
+                    index = end + 1;
+                    continue;
+                }
+            }
+            if (inHtmlRtf) {
+                index++;
+                continue;
+            }
+            var character = rtfText.charAt(index);
+            if (character == '{' || character == '}') {
+                index++;
+                continue;
+            }
+            if (character == '\\') {
+                if (index + 3 < rtfText.length() && rtfText.charAt(index + 1) == '\'') {
+                    var hex = rtfText.substring(index + 2, index + 4);
+                    try {
+                        var bytes = new byte[] {(byte) Integer.parseInt(hex, 16)};
+                        html.append(new String(bytes, charset));
+                    } catch (NumberFormatException ignored) {
+                        // malformed \'hh escape — skip this byte
+                    }
+                    index += 4;
+                    continue;
+                }
+                if (index + 2 < rtfText.length()
+                        && rtfText.charAt(index + 1) == 'u'
+                        && (Character.isDigit(rtfText.charAt(index + 2)) || rtfText.charAt(index + 2) == '-')) {
+                    var endNum = index + 2;
+                    if (rtfText.charAt(endNum) == '-') endNum++;
+                    while (endNum < rtfText.length() && Character.isDigit(rtfText.charAt(endNum))) endNum++;
+                    try {
+                        short codePoint = Short.parseShort(rtfText.substring(index + 2, endNum));
+                        html.append((char) codePoint);
+                    } catch (NumberFormatException ignored) {
+                        // malformed \\uN escape — skip this code point
+                    }
+                    index = endNum;
+                    // skip the substitute character that follows the Unicode escape
+                    if (index < rtfText.length() && rtfText.charAt(index) == ' ') index++;
+                    else if (index + 3 < rtfText.length()
+                            && rtfText.charAt(index) == '\\'
+                            && rtfText.charAt(index + 1) == '\'') index += 4;
+                    else if (index < rtfText.length() && rtfText.charAt(index) == '?') index++;
+                    continue;
+                }
+                var nextSpace = rtfText.indexOf(' ', index);
+                var nextSlash = rtfText.indexOf('\\', index + 1);
+                var nextBrace = rtfText.indexOf('{', index + 1);
+                var nextClose = rtfText.indexOf('}', index + 1);
+
+                var end = rtfText.length();
+                if (nextSpace != -1) end = Math.min(end, nextSpace);
+                if (nextSlash != -1) end = Math.min(end, nextSlash);
+                if (nextBrace != -1) end = Math.min(end, nextBrace);
+                if (nextClose != -1) end = Math.min(end, nextClose);
+
+                index = end;
+                if (index < rtfText.length() && rtfText.charAt(index) == ' ') index++; // skip trailing space
+                continue;
+            }
+            html.append(character);
+            index++;
+        }
+        return html.toString().trim();
+    }
+
+    private static Charset resolveCharset(String rtf) {
+        var matcher = ANSICPG_PATTERN.matcher(rtf);
+        if (!matcher.find()) {
+            return DEFAULT_RTF_CHARSET;
+        }
+        var codePage = matcher.group(1);
+        if ("65001".equals(codePage)) {
+            return StandardCharsets.UTF_8;
+        }
+        // windows-<cp> covers 1250-1258/874; Cp<cp> covers the DBCS pages (932/936/949/950).
+        for (var candidate : new String[] {"windows-" + codePage, "Cp" + codePage}) {
+            try {
+                return Charset.forName(candidate);
+            } catch (RuntimeException ignored) {
+                // try the next alias, then fall back below
+            }
+        }
+        return DEFAULT_RTF_CHARSET;
+    }
+
+    /**
+     * Skips the {@code count} ANSI fallback "characters" that trail a {@code \\u} escape, honoring the
+     * current {@code \\uc} value. Each fallback may be a literal char, a {@code \\'hh} hex byte, or a
+     * control word/symbol; a group brace ends the skip.
+     */
+    private static int skipUnicodeFallback(String source, int index, int count) {
+        var skipped = 0;
+        while (skipped < count && index < source.length()) {
+            var character = source.charAt(index);
+            if (character == '{' || character == '}') {
+                break;
+            }
+            if (character == '\\' && index + 1 < source.length()) {
+                var next = source.charAt(index + 1);
+                if (next == '\'') {
+                    index = Math.min(source.length(), index + 4);
+                } else if (Character.isLetter(next)) {
+                    index += 2;
+                    while (index < source.length() && Character.isLetter(source.charAt(index))) {
+                        index++;
+                    }
+                    if (index < source.length()
+                            && (source.charAt(index) == '-' || Character.isDigit(source.charAt(index)))) {
+                        if (source.charAt(index) == '-') {
+                            index++;
+                        }
+                        while (index < source.length() && Character.isDigit(source.charAt(index))) {
+                            index++;
+                        }
+                    }
+                    if (index < source.length() && source.charAt(index) == ' ') {
+                        index++;
+                    }
+                } else {
+                    index += 2;
+                }
+            } else {
+                index++;
+            }
+            skipped++;
+        }
+        return index;
     }
 
     private static String controlReplacement(String name, boolean hadParam) {

@@ -10,6 +10,7 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.vfs.VirtualFile;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,7 +46,7 @@ public final class SaveAttachmentAction extends AnAction {
     static void runSave(Project project, AttachmentPartInfo info) {
         var descriptor = new FileSaverDescriptor("Save Attachment As", "Choose a destination for the attachment");
         var dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project);
-        var wrapper = dialog.save((com.intellij.openapi.vfs.VirtualFile) null, info.filename());
+        var wrapper = dialog.save((VirtualFile) null, info.filename());
         if (wrapper == null) {
             return;
         }

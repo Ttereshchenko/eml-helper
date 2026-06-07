@@ -34,6 +34,8 @@ final class MsgFixtureBuilder {
     private static final int TAG_SENDER_NAME = (0x0C1A << 16) | TYPE_UNICODE;
     private static final int TAG_SENDER_EMAIL_ADDRESS = (0x0C1F << 16) | TYPE_UNICODE;
     private static final int TAG_INTERNET_MESSAGE_ID = (0x1035 << 16) | TYPE_UNICODE;
+    private static final int TAG_MESSAGE_CLASS = (0x001A << 16) | TYPE_UNICODE;
+    private static final int TAG_TRANSPORT_HEADERS = (0x007D << 16) | TYPE_UNICODE;
     private static final int TAG_MESSAGE_DELIVERY_TIME = (0x0E06 << 16) | TYPE_SYSTIME;
 
     private static final int TAG_RECIPIENT_DISPLAY_NAME = (0x3001 << 16) | TYPE_UNICODE;
@@ -45,6 +47,7 @@ final class MsgFixtureBuilder {
     private static final int TAG_ATTACH_MIME_TAG = (0x370E << 16) | TYPE_UNICODE;
     private static final int TAG_ATTACH_DATA_BINARY = (0x3701 << 16) | TYPE_BINARY;
     private static final int TAG_ATTACH_METHOD = (0x3705 << 16) | TYPE_LONG;
+    private static final int TAG_ATTACH_CONTENT_ID = (0x3712 << 16) | TYPE_UNICODE;
 
     private static final int ATTACH_METHOD_BY_VALUE = 1;
     private static final int ATTACH_METHOD_EMBEDDED_MESSAGE = 5;
@@ -102,13 +105,26 @@ final class MsgFixtureBuilder {
         return setUnicode(TAG_INTERNET_MESSAGE_ID, value);
     }
 
+    MsgFixtureBuilder messageClass(String value) {
+        return setUnicode(TAG_MESSAGE_CLASS, value);
+    }
+
+    MsgFixtureBuilder transportHeaders(String value) {
+        return setUnicode(TAG_TRANSPORT_HEADERS, value);
+    }
+
     MsgFixtureBuilder attachment(String filename, String mime, byte[] data) {
-        attachments.add(new AttachmentSpec(filename, mime, data, null));
+        attachments.add(new AttachmentSpec(filename, mime, data, null, null));
+        return this;
+    }
+
+    MsgFixtureBuilder attachment(String filename, String mime, byte[] data, String contentId) {
+        attachments.add(new AttachmentSpec(filename, mime, data, null, contentId));
         return this;
     }
 
     MsgFixtureBuilder embeddedAttachment(String filename, MsgFixtureBuilder embedded) {
-        attachments.add(new AttachmentSpec(filename, null, null, embedded));
+        attachments.add(new AttachmentSpec(filename, null, null, embedded, null));
         return this;
     }
 
@@ -230,7 +246,8 @@ final class MsgFixtureBuilder {
 
     private record FixedProperty(int tag, byte[] data) {}
 
-    private record AttachmentSpec(String filename, String mime, byte[] data, MsgFixtureBuilder embedded) {
+    private record AttachmentSpec(
+            String filename, String mime, byte[] data, MsgFixtureBuilder embedded, String contentId) {
 
         void populate(DirectoryEntry directory) throws IOException {
             var stream = new ByteArrayOutputStream();
@@ -246,6 +263,9 @@ final class MsgFixtureBuilder {
             }
             if (mime != null) {
                 varProps.add(new VarProperty(TAG_ATTACH_MIME_TAG, encodeUtf16(mime)));
+            }
+            if (contentId != null) {
+                varProps.add(new VarProperty(TAG_ATTACH_CONTENT_ID, encodeUtf16(contentId)));
             }
             if (data != null) {
                 varProps.add(new VarProperty(TAG_ATTACH_DATA_BINARY, data));

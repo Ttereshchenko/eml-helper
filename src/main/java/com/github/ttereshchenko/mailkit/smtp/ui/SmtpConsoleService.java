@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 /**
- * Project-level service that owns the {@code ConsoleView} rendered inside the "MailKit SMTP"
+ * <p>Project-level service that owns the {@code ConsoleView} rendered inside the "MailKit"
  * tool window. The send pipeline hands a {@link SmtpTranscript.Listener} from
  * {@link #liveTranscriptListener(String)} to the wire client so every byte streams into the
  * console as it goes on the wire — color-coded by direction, with AUTH lines redacted by default.
@@ -21,7 +21,7 @@ import java.util.Objects;
 @Service(Service.Level.PROJECT)
 public final class SmtpConsoleService {
 
-    public static final String TOOL_WINDOW_ID = "MailKit SMTP";
+    public static final String TOOL_WINDOW_ID = "MailKit";
 
     private static final String REDACTED = "<auth credentials scrubbed>";
 

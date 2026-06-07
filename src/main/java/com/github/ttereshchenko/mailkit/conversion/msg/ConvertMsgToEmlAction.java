@@ -1,5 +1,6 @@
 package com.github.ttereshchenko.mailkit.conversion.msg;
 
+import com.github.ttereshchenko.mailkit.conversion.ConversionConsoleService;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
@@ -14,7 +15,13 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import org.jetbrains.annotations.NotNull;
 
 public final class ConvertMsgToEmlAction extends AnAction {
@@ -49,6 +56,12 @@ public final class ConvertMsgToEmlAction extends AnAction {
 
     static void runConversion(Project project, VirtualFile source) {
         var targetName = source.getNameWithoutExtension() + ".eml";
+
+        ConversionConsoleService console = ConversionConsoleService.getInstance(project);
+        console.clear(ConversionConsoleService.Tab.MSG);
+        console.activateToolWindow(ConversionConsoleService.Tab.MSG);
+        console.info(ConversionConsoleService.Tab.MSG, "Starting conversion of " + source.getName() + "...");
+
         ProgressManager.getInstance().run(new Task.Backgroundable(project, "Converting MSG to EML", true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
@@ -57,7 +70,7 @@ public final class ConvertMsgToEmlAction extends AnAction {
 
                 try {
                     boolean useNio = false;
-                    java.nio.file.Path targetPath = null;
+                    Path targetPath = null;
                     try {
                         targetPath = source.toNioPath().getParent().resolve(targetName);
                         useNio = true;
@@ -66,24 +79,37 @@ public final class ConvertMsgToEmlAction extends AnAction {
                     }
 
                     if (useNio) {
-                        try (var stream = source.getInputStream();
-                                var out = java.nio.file.Files.newOutputStream(targetPath)) {
-                            MsgToEmlConverter.convert(stream, out);
+                        // Convert into a sibling temp file and atomically move it into place so a
+                        // mid-conversion failure never leaves a truncated .eml at the target path.
+                        var tempPath = Files.createTempFile(
+                                targetPath.getParent(), source.getNameWithoutExtension(), ".eml.part");
+                        try {
+                            try (var stream = source.getInputStream();
+                                    var out = Files.newOutputStream(tempPath)) {
+                                MsgToEmlConverter.convert(stream, out, console);
+                            }
+                            indicator.checkCanceled();
+                            Files.move(tempPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                        } catch (Exception failure) {
+                            try {
+                                Files.deleteIfExists(tempPath);
+                            } catch (IOException cleanupFailure) {
+                                failure.addSuppressed(cleanupFailure);
+                            }
+                            throw failure;
                         }
-                        indicator.checkCanceled();
 
                         var finalPath = targetPath;
                         ApplicationManager.getApplication().invokeLater(() -> {
-                            var targetVirtual =
-                                    com.intellij.openapi.vfs.VfsUtil.findFileByIoFile(finalPath.toFile(), true);
+                            var targetVirtual = VfsUtil.findFileByIoFile(finalPath.toFile(), true);
                             if (targetVirtual != null) {
                                 FileEditorManager.getInstance(project).openFile(targetVirtual, true);
                             }
                         });
                     } else {
-                        var out = new java.io.ByteArrayOutputStream();
+                        var out = new ByteArrayOutputStream();
                         try (var stream = source.getInputStream()) {
-                            MsgToEmlConverter.convert(stream, out);
+                            MsgToEmlConverter.convert(stream, out, console);
                         }
 
                         indicator.checkCanceled();
@@ -92,24 +118,32 @@ public final class ConvertMsgToEmlAction extends AnAction {
                                 WriteAction.runAndWait(() -> {
                                     try {
                                         var parent = source.getParent();
-                                        if (parent == null) throw new java.io.IOException("No parent directory");
+                                        if (parent == null) throw new IOException("No parent directory");
                                         var target = parent.findChild(targetName);
                                         if (target == null)
                                             target = parent.createChildData(ConvertMsgToEmlAction.class, targetName);
                                         target.setBinaryContent(out.toByteArray());
+                                        console.info(ConversionConsoleService.Tab.MSG, "Converted successfully.");
                                         FileEditorManager.getInstance(project).openFile(target, true);
-                                    } catch (java.io.IOException exception) {
+                                    } catch (IOException exception) {
+                                        console.error(
+                                                ConversionConsoleService.Tab.MSG,
+                                                "Failed: " + describeFailure(exception));
                                         notifyError(project, source.getName(), describeFailure(exception));
                                     }
                                 });
                             } catch (Exception exception) {
+                                console.error(
+                                        ConversionConsoleService.Tab.MSG, "Failed: " + describeFailure(exception));
                                 notifyError(project, source.getName(), describeFailure(exception));
                             }
                         });
                     }
                 } catch (ProcessCanceledException canceled) {
+                    console.info(ConversionConsoleService.Tab.MSG, "Conversion canceled.");
                     throw canceled;
                 } catch (Exception failure) {
+                    console.error(ConversionConsoleService.Tab.MSG, "Failure: " + describeFailure(failure));
                     notifyError(project, source.getName(), describeFailure(failure));
                 }
             }

@@ -2,6 +2,11 @@
 
 Guidance for AI agents working in this repository.
 
+## Temporary files created by agent(s)
+
+All files created for debug/investigation/experments MUST be located in `./.tmp` folder!
+Please don't create temporary files in root directory, if user doesn't ask you do it!
+
 ## How to use this file
 
 `CLAUDE.md` (symlinked to this file) is auto-loaded each session — these rules
@@ -50,4 +55,5 @@ Grep / find / Edit only when Serena is not connected. Rationale and details:
 - [.agents/code-style.md](.agents/code-style.md) — Java conventions. Re-read before writing or editing any `.java` file.
 - [.agents/testing.md](.agents/testing.md) — test & sample-EML rules. Re-read before implementing a feature or fixing a defect.
 - [.agents/agent-prompt.md](.agents/agent-prompt.md) — answer-format rules. The "list which files you read" rule above is duplicated here; keep the two in sync.
+- [.agents/agents-routing.md](.agents/agents-routing.md) — which specialized agent to spin up and when (EML/MIME/PST specialist, test author, security/audit reviewer). Re-read before delegating a focused sub-task to a sub-agent. For Claude Code the roles map to `.claude/agents/*.md`; for Antigravity use it as the Agent Manager delegation policy.
 - [.docs/](.docs/) — internal reference material, incl. `.docs/rfc/` (full email RFC corpus, grouped by topic). NOT auto-loaded, and the RFCs are huge. Re-read [.docs/README.md](.docs/README.md) before consulting an RFC; then `grep` to the relevant section — never read a whole RFC, scan the folder, or open RFCs speculatively. Cite as `rfc<NNNN> §<section>`.

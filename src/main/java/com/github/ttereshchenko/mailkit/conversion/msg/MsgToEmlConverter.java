@@ -1,16 +1,18 @@
 package com.github.ttereshchenko.mailkit.conversion.msg;
 
+import com.github.ttereshchenko.mailkit.conversion.ConversionConsoleService;
+import com.github.ttereshchenko.mailkit.conversion.ConversionException;
+import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.StringWriter;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Date;
-import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
-import java.util.UUID;
 import org.apache.poi.hsmf.MAPIMessage;
 import org.apache.poi.hsmf.datatypes.AttachmentChunks;
 import org.apache.poi.hsmf.datatypes.Chunks;
@@ -18,298 +20,195 @@ import org.apache.poi.hsmf.datatypes.MAPIProperty;
 import org.apache.poi.hsmf.datatypes.PropertyValue;
 import org.apache.poi.hsmf.datatypes.RecipientChunks;
 import org.apache.poi.hsmf.datatypes.StringChunk;
+import org.apache.poi.hsmf.datatypes.Types;
 import org.apache.poi.hsmf.exceptions.ChunkNotFoundException;
+import org.apache.poi.poifs.filesystem.EntryUtils;
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 
 public final class MsgToEmlConverter {
 
-    private static final String CRLF = "\r\n";
-    private static final int MAX_EMBEDDED_DEPTH = 16;
-    private static final int RECIPIENT_TYPE_TO = 1;
-    private static final int RECIPIENT_TYPE_CC = 2;
-    private static final int RECIPIENT_TYPE_BCC = 3;
+    // Kept in step with PstToEmlConverter.MAX_EMBEDDED_DEPTH so both pipelines truncate alike.
+    private static final int MAX_EMBEDDED_DEPTH = 10;
 
     private MsgToEmlConverter() {}
 
-    public static void convert(InputStream msgStream, java.io.OutputStream outStream)
-            throws IOException, ChunkNotFoundException {
+    public static void convert(InputStream msgStream, OutputStream outStream, ConversionConsoleService console)
+            throws ConversionException {
         Objects.requireNonNull(msgStream, "msgStream");
         Objects.requireNonNull(outStream, "outStream");
         try (var message = new MAPIMessage(msgStream)) {
-            var encoder = StandardCharsets.US_ASCII
-                    .newEncoder()
-                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT);
-            var writer = new java.io.OutputStreamWriter(outStream, encoder);
-            convert(message, 0, writer);
+            // UTF-8 (matching the PST path): a stored transport-header block may legitimately carry
+            // non-ASCII bytes. A US-ASCII encoder with CodingErrorAction.REPORT aborts the whole
+            // conversion on the first such byte, which is a common real-world failure.
+            var writer = new OutputStreamWriter(outStream, StandardCharsets.UTF_8);
+            convert(message, 0, writer, console);
             writer.flush();
+        } catch (ChunkNotFoundException | IOException | RuntimeException failure) {
+            // POI surfaces malformed input as its own checked ChunkNotFoundException, various unchecked
+            // exceptions (e.g. RecordFormatException), and parse-level IOExceptions (NotOLE2FileException).
+            // Collapse them into one domain type so the conversion API has a clean exception boundary.
+            var detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+            throw new ConversionException("Failed to convert MSG to EML: " + detail, failure);
         }
     }
 
-    static void convert(MAPIMessage message, int depth, java.io.Writer writer)
+    static void convert(MAPIMessage message, int depth, Writer writer, ConversionConsoleService console)
             throws IOException, ChunkNotFoundException {
         if (depth > MAX_EMBEDDED_DEPTH) {
-            throw new IOException("embedded message depth exceeded");
+            // Mirror the PST converter: emit a stub rather than throwing, so an over-deep nested
+            // message truncates gracefully instead of failing the entire parent conversion.
+            var stub = new EmlSerializer();
+            stub.setSubject("Nested Message Limit Exceeded");
+            stub.addBody("The maximum nested message depth was reached.", "text/plain; charset=UTF-8");
+            stub.writeTo(writer);
+            return;
         }
         message.setReturnNullOnMissingChunk(true);
 
-        var bodies = extractBodies(message);
-        var attachments = collectAttachments(message, depth);
+        var details = message.getRecipientDetailsChunks();
+        if (details != null && details.length > 2048) {
+            throw new IOException("Recipient limit exceeded (max 2048)");
+        }
+
+        var serializer = new EmlSerializer();
 
         var transportHeaders = readMainString(message, MAPIProperty.TRANSPORT_MESSAGE_HEADERS);
         if (transportHeaders != null && !transportHeaders.isBlank()) {
-            writeFilteredTransportHeaders(writer, transportHeaders);
-        } else {
-            var synthesized = new java.util.ArrayList<String>();
-
-            var from = resolveSender(message);
-            if (from != null && !from.isBlank()) synthesized.add("From");
-            appendHeader(writer, "From", from);
-
-            var toAddress = joinRecipients(message, RECIPIENT_TYPE_TO);
-            if (toAddress != null && !toAddress.isBlank()) synthesized.add("To");
-            appendHeader(writer, "To", toAddress);
-
-            var ccAddress = joinRecipients(message, RECIPIENT_TYPE_CC);
-            if (ccAddress != null && !ccAddress.isBlank()) synthesized.add("Cc");
-            appendHeader(writer, "Cc", ccAddress);
-
-            var bcc = joinRecipients(message, RECIPIENT_TYPE_BCC);
-            if (bcc != null && !bcc.isBlank()) synthesized.add("Bcc");
-            appendHeader(writer, "Bcc", bcc);
-
-            var subject = encodeHeaderIfNeeded(safeString(safeSubject(message)));
-            if (subject != null && !subject.isBlank()) synthesized.add("Subject");
-            appendHeader(writer, "Subject", subject);
-
-            var date = safeDate(message);
-            if (date != null) {
-                synthesized.add("Date");
-                appendHeader(writer, "Date", formatRfc2822Date(date));
-            }
-
-            var messageId = readMainString(message, MAPIProperty.INTERNET_MESSAGE_ID);
-            if (messageId != null && !messageId.isBlank()) {
-                synthesized.add("Message-ID");
-                appendHeader(writer, "Message-ID", messageId.trim());
-            }
-
-            if (!synthesized.isEmpty()) {
-                appendHeader(writer, "X-MailKit-Synthesized-Headers", String.join(", ", synthesized));
-            }
-
-            writer.append("MIME-Version: 1.0").append(CRLF);
+            serializer.setTransportHeaders(transportHeaders);
         }
 
-        if (attachments.isEmpty() && bodies.size() == 1) {
-            var body = bodies.getFirst();
-            writer.append("Content-Type: ").append(body.contentType()).append(CRLF);
-            writer.append("Content-Transfer-Encoding: base64").append(CRLF);
-            writer.append(CRLF);
-            writer.append(encodeBase64Wrapped(body.utf8Bytes()));
-            return;
+        serializer.setSender(resolveSenderName(message), resolveSenderEmail(message));
+        populateRecipients(message, EmlSerializer.RECIPIENT_TYPE_TO, serializer);
+        populateRecipients(message, EmlSerializer.RECIPIENT_TYPE_CC, serializer);
+        populateRecipients(message, EmlSerializer.RECIPIENT_TYPE_BCC, serializer);
+        serializer.setSubject(safeString(safeSubject(message)));
+        serializer.setDate(safeDate(message));
+        var messageId = readMainString(message, MAPIProperty.INTERNET_MESSAGE_ID);
+        if (messageId != null && !messageId.isBlank()) {
+            serializer.setMessageId(messageId);
         }
 
-        var rootBoundary = "MAILKIT_" + UUID.randomUUID().toString().replace("-", "");
-        writer.append("Content-Type: multipart/mixed; boundary=\"")
-                .append(rootBoundary)
-                .append('"')
-                .append(CRLF);
-        writer.append(CRLF);
-
-        if (!bodies.isEmpty()) {
-            appendBoundary(writer, rootBoundary, false);
-            if (bodies.size() == 1) {
-                var body = bodies.getFirst();
-                writer.append("Content-Type: ").append(body.contentType()).append(CRLF);
-                writer.append("Content-Transfer-Encoding: base64").append(CRLF);
-                writer.append(CRLF);
-                var encodedBody = encodeBase64Wrapped(body.utf8Bytes());
-                writer.append(encodedBody);
-                if (!encodedBody.endsWith(CRLF)) {
-                    writer.append(CRLF);
-                }
-            } else {
-                var altBoundary = "MAILKIT_ALT_" + UUID.randomUUID().toString().replace("-", "");
-                writer.append("Content-Type: multipart/alternative; boundary=\"")
-                        .append(altBoundary)
-                        .append('"')
-                        .append(CRLF);
-                writer.append(CRLF);
-                for (var body : bodies) {
-                    appendBoundary(writer, altBoundary, false);
-                    writer.append("Content-Type: ").append(body.contentType()).append(CRLF);
-                    writer.append("Content-Transfer-Encoding: base64").append(CRLF);
-                    writer.append(CRLF);
-                    var encodedBody = encodeBase64Wrapped(body.utf8Bytes());
-                    writer.append(encodedBody);
-                    if (!encodedBody.endsWith(CRLF)) {
-                        writer.append(CRLF);
-                    }
-                }
-                appendBoundary(writer, altBoundary, true);
+        var sclProp = MAPIProperty.createCustom(0x4076, Types.LONG, "SPAM_CONFIDENCE_LEVEL");
+        var sclChunks = message.getMainChunks().getProperties().get(sclProp);
+        if (sclChunks != null && !sclChunks.isEmpty()) {
+            var val = sclChunks.get(0).getValue();
+            if (val instanceof Number n) {
+                serializer.setScl(n.intValue());
             }
         }
 
-        for (var part : attachments) {
-            appendBoundary(writer, rootBoundary, false);
-            writer.append(part.headers());
-            writer.append(CRLF);
-            writer.append(part.encodedBody());
-            if (!part.encodedBody().endsWith(CRLF)) {
-                writer.append(CRLF);
-            }
-        }
-        appendBoundary(writer, rootBoundary, true);
+        populateBodies(message, serializer, console);
+        // An appointment's subject/body/date are exported as a normal email above. We deliberately do
+        // NOT synthesize an invite.ics here: POI/HSMF exposes no reliable named-property API to read the
+        // appointment's start/end/location (PidLidAppointmentStartWhole etc.), so the only invite we
+        // could build would carry placeholder DTSTART/DTEND ("now") and no LOCATION — a structurally
+        // valid but semantically wrong calendar entry. Emitting nothing is more honest than emitting that.
+
+        populateAttachments(message, depth, serializer, console);
+
+        serializer.writeTo(writer);
     }
 
-    private static void writeFilteredTransportHeaders(java.io.Writer writer, String transportHeaders)
-            throws IOException {
-        var lines = transportHeaders.split("\\r?\\n");
-        String currentHeader = null;
-        for (var line : lines) {
-            if (line.isEmpty()) {
-                continue; // Skip empty lines in header block
-            }
-            if (Character.isWhitespace(line.charAt(0))) {
-                if (currentHeader != null && !isFilteredHeader(currentHeader)) {
-                    writer.append(line).append(CRLF);
-                }
-            } else {
-                var colonIndex = line.indexOf(':');
-                if (colonIndex > 0) {
-                    currentHeader = line.substring(0, colonIndex).trim();
-                    if (!isFilteredHeader(currentHeader)) {
-                        writer.append(line).append(CRLF);
-                    }
-                } else {
-                    currentHeader = null; // Malformed header
-                }
-            }
-        }
-        writer.append("MIME-Version: 1.0").append(CRLF);
-    }
-
-    private static boolean isFilteredHeader(String name) {
-        return name.equalsIgnoreCase("Content-Type")
-                || name.equalsIgnoreCase("Content-Transfer-Encoding")
-                || name.equalsIgnoreCase("MIME-Version");
-    }
-
-    private static void appendBoundary(java.io.Writer output, String boundary, boolean closing) throws IOException {
-        output.append("--").append(boundary);
-        if (closing) {
-            output.append("--");
-        }
-        output.append(CRLF);
-    }
-
-    private static void appendHeader(java.io.Writer output, String name, String value) throws IOException {
-        if (value == null || value.isBlank()) {
-            return;
-        }
-        output.append(name).append(": ").append(value).append(CRLF);
-    }
-
-    private static List<Body> extractBodies(MAPIMessage message) {
-        var bodies = new ArrayList<Body>(3);
+    private static void populateBodies(
+            MAPIMessage message, EmlSerializer serializer, ConversionConsoleService console) {
+        boolean hasPlain = false;
+        boolean hasHtml = false;
         try {
             var text = message.getTextBody();
             if (text != null && !text.isEmpty()) {
-                bodies.add(new Body(text, "text/plain; charset=UTF-8"));
+                serializer.addBody(text, "text/plain; charset=UTF-8");
+                hasPlain = true;
             }
         } catch (ChunkNotFoundException ignored) {
-            // optional
         }
         try {
             var html = message.getHtmlBody();
             if (html != null && !html.isEmpty()) {
-                bodies.add(new Body(html, "text/html; charset=UTF-8"));
+                serializer.addBody(html, "text/html; charset=UTF-8");
+                hasHtml = true;
             }
         } catch (ChunkNotFoundException ignored) {
-            // optional
         }
         try {
             var rtfText = message.getRtfBody();
             if (rtfText != null && !rtfText.isEmpty()) {
-                var stripped = RtfStripper.strip(rtfText);
-                if (!stripped.isEmpty()) {
-                    if (bodies.stream().noneMatch(body -> body.contentType().startsWith("text/plain"))) {
-                        bodies.add(new Body(stripped, "text/plain; charset=UTF-8"));
+                serializer.addBody(rtfText, "text/rtf; charset=UTF-8");
+                if (RtfStripper.isHtmlEncapsulated(rtfText)) {
+                    if (!hasHtml) {
+                        var recovered = RtfStripper.deEncapsulateHtml(rtfText);
+                        if (!recovered.isBlank()) {
+                            serializer.addBody(recovered, "text/html; charset=UTF-8");
+                        }
+                    }
+                } else if (!hasPlain) {
+                    var stripped = RtfStripper.strip(rtfText);
+                    if (!stripped.isEmpty()) {
+                        serializer.addBody(stripped, "text/plain; charset=UTF-8");
                     }
                 }
             }
         } catch (ChunkNotFoundException ignored) {
-            // optional
         }
-        if (bodies.isEmpty()) {
-            bodies.add(new Body("", "text/plain; charset=UTF-8"));
-        }
-        return bodies;
     }
 
-    private static List<EmittedPart> collectAttachments(MAPIMessage message, int depth) throws IOException {
+    private static void populateAttachments(
+            MAPIMessage message, int depth, EmlSerializer serializer, ConversionConsoleService console)
+            throws IOException {
         var raw = message.getAttachmentFiles();
         if (raw == null || raw.length == 0) {
-            return List.of();
+            return;
         }
-        var emitted = new ArrayList<EmittedPart>(raw.length);
         for (var chunks : raw) {
-            emitted.add(buildAttachmentPart(chunks, depth));
-        }
-        return emitted;
-    }
+            if (chunks.isEmbeddedMessage()) {
+                var embedded = chunks.getEmbeddedMessage();
+                String nestedEml;
+                try {
+                    var stringWriter = new StringWriter();
+                    convert(embedded, depth + 1, stringWriter, console);
+                    nestedEml = stringWriter.toString();
+                } catch (Exception failure) {
+                    if (console != null) {
+                        console.info(
+                                ConversionConsoleService.Tab.MSG,
+                                "Failed to convert embedded message: " + failure.getMessage());
+                    }
+                    nestedEml = "Subject: Error converting nested message\r\n\r\n" + failure.getMessage();
+                }
+                var subject = safeString(safeSubject(embedded));
+                var filename = EmlSerializer.sanitizeFilename(subject.isBlank() ? "embedded" : subject) + ".eml";
+                if (console != null)
+                    console.info(ConversionConsoleService.Tab.MSG, "Found embedded message attachment: " + filename);
+                serializer.addEmbeddedMessage(filename, nestedEml);
+            } else {
+                var bytes = attachmentBytes(chunks);
+                var filename = pickFilename(chunks);
+                var mime = pickMimeType(chunks);
+                var contentId = pickContentId(chunks);
+                boolean isInline = contentId != null;
 
-    private static EmittedPart buildAttachmentPart(AttachmentChunks chunks, int depth) throws IOException {
-        if (chunks.isEmbeddedMessage()) {
-            var embedded = chunks.getEmbeddedMessage();
-            String nestedEml;
-            try {
-                var stringWriter = new java.io.StringWriter();
-                convert(embedded, depth + 1, stringWriter);
-                nestedEml = stringWriter.toString();
-            } catch (ChunkNotFoundException failure) {
-                throw new IOException("Could not read embedded message: " + failure.getMessage(), failure);
+                if (console != null)
+                    console.info(ConversionConsoleService.Tab.MSG, "Found attachment: " + filename + " (" + mime + ")");
+                serializer.addAttachment(filename, mime, bytes, contentId, isInline);
             }
-            var subject = safeString(safeSubject(embedded));
-            var filename = sanitizeFilename(subject.isBlank() ? "embedded" : subject) + ".eml";
-            var headers = new StringBuilder();
-            headers.append("Content-Type: message/rfc822").append(CRLF);
-            headers.append("Content-Transfer-Encoding: 7bit").append(CRLF);
-            headers.append("Content-Disposition: attachment; filename=\"")
-                    .append(encodeFilename(filename))
-                    .append('"')
-                    .append(CRLF);
-            return new EmittedPart(headers.toString(), nestedEml);
         }
-
-        var bytes = attachmentBytes(chunks);
-        var filename = pickFilename(chunks);
-        var mime = pickMimeType(chunks);
-        var headers = new StringBuilder();
-        headers.append("Content-Type: ").append(mime);
-        if (filename != null) {
-            headers.append("; name=\"").append(encodeFilename(filename)).append('"');
-        }
-        headers.append(CRLF);
-        headers.append("Content-Transfer-Encoding: base64").append(CRLF);
-        if (filename != null) {
-            headers.append("Content-Disposition: attachment; filename=\"")
-                    .append(encodeFilename(filename))
-                    .append('"')
-                    .append(CRLF);
-        } else {
-            headers.append("Content-Disposition: attachment").append(CRLF);
-        }
-        return new EmittedPart(headers.toString(), encodeBase64Wrapped(bytes));
     }
 
     private static byte[] attachmentBytes(AttachmentChunks chunks) {
         var dataChunk = chunks.getAttachData();
-        if (dataChunk == null) {
-            return new byte[0];
+        if (dataChunk != null && dataChunk.getValue() != null) {
+            return dataChunk.getValue();
         }
-        var value = dataChunk.getValue();
-        return value == null ? new byte[0] : value;
+        var dirChunk = chunks.getAttachmentDirectory();
+        if (dirChunk != null && dirChunk.getDirectory() != null) {
+            try (var fs = new POIFSFileSystem()) {
+                EntryUtils.copyNodeRecursively(dirChunk.getDirectory(), fs.getRoot());
+                var out = new ByteArrayOutputStream();
+                fs.writeFilesystem(out);
+                return out.toByteArray();
+            } catch (Exception ignored) {
+            }
+        }
+        return new byte[0];
     }
 
     private static String pickFilename(AttachmentChunks chunks) {
@@ -340,7 +239,16 @@ public final class MsgToEmlConverter {
         return chunk == null ? null : chunk.getValue();
     }
 
-    private static String resolveSender(MAPIMessage message) {
+    private static String pickContentId(AttachmentChunks chunks) {
+        var contentId = chunkValue(chunks.getAttachContentId());
+        if (contentId == null || contentId.isBlank()) {
+            return null;
+        }
+        var trimmed = contentId.trim();
+        return trimmed.isBlank() ? null : trimmed;
+    }
+
+    private static String resolveSenderName(MAPIMessage message) {
         String name = null;
         try {
             name = message.getDisplayFrom();
@@ -350,101 +258,87 @@ public final class MsgToEmlConverter {
         if (name == null || name.isBlank()) {
             name = readMainString(message, MAPIProperty.SENDER_NAME);
         }
-        var email = readMainString(message, MAPIProperty.SENDER_EMAIL_ADDRESS);
+        return name;
+    }
+
+    private static String resolveSenderEmail(MAPIMessage message) {
+        var senderSmtpAddress = MAPIProperty.createCustom(0x5D01, Types.ASCII_STRING, "SENDER_SMTP_ADDRESS");
+        var sentRepresentingSmtpAddress =
+                MAPIProperty.createCustom(0x5D02, Types.ASCII_STRING, "SENT_REPRESENTING_SMTP_ADDRESS");
+
+        var email = readMainString(message, senderSmtpAddress);
+        if (email == null || email.isBlank()) {
+            email = readMainString(message, sentRepresentingSmtpAddress);
+        }
+        if (email == null || email.isBlank()) {
+            email = readMainString(message, MAPIProperty.SENDER_EMAIL_ADDRESS);
+            if (email != null && !email.isBlank()) {
+                String addrType = readMainString(message, MAPIProperty.SENDER_ADDRTYPE);
+                email = EmlSerializer.imceaEncapsulate(addrType, email);
+            }
+        }
         if (email == null || email.isBlank()) {
             email = readMainString(message, MAPIProperty.SENT_REPRESENTING_EMAIL_ADDRESS);
+            if (email != null && !email.isBlank()) {
+                String addrType = readMainString(message, MAPIProperty.SENT_REPRESENTING_ADDRTYPE);
+                email = EmlSerializer.imceaEncapsulate(addrType, email);
+            }
         }
-        return formatAddress(name, email);
+        return email;
     }
 
-    private static String joinRecipients(MAPIMessage message, int wantedType) {
+    private static void populateRecipients(MAPIMessage message, int wantedType, EmlSerializer serializer) {
         var details = message.getRecipientDetailsChunks();
-        if (details == null || details.length == 0) {
-            return "";
-        }
-        var addresses = new ArrayList<String>();
-        for (var chunks : details) {
-            var type = readRecipientType(chunks);
-            if (type != null && type == wantedType) {
-                addresses.add(formatAddress(chunks.getRecipientName(), chunks.getRecipientEmailAddress()));
+        if (details != null && details.length > 0) {
+            boolean found = false;
+            for (var chunks : details) {
+                var type = readRecipientType(chunks);
+                if (type != null && type == wantedType) {
+                    String address = chunks.getRecipientEmailAddress();
+
+                    var smtpAddressProp = MAPIProperty.createCustom(0x39FE, Types.ASCII_STRING, "SMTP_ADDRESS");
+                    var chunkList = chunks.getProperties().get(smtpAddressProp);
+                    String smtpAddress = null;
+                    if (chunkList != null && !chunkList.isEmpty()) {
+                        var val = chunkList.get(0).getValue();
+                        if (val instanceof String s) smtpAddress = s;
+                    }
+
+                    if (smtpAddress != null && !smtpAddress.isBlank()) {
+                        address = smtpAddress;
+                    } else if (address != null) {
+                        String addrType = chunkValue(chunks.getDeliveryTypeChunk());
+                        address = EmlSerializer.imceaEncapsulate(addrType, address);
+                    }
+                    serializer.addRecipient(wantedType, chunks.getRecipientName(), address);
+                    found = true;
+                }
             }
+            if (found) return;
         }
-        return String.join(", ", addresses);
-    }
 
-    static String formatAddress(String name, String email) {
-        var trimmedEmail = email == null ? "" : email.trim();
-        var trimmedName = name == null ? "" : name.trim();
-        if (trimmedEmail.isEmpty()) {
-            return encodeHeaderIfNeeded(trimmedName);
-        }
-        if (trimmedName.isEmpty()) {
-            return "<" + trimmedEmail + ">";
-        }
-        if (isPureAscii(trimmedName)) {
-            return "\"" + trimmedName.replace("\\", "\\\\").replace("\"", "\\\"") + "\" <" + trimmedEmail + ">";
-        }
-        return encodeHeaderIfNeeded(trimmedName) + " <" + trimmedEmail + ">";
-    }
-
-    static String encodeHeaderIfNeeded(String value) {
-        if (value == null || value.isEmpty()) {
-            return "";
-        }
-        if (isPureAscii(value)) {
-            return value;
-        }
-        var encoded = Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
-        return "=?UTF-8?B?" + encoded + "?=";
-    }
-
-    static String formatRfc2822Date(Date date) {
-        Objects.requireNonNull(date, "date");
-        var formatter = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss Z", Locale.ENGLISH);
-        return formatter.format(date);
-    }
-
-    private static String encodeFilename(String filename) {
-        return encodeHeaderIfNeeded(filename);
-    }
-
-    private static String sanitizeFilename(String name) {
-        var trimmed = name.trim();
-        var builder = new StringBuilder(trimmed.length());
-        for (var index = 0; index < trimmed.length(); index++) {
-            var character = trimmed.charAt(index);
-            if (character < 0x20 || "\\/:*?\"<>|".indexOf(character) >= 0) {
-                builder.append('_');
-            } else {
-                builder.append(character);
+        try {
+            String fallback = null;
+            if (wantedType == EmlSerializer.RECIPIENT_TYPE_TO) {
+                fallback = message.getDisplayTo();
+            } else if (wantedType == EmlSerializer.RECIPIENT_TYPE_CC) {
+                fallback = message.getDisplayCC();
+            } else if (wantedType == EmlSerializer.RECIPIENT_TYPE_BCC) {
+                fallback = message.getDisplayBCC();
             }
-        }
-        var result = builder.toString().trim();
-        return result.isEmpty() ? "embedded" : result;
-    }
-
-    private static String encodeBase64Wrapped(byte[] payload) {
-        var encoded = Base64.getMimeEncoder(76, CRLF.getBytes(StandardCharsets.US_ASCII))
-                .encodeToString(payload);
-        return encoded + CRLF;
-    }
-
-    static boolean isPureAscii(String value) {
-        for (var index = 0; index < value.length(); index++) {
-            if (value.charAt(index) > 0x7F) {
-                return false;
+            if (fallback != null && !fallback.isBlank()) {
+                // PR_DISPLAY_TO/CC/BCC is MAPI's own semicolon-delimited display string; split on ";"
+                // with surrounding whitespace absorbed. This is a last-resort fallback only reached when
+                // the structured recipient table above is unavailable.
+                for (String part : fallback.split("\\s*;\\s*")) {
+                    part = part.trim();
+                    if (!part.isEmpty()) {
+                        serializer.addRecipient(wantedType, part, part);
+                    }
+                }
             }
+        } catch (ChunkNotFoundException ignored) {
         }
-        return true;
-    }
-
-    private static int firstNonAsciiIndex(String text) {
-        for (var index = 0; index < text.length(); index++) {
-            if (text.charAt(index) > 0x7F) {
-                return index;
-            }
-        }
-        return -1;
     }
 
     private static String safeString(String value) {
@@ -534,12 +428,4 @@ public final class MsgToEmlConverter {
             return null;
         }
     }
-
-    private record Body(String text, String contentType) {
-        byte[] utf8Bytes() {
-            return text.getBytes(StandardCharsets.UTF_8);
-        }
-    }
-
-    private record EmittedPart(String headers, String encodedBody) {}
 }

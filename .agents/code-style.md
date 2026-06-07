@@ -1,6 +1,7 @@
 # Code Style
 
 - Do not use asterisk (`*`) wildcard imports; always import types explicitly
+- do not use fully qualified class names in code (e.g. `java.nio.charset.CodingErrorAction`); always import them instead
 - use methods from java.util.Objects for null checks
 - use `var` for value declaration
 - use a descriptive named throwaway (e.g. `ignored`, `event`) for unused catch parameters and unused lambda parameters — the project targets JDK 21 bytecode, so `_` (Java 22+) is not available

@@ -5,6 +5,7 @@
 !.claude/commands/**
 !.claude/hooks/
 !.claude/hooks/**
+!.claude/agents
 .claude/settings.local.json
 .claude/worktrees/
 .antigravitycli

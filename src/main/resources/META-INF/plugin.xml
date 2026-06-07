@@ -16,6 +16,7 @@
         <ul>
           <li><strong>Attachment Management:</strong> Save attachments to disk or open them directly with the system app. Supports decoding for base64, quoted-printable, 7bit, 8bit, and binary parts. Includes confirmation prompts before opening executables.</li>
           <li><strong>Outlook MSG Conversion:</strong> Convert <code>.msg</code> files to standards-compliant <code>.eml</code> right from the Project view, complete with full internet transport header extraction. If original headers are missing, MailKit synthesizes them from MAPI properties and documents them in an <code>X-MailKit-Synthesized-Headers</code> field for full transparency. It also features <code>multipart/alternative</code> body selection and recursive embedded-message support.</li>
+          <li><strong>Outlook PST/OST Conversion:</strong> Convert entire <code>.pst</code> or <code>.ost</code> archives into a directory tree of standard EML files, with duplicate handling, optional message limits, and seamless support for Highly Encrypted and Password Protected files. Automatically falls back to internal legacyExchangeDN routing addresses when standard SMTP information is missing. As with MSG conversion, messages lacking original internet headers have them synthesized from MAPI properties and recorded in an <code>X-MailKit-Synthesized-Headers</code> field. Optionally recovers soft-deleted and orphaned messages that are no longer linked into the folder tree. Calendar appointments and meeting requests are exported with an attached <code>invite.ics</code>.</li>
         </ul>
 
         <h3>Inspections & Validation</h3>
@@ -48,6 +49,16 @@
                   implementationClass="com.github.ttereshchenko.mailkit.conversion.msg.MsgFileType"
                   fieldName="INSTANCE"
                   extensions="msg"/>
+
+        <fileType name="PST"
+                  implementationClass="com.github.ttereshchenko.mailkit.conversion.pst.PstFileType"
+                  fieldName="INSTANCE"
+                  extensions="pst"/>
+
+        <fileType name="OST"
+                  implementationClass="com.github.ttereshchenko.mailkit.conversion.pst.OstFileType"
+                  fieldName="INSTANCE"
+                  extensions="ost"/>
 
         <lang.parserDefinition
                 language="EML"
@@ -86,8 +97,8 @@
 
         <notificationGroup id="MailKit" displayType="BALLOON"/>
 
-        <toolWindow id="MailKit SMTP" anchor="bottom" icon="AllIcons.Actions.Lightning"
-                factoryClass="com.github.ttereshchenko.mailkit.smtp.ui.SmtpConsoleToolWindowFactory"/>
+        <toolWindow id="MailKit" anchor="bottom" icon="AllIcons.Actions.Lightning"
+                factoryClass="com.github.ttereshchenko.mailkit.ui.MailKitToolWindowFactory"/>
 
         <localInspection language="EML" groupName="MailKit" shortName="MissingRequiredHeader"
                 displayName="Missing required header" enabledByDefault="true" level="WARNING"
@@ -125,33 +136,45 @@
         <action id="mailkit.SaveAttachment"
                 class="com.github.ttereshchenko.mailkit.attachment.SaveAttachmentAction"
                 text="Save Attachment As…"
-                description="Decode the enclosing MIME part and save it to disk">
+                description="Decode the enclosing MIME part and save it to disk"
+                icon="/icons/eml.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
         <action id="mailkit.OpenAttachmentWithSystemApp"
                 class="com.github.ttereshchenko.mailkit.attachment.OpenAttachmentWithSystemAppAction"
                 text="Open Attachment with System App"
-                description="Decode the enclosing MIME part to a temp file and hand it to the OS">
+                description="Decode the enclosing MIME part to a temp file and hand it to the OS"
+                icon="/icons/eml.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="after"
                           relative-to-action="mailkit.SaveAttachment"/>
         </action>
         <action id="mailkit.ConvertMsgToEml"
                 class="com.github.ttereshchenko.mailkit.conversion.msg.ConvertMsgToEmlAction"
                 text="Convert to EML"
-                description="Convert the selected Outlook MSG file to a standards-compliant EML file">
+                description="Convert the selected Outlook MSG file to a standards-compliant EML file"
+                icon="/icons/eml.svg">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action id="mailkit.ConvertPstToEml"
+                class="com.github.ttereshchenko.mailkit.conversion.pst.ConvertPstToEmlAction"
+                text="Convert to EML…"
+                description="Convert the selected Outlook PST/OST archive to EML files"
+                icon="/icons/eml.svg">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
         <action id="mailkit.SendViaSmtp"
                 class="com.github.ttereshchenko.mailkit.smtp.ui.SendViaSmtpAction"
                 text="Send EML…"
-                description="Send this EML message through a configured SMTP server">
+                description="Send this EML message through a configured SMTP server"
+                icon="/icons/eml.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
         <action id="mailkit.ShowRecentSmtpSends"
                 class="com.github.ttereshchenko.mailkit.smtp.ui.ShowRecentSmtpSendsAction"
                 text="Show Recent SMTP Sends…"
-                description="Open the audit log of past SMTP sends from this project">
+                description="Open the audit log of past SMTP sends from this project"
+                icon="/icons/eml.svg">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
     </actions>
