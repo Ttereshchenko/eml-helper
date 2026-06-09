@@ -17,7 +17,7 @@ import java.util.Map;
  * Parses Table Context (TC) structures stored within a Node's data block.
  * A TC provides rows of properties (columns), used for Folder Hierarchy and Message tables.
  */
-public class TableContext {
+class TableContext {
 
     // TODO: re-visit log
     // private static final Logger LOG = Logger.getInstance(TableContext.class);

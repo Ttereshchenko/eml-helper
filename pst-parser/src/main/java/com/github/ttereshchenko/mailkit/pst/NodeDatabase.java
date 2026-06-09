@@ -15,7 +15,7 @@ import java.util.Set;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
-public final class NodeDatabase {
+final class NodeDatabase {
 
     // TODO: re-visit log
     // private static final Logger LOG = Logger.getInstance(NodeDatabase.class);

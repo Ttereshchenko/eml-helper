@@ -1,10 +1,16 @@
 package com.github.ttereshchenko.mailkit.pst;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class PropertyContextTest {
@@ -39,5 +45,36 @@ class PropertyContextTest {
 
         PropertyContext context = assertDoesNotThrow(() -> new PropertyContext(data, null, null));
         assertNull(context.getProperty(0x0037), "No properties should be parsed from a rejected BTH");
+    }
+
+    /**
+     * String8 (PtypString8) properties hold raw code-page bytes; {@code decodeString8} must re-decode
+     * them with the message's charset. Moved here from the plugin's conversion test once
+     * {@code PropertyContext} stopped being part of the library's public API.
+     */
+    @Test
+    void decodesString8PropertiesUsingProvidedCharset() throws Exception {
+        // The Windows-1252 bytes for em-dash (0x97) and right double quotation mark (0x94).
+        byte[] emDashBytes = new byte[] {(byte) 0x97, (byte) 0x94};
+
+        PropertyContext propertyContext = new PropertyContext(null, null, null);
+
+        Field propsField = PropertyContext.class.getDeclaredField("properties");
+        propsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<Integer, Object> props = (Map<Integer, Object>) propsField.get(propertyContext);
+
+        Field string8TagsField = PropertyContext.class.getDeclaredField("string8Tags");
+        string8TagsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Set<Integer> string8Tags = (Set<Integer>) string8TagsField.get(propertyContext);
+
+        // Emulate parseLeafNode placing the String8 decoded as ISO-8859-1 initially.
+        props.put(0x0037, new String(emDashBytes, StandardCharsets.ISO_8859_1));
+        string8Tags.add(0x0037);
+
+        propertyContext.decodeString8(Charset.forName("windows-1252"));
+
+        assertEquals("—”", props.get(0x0037), "String8 bytes should be decoded using the provided charset");
     }
 }
