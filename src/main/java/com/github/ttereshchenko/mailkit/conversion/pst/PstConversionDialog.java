@@ -8,6 +8,7 @@ import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.ContextHelpLabel;
+import com.intellij.ui.SimpleListCellRenderer;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBTextField;
 import com.intellij.util.ui.FormBuilder;
@@ -49,6 +50,8 @@ public class PstConversionDialog extends DialogWrapper {
 
         addressPreferenceCombo = new JComboBox<>(Message.AddressPreference.values());
         addressPreferenceCombo.setSelectedItem(Message.AddressPreference.PREFER_SMTP);
+        addressPreferenceCombo.setRenderer(
+                SimpleListCellRenderer.create("", PstConversionDialog::addressPreferenceLabel));
 
         messageCountLimitField = new JBTextField();
         messageCountLimitField.getEmptyText().setText("Leave empty for no limit");
@@ -137,6 +140,15 @@ public class PstConversionDialog extends DialogWrapper {
 
     public Message.AddressPreference getAddressPreference() {
         return (Message.AddressPreference) addressPreferenceCombo.getSelectedItem();
+    }
+
+    // Human-readable labels for the address-preference dropdown live here, in the UI layer, rather
+    // than on the parser library's enum (see AddressPreference).
+    private static String addressPreferenceLabel(Message.AddressPreference preference) {
+        return switch (preference) {
+            case PREFER_SMTP -> "Prefer SMTP Address";
+            case PREFER_LEGACY_DN -> "Prefer Legacy Exchange DN";
+        };
     }
 
     public Integer getMessageCountLimit() {

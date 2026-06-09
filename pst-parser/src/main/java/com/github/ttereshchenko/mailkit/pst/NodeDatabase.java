@@ -64,10 +64,10 @@ public final class NodeDatabase {
     }
 
     public byte[] readNodeData(long bid) throws IOException {
-        return readNodeData(bid, 0, new java.util.HashSet<>(), new long[] {0});
+        return readNodeData(bid, 0, new HashSet<>(), new long[] {0});
     }
 
-    private byte[] readNodeData(long bid, int depth, java.util.Set<Long> visited, long[] totalSize) throws IOException {
+    private byte[] readNodeData(long bid, int depth, Set<Long> visited, long[] totalSize) throws IOException {
         if (!visited.add(bid)) {
             throw new PstException("Cyclic node reference detected: " + bid);
         }
@@ -86,7 +86,6 @@ public final class NodeDatabase {
             if (bType != 0x01) {
                 throw new PstException("Invalid XBLOCK type: " + bType);
             }
-            int cLevel = Byte.toUnsignedInt(buffer.get(1));
             int cEnt = Short.toUnsignedInt(buffer.getShort(2));
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
