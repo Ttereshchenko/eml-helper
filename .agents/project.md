@@ -14,7 +14,7 @@
 
 ## Architecture
 
-Multi-project Gradle build consisting of the root plugin module and `smtp-client` subproject.
+Multi-project Gradle build consisting of the root plugin module and two pure Java subprojects (`smtp-client`, `pst-parser`).
 
 **Root Module (mailkit)**
 Source code under `src/main/java/com/github/ttereshchenko/mailkit/`.
@@ -40,8 +40,13 @@ Standalone pure Java library with the core SMTP send stack under `smtp-client/sr
 
 SMTP integration tests live in a SEPARATE `smtp-client/src/integrationTest/` source set that uses
 Testcontainers/Mailpit (kept apart so transitive JNA doesn't crash IntelliJ's
-Foundation init on macOS). For the always-current package/symbol map prefer Serena
-(`mem:code_architecture`, `mem:smtp/core`) over this summary.
+Foundation init on macOS).
+
+**Subproject (pst-parser)**
+Standalone pure Java library containing the PST extraction, parsing, and decompression logic under `pst-parser/src/main/java/com/github/ttereshchenko/mailkit/pst/`. Used for converting Outlook PST/OST archives.
+
+For the always-current package/symbol map prefer Serena
+(`mem:code_architecture`, `mem:smtp/core`, `mem:pst/core`) over this summary.
 
 ## Code Navigation
 

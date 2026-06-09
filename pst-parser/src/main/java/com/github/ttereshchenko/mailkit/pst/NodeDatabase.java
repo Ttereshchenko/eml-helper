@@ -1,6 +1,7 @@
-package com.github.ttereshchenko.mailkit.conversion.pst;
+package com.github.ttereshchenko.mailkit.pst;
 
-import com.intellij.openapi.diagnostic.Logger;
+// TODO: re-visit log
+// import com.intellij.openapi.diagnostic.Logger;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -16,7 +17,8 @@ import java.util.zip.Inflater;
 
 public final class NodeDatabase {
 
-    private static final Logger LOG = Logger.getInstance(NodeDatabase.class);
+    // TODO: re-visit log
+    // private static final Logger LOG = Logger.getInstance(NodeDatabase.class);
 
     private final FileChannel channel;
     private final PstFile.Format format;
@@ -130,7 +132,8 @@ public final class NodeDatabase {
                 } catch (Exception err2) {
                     // Both inflate attempts failed; keep the raw (still-compressed) bytes as a
                     // best-effort fallback, but log so the resulting garbage is traceable.
-                    LOG.debug("Failed to decompress 2013 block " + bid + "; using raw bytes", err2);
+                    // TODO: re-visit log
+                    // LOG.debug("Failed to decompress 2013 block " + bid + "; using raw bytes", err2);
                 }
             }
         }

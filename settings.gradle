@@ -4,3 +4,4 @@ plugins {
 
 rootProject.name = 'mailkit'
 include 'smtp-client'
+include 'pst-parser'

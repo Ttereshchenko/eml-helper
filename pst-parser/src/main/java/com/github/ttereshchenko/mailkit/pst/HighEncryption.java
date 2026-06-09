@@ -1,4 +1,4 @@
-package com.github.ttereshchenko.mailkit.conversion.pst;
+package com.github.ttereshchenko.mailkit.pst;
 
 public final class HighEncryption {
 

@@ -1,6 +1,7 @@
-package com.github.ttereshchenko.mailkit.conversion.pst;
+package com.github.ttereshchenko.mailkit.pst;
 
-import com.intellij.openapi.diagnostic.Logger;
+// TODO: re-visit log
+// import com.intellij.openapi.diagnostic.Logger;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -19,7 +20,8 @@ import java.util.Set;
  */
 public class PropertyContext {
 
-    private static final Logger LOG = Logger.getInstance(PropertyContext.class);
+    // TODO: re-visit log
+    // private static final Logger LOG = Logger.getInstance(PropertyContext.class);
 
     private final Map<Integer, Object> properties = new HashMap<>();
     private final Set<Integer> string8Tags = new HashSet<>();
@@ -112,7 +114,9 @@ public class PropertyContext {
                             try {
                                 data = nodeDatabase.readSubnodeData(node.subBid(), val);
                             } catch (IOException exception) {
-                                LOG.warn("Failed to read subnode data for property tag " + tag, exception);
+                                // TODO: re-visit log
+                                // LOG.warn("Failed to read external property data for tag 0x" +
+                                // Integer.toHexString(tag), exception);
                             }
                         }
                     }

@@ -5,6 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
+import com.github.ttereshchenko.mailkit.pst.Attachment;
+import com.github.ttereshchenko.mailkit.pst.Message;
+import com.github.ttereshchenko.mailkit.pst.NodeEntry;
+import com.github.ttereshchenko.mailkit.pst.PstFile;
 import java.io.StringWriter;
 import java.nio.file.Path;
 import java.nio.file.Paths;
