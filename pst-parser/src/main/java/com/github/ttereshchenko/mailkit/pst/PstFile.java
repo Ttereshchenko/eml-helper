@@ -6,7 +6,9 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Entry point for reading an Outlook PST/OST personal-folders file ([MS-PST]).
@@ -19,9 +21,9 @@ import java.util.Objects;
  * <p>This is an {@link AutoCloseable} resource: always use it in a try-with-resources block so the
  * underlying channel is released.
  *
- * <p><strong>Thread-safety:</strong> instances are <em>not</em> thread-safe. {@link #nameToIdMap()}
- * lazily builds and caches the store-wide named-property map without synchronization, so a single
- * {@code PstFile} must be confined to one thread.
+ * <p><strong>Thread-safety:</strong> instances are <em>not</em> thread-safe. The store-wide
+ * named-property map backing {@link #namedPropertyId} is built and cached lazily without
+ * synchronization, so a single {@code PstFile} must be confined to one thread.
  */
 public final class PstFile implements AutoCloseable {
 
@@ -116,16 +118,53 @@ public final class PstFile implements AutoCloseable {
         }
     }
 
-    public NodeDatabase nodeDatabase() {
+    NodeDatabase nodeDatabase() {
         return nodeDatabase;
     }
 
     /** The store-wide named-property map, parsed once and cached for the life of this file. */
-    public NameToIdMap nameToIdMap() {
+    NameToIdMap nameToIdMap() {
         if (nameToIdMap == null) {
             nameToIdMap = new NameToIdMap(nodeDatabase);
         }
         return nameToIdMap;
+    }
+
+    /**
+     * The node with the given node id, or {@code null} if the store has no such node (or failed to
+     * load its node database). Low-level access for callers that must resolve nodes the high-level
+     * {@link Folder}/{@link Message} API does not surface, such as the root folder node or
+     * orphan-recovery scans.
+     */
+    public NodeEntry getNode(int nodeId) {
+        return nodeDatabase == null ? null : nodeDatabase.getNode(nodeId);
+    }
+
+    /**
+     * An unmodifiable view of every node in the store's node b-tree (NBT), keyed by node id; empty if
+     * the store failed to load its node database. Intended for full-store scans, e.g. recovering
+     * messages that no folder references.
+     */
+    public Map<Integer, NodeEntry> allNodes() {
+        return nodeDatabase == null ? Map.of() : nodeDatabase.getAllNodes();
+    }
+
+    /**
+     * Resolves a sub-node entry (for example an embedded message) within the given parent sub-node
+     * b-tree, or {@code null} if it cannot be found.
+     *
+     * @throws IOException if the underlying store cannot be read
+     */
+    public NodeEntry readSubnodeEntry(long subnodeBid, int targetNodeId) throws IOException {
+        return nodeDatabase == null ? null : nodeDatabase.readSubnodeEntry(subnodeBid, targetNodeId);
+    }
+
+    /**
+     * The property id this store assigned to a named property, identified by its property-set GUID and
+     * numeric id, or {@code null} if the store defines no such named property.
+     */
+    public Integer namedPropertyId(UUID propertySetGuid, int propertyId) {
+        return nameToIdMap().getId(propertySetGuid, propertyId);
     }
 
     public Format format() {

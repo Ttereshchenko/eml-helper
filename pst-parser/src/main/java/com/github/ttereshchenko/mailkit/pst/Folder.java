@@ -53,10 +53,6 @@ public class Folder {
         return nid;
     }
 
-    public PstFile getPstFile() {
-        return pstFile;
-    }
-
     public List<Integer> getMessages() throws PstException {
         List<Integer> messages = new ArrayList<>();
         int contentsNid = (nid & 0xFFFFFFE0) | 0x0E; // NID_TYPE_CONTENTS_TABLE

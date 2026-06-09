@@ -18,7 +18,7 @@ import java.util.Set;
  * Parses Property Context (PC) structures stored within a Node's data block.
  * A PC is essentially a BTree-on-Heap (BTH) that maps 16-bit property IDs (tags) to property values.
  */
-public class PropertyContext {
+class PropertyContext {
 
     // TODO: re-visit log
     // private static final Logger LOG = Logger.getInstance(PropertyContext.class);

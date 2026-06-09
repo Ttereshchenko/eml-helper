@@ -132,11 +132,7 @@ public final class PstToEmlConverter {
             PstFile pstFile, Path targetDir, Options options, ProgressIndicator indicator, ConversionLog log)
             throws IOException {
         var stats = new Stats();
-        var database = pstFile.nodeDatabase();
-        if (database == null) {
-            return stats;
-        }
-        var rootFolderNode = database.getNode(NID_ROOT_FOLDER);
+        var rootFolderNode = pstFile.getNode(NID_ROOT_FOLDER);
         if (rootFolderNode == null) {
             return stats;
         }
@@ -209,11 +205,7 @@ public final class PstToEmlConverter {
             Set<Integer> visitedFolders,
             Set<Integer> knownMessages,
             Map<Path, Integer> nameCounters) {
-        var database = pstFile.nodeDatabase();
-        if (database == null) {
-            return;
-        }
-        var candidates = findUnreferencedMessages(database.getAllNodes(), knownMessages, visitedFolders);
+        var candidates = findUnreferencedMessages(pstFile.allNodes(), knownMessages, visitedFolders);
         Path dumpsterDir = null;
         Path orphanDir = null;
         for (var candidate : candidates) {
@@ -542,12 +534,9 @@ public final class PstToEmlConverter {
             serializer.setMessageId(messageId);
         }
 
-        var propCtx = message.getPropertyContext();
-        if (propCtx != null) {
-            Object sclObj = propCtx.getProperty(MapiProperties.PR_CONTENT_FILTER_SPAM_CONFIDENCE_LEVEL);
-            if (sclObj instanceof Number n) {
-                serializer.setScl(n.intValue());
-            }
+        Object sclObj = message.getProperty(MapiProperties.PR_CONTENT_FILTER_SPAM_CONFIDENCE_LEVEL);
+        if (sclObj instanceof Number n) {
+            serializer.setScl(n.intValue());
         }
 
         serializer.setSender(message.getSenderName(), message.getSenderEmail());
@@ -573,24 +562,15 @@ public final class PstToEmlConverter {
         // (IPM.Schedule.Meeting.*); both store the start/end/location named properties below.
         if (msgClass != null
                 && (msgClass.startsWith("IPM.Appointment") || msgClass.startsWith("IPM.Schedule.Meeting"))) {
-            var nameToId = pstFile.nameToIdMap();
             java.util.UUID psetidAppointment = java.util.UUID.fromString("00062002-0000-0000-C000-000000000046");
-            Integer startId = nameToId.getId(psetidAppointment, 0x820D);
-            Integer endId = nameToId.getId(psetidAppointment, 0x820E);
-            Integer locId = nameToId.getId(psetidAppointment, 0x8208);
+            Integer startId = pstFile.namedPropertyId(psetidAppointment, 0x820D);
+            Integer endId = pstFile.namedPropertyId(psetidAppointment, 0x820E);
+            Integer locId = pstFile.namedPropertyId(psetidAppointment, 0x8208);
 
-            var appointmentPc = message.getPropertyContext();
-            java.util.Date start = startId != null
-                            && appointmentPc != null
-                            && appointmentPc.getProperty(startId) instanceof java.util.Date d
-                    ? d
-                    : null;
-            java.util.Date end = endId != null
-                            && appointmentPc != null
-                            && appointmentPc.getProperty(endId) instanceof java.util.Date d
-                    ? d
-                    : null;
-            String location = locId != null && appointmentPc != null ? appointmentPc.getString(locId) : null;
+            java.util.Date start =
+                    startId != null && message.getProperty(startId) instanceof java.util.Date d ? d : null;
+            java.util.Date end = endId != null && message.getProperty(endId) instanceof java.util.Date d ? d : null;
+            String location = locId != null ? message.getStringProperty(locId) : null;
 
             String ical = com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator.generate(
                     start,
@@ -627,10 +607,9 @@ public final class PstToEmlConverter {
                 if (embedNid != null) {
                     log.info("Found embedded message attachment: " + attachName);
                     try {
-                        var nodeDb = pstFile.nodeDatabase();
-                        var attachNode = attachment.getPropertyContext().getNode();
+                        var attachNode = attachment.getNode();
                         if (attachNode != null) {
-                            NodeEntry embedEntry = nodeDb.readSubnodeEntry(attachNode.subBid(), embedNid);
+                            NodeEntry embedEntry = pstFile.readSubnodeEntry(attachNode.subBid(), embedNid);
                             if (embedEntry != null) {
                                 var embedMessage = new Message(pstFile, embedEntry);
                                 embedMessage.setAddressPreference(options.addressPreference());

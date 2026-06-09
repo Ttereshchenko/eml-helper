@@ -520,8 +520,25 @@ public class Message {
         return "";
     }
 
-    public PropertyContext getPropertyContext() {
+    PropertyContext getPropertyContext() {
         return propertyContext;
+    }
+
+    /**
+     * The raw MAPI property value for the given tag, or {@code null} if the message has no such
+     * property. Low-level access for tags the typed getters do not cover (e.g. the spam-confidence
+     * level or appointment start/end named properties).
+     */
+    public Object getProperty(int propertyTag) {
+        return propertyContext == null ? null : propertyContext.getProperty(propertyTag);
+    }
+
+    /**
+     * The raw MAPI property value for the given tag as a {@code String}, or {@code null} if the
+     * property is absent or not a string.
+     */
+    public String getStringProperty(int propertyTag) {
+        return propertyContext == null ? null : propertyContext.getString(propertyTag);
     }
 
     private static String imceaEncapsulate(String addrType, String address) {

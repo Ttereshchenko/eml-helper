@@ -8,7 +8,6 @@ import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.pst.Attachment;
 import com.github.ttereshchenko.mailkit.pst.Folder;
 import com.github.ttereshchenko.mailkit.pst.Message;
-import com.github.ttereshchenko.mailkit.pst.PropertyContext;
 import com.github.ttereshchenko.mailkit.pst.PstFile;
 import com.intellij.openapi.progress.util.ProgressIndicatorBase;
 import java.nio.file.Path;
@@ -25,36 +24,6 @@ class PstConversionTest {
             assertNotNull(rootFolder);
             assertDoesNotThrow(rootFolder::getSubFolders);
         }
-    }
-
-    @Test
-    void testPropertyContextString8Decoding() throws Exception {
-        // We create an empty PropertyContext and use reflection to inject a fake String8 property
-        // The Windows-1252 byte for em-dash is 0x97.
-        byte[] emDashBytes = new byte[] {(byte) 0x97, (byte) 0x94}; // em-dash (151), right double quote (148)
-
-        PropertyContext propertyContext = new PropertyContext(null, null, null);
-
-        java.lang.reflect.Field propsField = propertyContext.getClass().getDeclaredField("properties");
-        propsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        java.util.Map<Integer, Object> props = (java.util.Map<Integer, Object>) propsField.get(propertyContext);
-
-        java.lang.reflect.Field string8TagsField = propertyContext.getClass().getDeclaredField("string8Tags");
-        string8TagsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        java.util.Set<Integer> string8Tags = (java.util.Set<Integer>) string8TagsField.get(propertyContext);
-
-        // Emulate parseLeafNode placing the String8 encoded as ISO-8859-1 initially
-        props.put(0x0037, new String(emDashBytes, java.nio.charset.StandardCharsets.ISO_8859_1));
-        string8Tags.add(0x0037);
-
-        // Decode using windows-1252
-        propertyContext.decodeString8(java.nio.charset.Charset.forName("windows-1252"));
-
-        String decoded = (String) props.get(0x0037);
-        org.junit.jupiter.api.Assertions.assertEquals(
-                "—”", decoded, "String8 bytes should be decoded using the provided charset");
     }
 
     @Test
@@ -100,18 +69,18 @@ class PstConversionTest {
                     "Expected exactly 3 messages to be extracted from the 2013 OST (ZLIB decompression)");
 
             // Assert content on the first message we find
-            var msg = findFirstMessage(rootFolder);
+            var msg = findFirstMessage(pstFile, rootFolder);
             assertNotNull(msg);
             var subject = msg.getSubject();
             assertNotNull(subject);
         }
     }
 
-    private Message findFirstMessage(Folder folder) throws Exception {
+    private Message findFirstMessage(PstFile pstFile, Folder folder) throws Exception {
         if (!folder.getMessages().isEmpty())
-            return new Message(folder.getPstFile(), folder.getMessages().get(0));
+            return new Message(pstFile, folder.getMessages().get(0));
         for (Folder sub : folder.getSubFolders()) {
-            Message msg = findFirstMessage(sub);
+            Message msg = findFirstMessage(pstFile, sub);
             if (msg != null) return msg;
         }
         return null;
@@ -296,16 +265,45 @@ class PstConversionTest {
 
                 @Override
                 public java.util.List<Attachment> getAttachments() {
-                    return java.util.List.of(new Attachment(
-                            new PropertyContext(new byte[0], pstFile.nodeDatabase(), null) {
-                                @Override
-                                public Object getProperty(int tag) {
-                                    if (tag == 0x3704) return "test.txt";
-                                    if (tag == 0x370E) return "text/plain";
-                                    if (tag == 0x3701) return new byte[] {1, 2, 3, 4, 5};
-                                    return null;
-                                }
-                            }));
+                    // Test double: subclass the public Attachment and override only the accessors the
+                    // converter reads. The library's PropertyContext/NodeDatabase internals are no longer
+                    // part of the public API, so the attachment is faked at the public surface instead.
+                    return java.util.List.of(new Attachment() {
+                        @Override
+                        public String getLongFilename() {
+                            return "";
+                        }
+
+                        @Override
+                        public String getFilename() {
+                            return "test.txt";
+                        }
+
+                        @Override
+                        public String getMimeTag() {
+                            return "text/plain";
+                        }
+
+                        @Override
+                        public byte[] getData() {
+                            return new byte[] {1, 2, 3, 4, 5};
+                        }
+
+                        @Override
+                        public int getAttachMethod() {
+                            return 0;
+                        }
+
+                        @Override
+                        public String getContentId() {
+                            return null;
+                        }
+
+                        @Override
+                        public boolean isInline() {
+                            return false;
+                        }
+                    });
                 }
 
                 @Override
@@ -548,7 +546,7 @@ class PstConversionTest {
         Path tempDir = java.nio.file.Files.createTempDirectory("pst_dumpster");
         try (var pstFile = new PstFile(path)) {
             var visitedFolders = new java.util.HashSet<Integer>();
-            for (var entry : pstFile.nodeDatabase().getAllNodes().values()) {
+            for (var entry : pstFile.allNodes().values()) {
                 if ((entry.nodeId() & 0x1F) == 0x02) { // NID_TYPE_NORMAL_FOLDER
                     visitedFolders.add(entry.nodeId());
                 }

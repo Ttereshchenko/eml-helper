@@ -7,3 +7,16 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
+
+// Give the artifact a stable identity on the JDK 21 modulepath and a non-bare manifest. A fixed
+// Automatic-Module-Name avoids the unstable name the JVM would otherwise derive from the jar filename;
+// Implementation-Title/Version make the jar self-describing (version tracks the plugin release).
+jar {
+    manifest {
+        attributes(
+                'Automatic-Module-Name': 'com.github.ttereshchenko.mailkit.pst',
+                'Implementation-Title': 'pst-parser',
+                'Implementation-Version': rootProject.version
+        )
+    }
+}

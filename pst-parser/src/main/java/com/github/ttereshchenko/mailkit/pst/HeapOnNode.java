@@ -7,7 +7,7 @@ import java.nio.ByteOrder;
  * Represents a Heap-on-Node (HN) which provides a memory allocation structure
  * within a PST Node's data block.
  */
-public class HeapOnNode {
+class HeapOnNode {
 
     /** Unicode block payload (8192 - 16-byte trailer); used when the format is unknown. */
     private static final int DEFAULT_BLOCK_PAYLOAD_SIZE = 8176;

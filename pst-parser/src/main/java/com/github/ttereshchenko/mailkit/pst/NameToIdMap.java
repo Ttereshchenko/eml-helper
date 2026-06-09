@@ -7,7 +7,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-public class NameToIdMap {
+class NameToIdMap {
 
     public static final UUID PS_MAPI = UUID.fromString("00020328-0000-0000-C000-000000000046");
     public static final UUID PS_PUBLIC_STRINGS = UUID.fromString("00020329-0000-0000-C000-000000000046");

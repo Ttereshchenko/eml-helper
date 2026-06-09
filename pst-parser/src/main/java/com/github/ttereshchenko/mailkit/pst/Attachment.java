@@ -8,8 +8,17 @@ package com.github.ttereshchenko.mailkit.pst;
 public class Attachment {
     private final PropertyContext propertyContext;
 
-    public Attachment(PropertyContext propertyContext) {
+    Attachment(PropertyContext propertyContext) {
         this.propertyContext = propertyContext;
+    }
+
+    /**
+     * Creates an attachment with no backing property context, for subclasses (e.g. test doubles) that
+     * override the public accessors directly. Any accessor that reads the property context must be
+     * overridden by such a subclass.
+     */
+    protected Attachment() {
+        this.propertyContext = null;
     }
 
     public String getLongFilename() {
@@ -43,8 +52,16 @@ public class Attachment {
         return obj instanceof Integer ? (Integer) obj : 0;
     }
 
-    public PropertyContext getPropertyContext() {
+    PropertyContext getPropertyContext() {
         return propertyContext;
+    }
+
+    /**
+     * The MAPI node backing this attachment — for example to resolve the sub-node of an embedded
+     * message — or {@code null} if this attachment has no backing property context.
+     */
+    public NodeEntry getNode() {
+        return propertyContext == null ? null : propertyContext.getNode();
     }
 
     public String getContentId() {

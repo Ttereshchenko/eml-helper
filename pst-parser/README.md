@@ -39,7 +39,21 @@ single thread.
 
 `PstFile`, `Folder`, `Message`, `Attachment`, `NodeEntry`, `MapiProperties`,
 `PstException`. The NDB → HN → PC/TC parsing internals (`NodeDatabase`, `HeapOnNode`,
-`PropertyContext`, `TableContext`, `LzFu`, …) are implementation detail and may change.
+`PropertyContext`, `TableContext`, `LzFu`, …) are **package-private** implementation
+detail and may change.
+
+For callers that need to reach below the high-level model, a few public *low-level*
+accessors expose raw MAPI properties and NDB nodes: `PstFile.getNode`,
+`PstFile.allNodes`, `PstFile.readSubnodeEntry`, `PstFile.namedPropertyId`,
+`Message.getProperty`/`getStringProperty`, and `Attachment.getNode`. Prefer the typed
+getters where they exist; reach for these only when the model does not cover what you
+need (e.g. orphan recovery, appointment named properties).
+
+## Module identity
+
+The jar ships with `Automatic-Module-Name: com.github.ttereshchenko.mailkit.pst`, giving
+it a stable name on the JDK module path, plus `Implementation-Title`/`Implementation-Version`
+manifest entries.
 
 ## Supported formats
 
