@@ -7,16 +7,81 @@ plugins {
     id 'org.jetbrains.intellij.platform' version '2.16.0'
     id 'org.jetbrains.changelog' version '2.5.0'
     id 'com.diffplug.spotless' version '8.6.0'
-    id 'java'
     id 'checkstyle'
     id 'jacoco'
 }
 
-java {
-    // IntelliJ Platform 2026.1 (since-build=261) runs on JBR 21. Toolchain must match so the
-    // verifier accepts targetCompatibility=21 and the produced bytecode is loadable by the IDE.
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+allprojects {
+    apply plugin: 'java'
+    apply plugin: 'checkstyle'
+    apply plugin: 'jacoco'
+    apply plugin: 'com.diffplug.spotless'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+
+    repositories {
+        mavenCentral()
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.compilerArgs.addAll(['-Xlint:deprecation', '-Werror'])
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+        finalizedBy jacocoTestReport
+        jacoco {
+            includeNoLocationClasses = true
+            excludes = ['jdk.internal.*']
+        }
+        testLogging {
+            events 'failed', 'standardError'
+            exceptionFormat = 'full'
+            showStackTraces = true
+            showCauses = true
+            showExceptions = true
+        }
+    }
+
+    jacocoTestReport {
+        dependsOn test
+        classDirectories.setFrom(files('build/instrumented/instrumentCode'))
+        reports {
+            xml.required = true
+            html.required = true
+        }
+    }
+
+    checkstyle {
+        toolVersion = '11.1.0'
+        configFile = rootProject.file('config/checkstyle/checkstyle.xml')
+        ignoreFailures = false
+        maxWarnings = 0
+        showViolations = true
+    }
+
+    afterEvaluate {
+        checkstyle {
+            def sets = [sourceSets.main, sourceSets.test]
+            if (sourceSets.findByName('integrationTest')) {
+                sets.add(sourceSets.integrationTest)
+            }
+            sourceSets = sets
+        }
+    }
+
+    spotless {
+        java {
+            target 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/integrationTest/java/**/*.java'
+            palantirJavaFormat('2.90.0')
+            removeUnusedImports()
+            trimTrailingWhitespace()
+            endWithNewline()
+        }
     }
 }
 
@@ -24,31 +89,11 @@ group = 'com.github.ttereshchenko'
 version = pluginVersion
 
 repositories {
-    mavenCentral()
     intellijPlatform {
         defaultRepositories()
     }
 }
 
-sourceSets {
-    // Integration tests live in their own source set so Testcontainers' transitive JNA does NOT
-    // share a classloader with the IntelliJ Platform test framework (which bundles its own JNA
-    // for the macOS Foundation bridge and breaks if a different JNA wins the classpath race).
-    integrationTest {
-        java.srcDir 'src/integrationTest/java'
-        resources.srcDir 'src/integrationTest/resources'
-        compileClasspath += sourceSets.main.output + sourceSets.test.output
-        runtimeClasspath += sourceSets.main.output + sourceSets.test.output
-    }
-}
-
-configurations {
-    integrationTestImplementation.extendsFrom testImplementation
-    integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
-}
-
-// Never package macOS Finder droppings (.DS_Store) into the plugin jar — they otherwise slip in
-// from src/main/resources via processResources even though they are git-ignored.
 tasks.named('processResources').configure {
     exclude '**/.DS_Store'
 }
@@ -59,69 +104,14 @@ dependencies {
         testFramework(TestFrameworkType.Platform.INSTANCE)
         bundledPlugin('Git4Idea')
     }
-    // Apache POI HSMF (poi-scratchpad pulls in poi core) reads Outlook .msg OLE2 compound documents.
-    // Adds ~8-12 MB to the plugin distribution; required by the MSG -> EML converter.
     implementation 'org.apache.poi:poi-scratchpad:5.5.1'
+    implementation project(':smtp-client')
+
     testImplementation platform('org.junit:junit-bom:6.1.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'junit:junit:4.13.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
-    // Testcontainers + Mailpit drive end-to-end SMTP integration tests against a real server.
-    // Tests are auto-skipped when Docker is not available on the host.
-    integrationTestImplementation platform('org.testcontainers:testcontainers-bom:2.0.5')
-    integrationTestImplementation 'org.testcontainers:testcontainers'
-    integrationTestImplementation 'org.testcontainers:testcontainers-junit-jupiter'
-    // SLF4J binding so Testcontainers diagnostics actually appear in test output instead of being
-    // dropped silently — invaluable when Docker discovery or container startup misbehaves.
-    integrationTestRuntimeOnly 'org.slf4j:slf4j-simple:2.0.18'
-}
-
-def integrationTest = tasks.register('integrationTest', Test) {
-    description = 'Runs SMTP integration tests against real servers via Testcontainers.'
-    group = 'verification'
-    testClassesDirs = sourceSets.integrationTest.output.classesDirs
-    classpath = sourceSets.integrationTest.runtimeClasspath
-    useJUnitPlatform()
-    shouldRunAfter tasks.named('test')
-}
-
-tasks.named('check') {
-    dependsOn integrationTest
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.compilerArgs.addAll(['-Xlint:deprecation', '-Werror'])
-}
-
-tasks.withType(Test).configureEach {
-    useJUnitPlatform()
-    finalizedBy jacocoTestReport
-    jacoco {
-        // IntelliJ test runner uses a custom classloader (PathClassLoader) whose classes can lack
-        // a CodeSource; without this flag JaCoCo silently skips instrumenting them.
-        includeNoLocationClasses = true
-        excludes = ['jdk.internal.*']
-    }
-    testLogging {
-        events 'failed', 'standardError'
-        exceptionFormat = 'full'
-        showStackTraces = true
-        showCauses = true
-        showExceptions = true
-    }
-}
-
-jacocoTestReport {
-    dependsOn test
-    // IntelliJ Platform Gradle Plugin rewrites bytecode (NotNull/Nullable instrumentation) into
-    // build/instrumented/instrumentCode; the runtime loads those, so the report must analyse them
-    // too — otherwise probe ids mismatch and coverage shows as 0.
-    classDirectories.setFrom(files('build/instrumented/instrumentCode'))
-    reports {
-        xml.required = true
-        html.required = true
-    }
 }
 
 changelog {
@@ -155,24 +145,5 @@ intellijPlatform {
         certificateChain = providers.environmentVariable('CERTIFICATE_CHAIN')
         privateKey = providers.environmentVariable('PRIVATE_KEY')
         password = providers.environmentVariable('PRIVATE_KEY_PASSWORD')
-    }
-}
-
-checkstyle {
-    toolVersion = '11.1.0'
-    configFile = file('config/checkstyle/checkstyle.xml')
-    ignoreFailures = false
-    maxWarnings = 0
-    showViolations = true
-    sourceSets = [sourceSets.main, sourceSets.test, sourceSets.integrationTest]
-}
-
-spotless {
-    java {
-        target 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/integrationTest/java/**/*.java'
-        palantirJavaFormat('2.90.0')
-        removeUnusedImports()
-        trimTrailingWhitespace()
-        endWithNewline()
     }
 }

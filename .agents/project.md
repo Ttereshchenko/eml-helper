@@ -14,7 +14,10 @@
 
 ## Architecture
 
-Multi-package project under `src/main/java/com/github/ttereshchenko/mailkit/`.
+Multi-project Gradle build consisting of the root plugin module and `smtp-client` subproject.
+
+**Root Module (mailkit)**
+Source code under `src/main/java/com/github/ttereshchenko/mailkit/`.
 Root classes `EmlFileType` / `EmlLanguage` / `EmlTokenTypes`, plus sub-packages:
 
 - `lexer/`, `psi/` — EML lexing/parsing and PSI/token element types
@@ -24,14 +27,18 @@ Root classes `EmlFileType` / `EmlLanguage` / `EmlTokenTypes`, plus sub-packages:
 - `inspections/` — header/MIME inspections, split into `rules/` (pure, unit-testable
   logic) and `tools/` (`LocalInspectionTool` wrappers); HTML descriptions in
   `src/main/resources/inspectionDescriptions/`
-- `conversion/msg/` — Outlook `.msg` → `.eml` conversion
-- `smtp/` — SMTP/ESMTP send stack (`auth`, `esmtp`, `tls`, `transport`, `proxy`,
-  `profile`, `audit`, `ui`, `xclient`); the largest module
+- `conversion/` — EML writers and Outlook `.msg`/`.pst` → `.eml` conversions.
+- `smtp/` — Plugin-specific UI (`ui`), profiles (`profile`), and audit logging (`audit`).
 - `icons/`
 
 Plugin descriptor at `src/main/resources/META-INF/plugin.xml`. Unit tests live in
-`src/test/java/com/github/ttereshchenko/mailkit/` (mirroring the packages); SMTP
-integration tests live in a SEPARATE `src/integrationTest/` source set that uses
+`src/test/java/com/github/ttereshchenko/mailkit/`.
+
+**Subproject (smtp-client)**
+Standalone pure Java library with the core SMTP send stack under `smtp-client/src/main/java/com/github/ttereshchenko/mailkit/smtp/`:
+- `auth`, `esmtp`, `tls`, `transport`, `proxy`, `xclient`.
+
+SMTP integration tests live in a SEPARATE `smtp-client/src/integrationTest/` source set that uses
 Testcontainers/Mailpit (kept apart so transitive JNA doesn't crash IntelliJ's
 Foundation init on macOS). For the always-current package/symbol map prefer Serena
 (`mem:code_architecture`, `mem:smtp/core`) over this summary.
