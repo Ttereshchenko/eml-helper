@@ -3,3 +3,4 @@ plugins {
 }
 
 rootProject.name = 'mailkit'
+include 'smtp-client'
