@@ -1,5 +1,10 @@
 package com.github.ttereshchenko.mailkit.pst;
 
+/**
+ * An attachment of a {@link Message}, backed by its sub-node {@link PropertyContext}.
+ *
+ * <p>Exposes the attachment filename, MIME type, embedded-message flag and decoded binary content.
+ */
 public class Attachment {
     private final PropertyContext propertyContext;
 

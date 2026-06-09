@@ -8,6 +8,21 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Objects;
 
+/**
+ * Entry point for reading an Outlook PST/OST personal-folders file ([MS-PST]).
+ *
+ * <p>Opening a {@code PstFile} takes ownership of a read-only {@link java.nio.channels.FileChannel},
+ * validates the header eagerly (magic number, format version, encryption type) and loads the Node
+ * Database (NBT/BBT). Navigate the store by constructing a {@link Folder} from a node id — the root
+ * folder is {@code 0x122} — and reading {@link Message}s from it.
+ *
+ * <p>This is an {@link AutoCloseable} resource: always use it in a try-with-resources block so the
+ * underlying channel is released.
+ *
+ * <p><strong>Thread-safety:</strong> instances are <em>not</em> thread-safe. {@link #nameToIdMap()}
+ * lazily builds and caches the store-wide named-property map without synchronization, so a single
+ * {@code PstFile} must be confined to one thread.
+ */
 public final class PstFile implements AutoCloseable {
 
     private static final int MAGIC_NUMBER = 0x4E444221; // "!BDN"

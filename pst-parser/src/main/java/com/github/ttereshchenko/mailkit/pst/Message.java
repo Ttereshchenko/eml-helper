@@ -13,6 +13,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.IntFunction;
 
+/**
+ * A single message within a PST/OST store, wrapping its {@link PropertyContext}.
+ *
+ * <p>Exposes the MAPI properties most relevant to EML export — subject, sender/recipients, dates,
+ * transport headers, plain-text/HTML/RTF bodies and attachments. Address resolution honours an
+ * {@link AddressPreference} (routable SMTP vs. Exchange legacy DN). Construct one from a node id (or
+ * {@link NodeEntry}) obtained via {@link Folder#getMessages()}.
+ */
 public class Message {
 
     // TODO: re-visit log
@@ -30,20 +38,14 @@ public class Message {
     private Charset cachedCharset;
     private String cachedRawRtf;
 
+    /**
+     * Selects which address a message prefers when both a routable SMTP address and an Exchange
+     * legacy distinguished name are available. Value-only by design: human-readable labels are a
+     * presentation concern and belong to the consuming UI, not to this parser library.
+     */
     public enum AddressPreference {
-        PREFER_SMTP("Prefer SMTP Address"),
-        PREFER_LEGACY_DN("Prefer Legacy Exchange DN");
-
-        private final String label;
-
-        AddressPreference(String label) {
-            this.label = label;
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
+        PREFER_SMTP,
+        PREFER_LEGACY_DN
     }
 
     public void setAddressPreference(AddressPreference addressPreference) {

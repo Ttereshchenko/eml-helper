@@ -1,5 +1,9 @@
 package com.github.ttereshchenko.mailkit.pst;
 
+/**
+ * MAPI property-tag constants used by the parser, preferring the unicode ({@code _W}) variants. Each
+ * constant documents the closest EML / RFC&nbsp;5322 header equivalent where one exists.
+ */
 public final class MapiProperties {
 
     // Message Properties
