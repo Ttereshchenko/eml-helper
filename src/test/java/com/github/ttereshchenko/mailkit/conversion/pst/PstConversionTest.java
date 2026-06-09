@@ -5,6 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
+import com.github.ttereshchenko.mailkit.pst.Attachment;
+import com.github.ttereshchenko.mailkit.pst.Folder;
+import com.github.ttereshchenko.mailkit.pst.Message;
+import com.github.ttereshchenko.mailkit.pst.PropertyContext;
+import com.github.ttereshchenko.mailkit.pst.PstFile;
 import com.intellij.openapi.progress.util.ProgressIndicatorBase;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -28,8 +33,7 @@ class PstConversionTest {
         // The Windows-1252 byte for em-dash is 0x97.
         byte[] emDashBytes = new byte[] {(byte) 0x97, (byte) 0x94}; // em-dash (151), right double quote (148)
 
-        com.github.ttereshchenko.mailkit.conversion.pst.PropertyContext propertyContext =
-                new com.github.ttereshchenko.mailkit.conversion.pst.PropertyContext(null, null, null);
+        PropertyContext propertyContext = new PropertyContext(null, null, null);
 
         java.lang.reflect.Field propsField = propertyContext.getClass().getDeclaredField("properties");
         propsField.setAccessible(true);
@@ -291,8 +295,8 @@ class PstConversionTest {
                 }
 
                 @Override
-                public java.util.List<com.github.ttereshchenko.mailkit.conversion.pst.Attachment> getAttachments() {
-                    return java.util.List.of(new com.github.ttereshchenko.mailkit.conversion.pst.Attachment(
+                public java.util.List<Attachment> getAttachments() {
+                    return java.util.List.of(new Attachment(
                             new PropertyContext(new byte[0], pstFile.nodeDatabase(), null) {
                                 @Override
                                 public Object getProperty(int tag) {
@@ -305,7 +309,7 @@ class PstConversionTest {
                 }
 
                 @Override
-                public java.util.List<Recipient> getRecipients() {
+                public java.util.List<Message.Recipient> getRecipients() {
                     return java.util.List.of();
                 }
 
@@ -381,7 +385,7 @@ class PstConversionTest {
                 }
 
                 @Override
-                public java.util.List<Recipient> getRecipients() {
+                public java.util.List<Message.Recipient> getRecipients() {
                     return java.util.List.of();
                 }
 

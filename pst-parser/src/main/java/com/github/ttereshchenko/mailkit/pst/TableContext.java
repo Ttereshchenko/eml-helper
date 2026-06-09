@@ -1,6 +1,7 @@
-package com.github.ttereshchenko.mailkit.conversion.pst;
+package com.github.ttereshchenko.mailkit.pst;
 
-import com.intellij.openapi.diagnostic.Logger;
+// TODO: re-visit log
+// import com.intellij.openapi.diagnostic.Logger;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -18,7 +19,8 @@ import java.util.Map;
  */
 public class TableContext {
 
-    private static final Logger LOG = Logger.getInstance(TableContext.class);
+    // TODO: re-visit log
+    // private static final Logger LOG = Logger.getInstance(TableContext.class);
 
     private final HeapOnNode heap;
     private final List<ColumnDescriptor> columns = new ArrayList<>();
@@ -153,7 +155,8 @@ public class TableContext {
                 try {
                     rowMatrix = nodeDatabase.readSubnodeData(node.subBid(), hnidRows);
                 } catch (IOException exception) {
-                    LOG.warn("Failed to read table row-matrix subnode", exception);
+                    // TODO: re-visit log
+                    // LOG.warn("Failed to read table row-matrix subnode", exception);
                 }
             }
         }

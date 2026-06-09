@@ -1,9 +1,9 @@
 package com.github.ttereshchenko.mailkit.benchmark;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
-import com.github.ttereshchenko.mailkit.conversion.pst.Message;
-import com.github.ttereshchenko.mailkit.conversion.pst.PstFile;
 import com.github.ttereshchenko.mailkit.conversion.pst.PstToEmlConverter;
+import com.github.ttereshchenko.mailkit.pst.Message;
+import com.github.ttereshchenko.mailkit.pst.PstFile;
 import com.intellij.openapi.progress.EmptyProgressIndicator;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import java.io.IOException;

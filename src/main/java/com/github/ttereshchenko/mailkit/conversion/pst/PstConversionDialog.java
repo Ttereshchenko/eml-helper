@@ -1,5 +1,6 @@
 package com.github.ttereshchenko.mailkit.conversion.pst;
 
+import com.github.ttereshchenko.mailkit.pst.Message;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;

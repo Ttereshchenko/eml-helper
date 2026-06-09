@@ -1,7 +1,7 @@
-package com.github.ttereshchenko.mailkit.conversion.pst;
+package com.github.ttereshchenko.mailkit.pst;
 
-import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
-import com.intellij.openapi.diagnostic.Logger;
+// TODO: re-visit log
+// import com.intellij.openapi.diagnostic.Logger;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
@@ -15,7 +15,8 @@ import java.util.function.IntFunction;
 
 public class Message {
 
-    private static final Logger LOG = Logger.getInstance(Message.class);
+    // TODO: re-visit log
+    // private static final Logger LOG = Logger.getInstance(Message.class);
 
     private static final int NID_ATTACHMENT_TABLE = 0x0671;
     private static final int NID_RECIPIENT_TABLE = 0x0692;
@@ -74,7 +75,8 @@ public class Message {
             Charset charset = getMessageCharset();
             this.propertyContext.decodeString8(charset);
         } catch (Exception exception) {
-            LOG.warn("Failed to load properties for message node " + nid, exception);
+            // TODO: re-visit log
+            // LOG.warn("Failed to load properties for message node " + nid, exception);
         }
     }
 
@@ -269,7 +271,8 @@ public class Message {
             try {
                 rtf = LzFu.decode(compressed).trim();
             } catch (Exception exception) {
-                LOG.debug("Failed to decompress RTF body for message node " + nid, exception);
+                // TODO: re-visit log
+                // LOG.debug("Failed to decompress RTF body for message node " + nid, exception);
             }
         }
         cachedRawRtf = rtf;
@@ -348,7 +351,7 @@ public class Message {
                     && !email.isEmpty()) {
                 String addrType =
                         properties.apply(MapiProperties.PR_SENDER_ADDRTYPE_W) instanceof String type ? type : "";
-                return EmlSerializer.imceaEncapsulate(addrType, email);
+                return imceaEncapsulate(addrType, email);
             }
             if (properties.apply(MapiProperties.PR_SENT_REPRESENTING_EMAIL_ADDRESS_W) instanceof String repEmail
                     && !repEmail.isEmpty()) {
@@ -356,7 +359,7 @@ public class Message {
                         properties.apply(MapiProperties.PR_SENT_REPRESENTING_ADDRTYPE_W) instanceof String type
                                 ? type
                                 : "";
-                return EmlSerializer.imceaEncapsulate(addrType, repEmail);
+                return imceaEncapsulate(addrType, repEmail);
             }
         }
         return "";
@@ -436,7 +439,8 @@ public class Message {
                 }
             }
         } catch (IOException exception) {
-            LOG.warn("Failed to read attachments for message node " + nid, exception);
+            // TODO: re-visit log
+            // LOG.warn("Failed to read attachments for message node " + nid, exception);
         }
         return attachments;
     }
@@ -463,7 +467,8 @@ public class Message {
             TableContext tableContext = new TableContext(tableData, nodeDatabase, node, getMessageCharset());
             recipients = parseRecipients(tableContext.getRows(), addressPreference);
         } catch (IOException exception) {
-            LOG.warn("Failed to read recipients for message node " + nid, exception);
+            // TODO: re-visit log
+            // LOG.warn("Failed to read recipients for message node " + nid, exception);
         }
         return recipients;
     }
@@ -507,7 +512,7 @@ public class Message {
             }
             if (row.get(MapiProperties.PR_EMAIL_ADDRESS_W) instanceof String email && !email.isEmpty()) {
                 String addrType = row.get(MapiProperties.PR_ADDRTYPE) instanceof String type ? type : "";
-                return EmlSerializer.imceaEncapsulate(addrType, email);
+                return imceaEncapsulate(addrType, email);
             }
         }
         return "";
@@ -515,5 +520,26 @@ public class Message {
 
     public PropertyContext getPropertyContext() {
         return propertyContext;
+    }
+
+    private static String imceaEncapsulate(String addrType, String address) {
+        if (address == null || address.isBlank()) return address;
+        if (addrType == null || addrType.equalsIgnoreCase("SMTP") || address.contains("@")) return address;
+
+        StringBuilder builder = new StringBuilder("IMCEA");
+        builder.append(addrType.toUpperCase()).append("-");
+
+        for (int i = 0; i < address.length(); i++) {
+            char chr = address.charAt(i);
+            if ((chr >= 'a' && chr <= 'z') || (chr >= 'A' && chr <= 'Z') || (chr >= '0' && chr <= '9') || chr == '-') {
+                builder.append(chr);
+            } else if (chr == '/') {
+                builder.append('_');
+            } else {
+                builder.append(String.format("_x%04X_", (int) chr));
+            }
+        }
+        builder.append("@example.com");
+        return builder.toString();
     }
 }

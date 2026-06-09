@@ -2,6 +2,12 @@ package com.github.ttereshchenko.mailkit.conversion.pst;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
+import com.github.ttereshchenko.mailkit.pst.Attachment;
+import com.github.ttereshchenko.mailkit.pst.Folder;
+import com.github.ttereshchenko.mailkit.pst.MapiProperties;
+import com.github.ttereshchenko.mailkit.pst.Message;
+import com.github.ttereshchenko.mailkit.pst.NodeEntry;
+import com.github.ttereshchenko.mailkit.pst.PstFile;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressIndicator;
 import java.io.IOException;
@@ -538,9 +544,7 @@ public final class PstToEmlConverter {
 
         var propCtx = message.getPropertyContext();
         if (propCtx != null) {
-            Object sclObj = propCtx.getProperty(
-                    com.github.ttereshchenko.mailkit.conversion.pst.MapiProperties
-                            .PR_CONTENT_FILTER_SPAM_CONFIDENCE_LEVEL);
+            Object sclObj = propCtx.getProperty(MapiProperties.PR_CONTENT_FILTER_SPAM_CONFIDENCE_LEVEL);
             if (sclObj instanceof Number n) {
                 serializer.setScl(n.intValue());
             }

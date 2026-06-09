@@ -1,6 +1,7 @@
-package com.github.ttereshchenko.mailkit.conversion.pst;
+package com.github.ttereshchenko.mailkit.pst;
 
-import com.intellij.openapi.diagnostic.Logger;
+// TODO: re-visit log
+// import com.intellij.openapi.diagnostic.Logger;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
@@ -11,7 +12,8 @@ import java.util.Map;
  */
 public class Folder {
 
-    private static final Logger LOG = Logger.getInstance(Folder.class);
+    // TODO: re-visit log
+    // private static final Logger LOG = Logger.getInstance(Folder.class);
 
     private final PstFile pstFile;
     private final int nid;
@@ -42,7 +44,8 @@ public class Folder {
         } catch (Exception exception) {
             // Degrades gracefully (display name falls back to Folder_<nid>), but log so genuine
             // corruption is not hidden.
-            LOG.debug("Failed to load properties for folder node " + nid, exception);
+            // TODO: re-visit log
+            // LOG.debug("Failed to load properties for folder node " + nid, exception);
         }
     }
 
@@ -78,7 +81,8 @@ public class Folder {
         } catch (PstException exception) {
             throw exception;
         } catch (Exception exception) {
-            LOG.warn("Error reading folder messages", exception);
+            // TODO: re-visit log
+            // LOG.warn("Error reading folder messages", exception);
             throw new PstException("Error reading folder messages", exception);
         }
 
@@ -112,7 +116,8 @@ public class Folder {
         } catch (PstException exception) {
             throw exception;
         } catch (Exception exception) {
-            LOG.warn("Error reading subfolders", exception);
+            // TODO: re-visit log
+            // LOG.warn("Error reading subfolders", exception);
             throw new PstException("Error reading subfolders", exception);
         }
 

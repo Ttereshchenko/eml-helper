@@ -2,6 +2,7 @@ package com.github.ttereshchenko.mailkit.conversion.pst;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionConsoleService;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
+import com.github.ttereshchenko.mailkit.pst.PstFile;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
