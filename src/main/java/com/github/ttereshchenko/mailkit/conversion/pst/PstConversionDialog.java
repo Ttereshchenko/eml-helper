@@ -64,9 +64,10 @@ public class PstConversionDialog extends DialogWrapper {
         maxNodeSizeField = new JBTextField("64");
         maxNodeSizeField.getEmptyText().setText("Max size in MB (default 64)");
 
-        var helpLabel = ContextHelpLabel.create("<b>Supported items:</b> Emails (IPM.Note), Reports (REPORT.*),<br>"
-                + "Calendar/Meetings (IPM.Appointment, IPM.Schedule.Meeting.*).<br><br>"
-                + "<i>Other types (Contacts, Tasks, Notes, etc.) are ignored.</i>");
+        var helpLabel = ContextHelpLabel.create(
+                "<b>Supported items:</b> Emails (IPM.Note), Posted notes (IPM.Post), Reports (REPORT.*),<br>"
+                        + "Calendar/Meetings (IPM.Appointment, IPM.Schedule.Meeting.*).<br><br>"
+                        + "<i>Other types (Contacts, Tasks, Notes, etc.) are ignored.</i>");
         var helpPanel = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
         helpPanel.add(new com.intellij.ui.components.JBLabel("Which items are converted? "));
         helpPanel.add(helpLabel);

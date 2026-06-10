@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- ANSI-format PST archives (Outlook 97–2002) now convert correctly: message subjects, bodies, senders, and recipients were previously read as empty (or failed outright) because the converter mis-read the archive's internal block layout, so no messages were exported.
+- Posted notes (`IPM.Post`, items posted directly into a folder) are now exported during PST/OST conversion instead of being skipped as an unsupported message class.
 - Sending via SMTP now reports a failed TLS handshake (untrusted certificate, hostname mismatch) as a TLS error instead of a generic I/O error, so the failure reason is clear in the send result.
 - OAuth-token sign-in (XOAUTH2 / OAUTHBEARER) is no longer attempted over an unencrypted connection unless plaintext authentication is explicitly allowed — bearer tokens now get the same protection as passwords.
 - Sends to servers that deliver per-recipient verdicts (PRDR, e.g. Exim) now read the verdicts correctly; previously the per-recipient results could be misattributed and the session desynchronized.

@@ -55,7 +55,7 @@ public final class PstToEmlConverter {
     private static final int MAX_ATTACHMENT_COUNT = 1000;
 
     private static final List<String> ALLOWED_MESSAGE_CLASSES =
-            List.of("IPM.Note", "REPORT.", "IPM.Schedule.Meeting.", "IPM.Appointment");
+            List.of("IPM.Note", "IPM.Post", "REPORT.", "IPM.Schedule.Meeting.", "IPM.Appointment");
 
     // Low 5 bits of a NID encode its type; a normal message node is type 0x04.
     private static final int NID_TYPE_MASK = 0x1F;
