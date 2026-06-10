@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.0 - 2026-06-10
+
 ### Added
 
 - Outlook PST and OST archive files are now recognized with distinct icons in the Project view.
