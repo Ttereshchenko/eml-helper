@@ -5,6 +5,10 @@ import com.intellij.openapi.util.IconLoader;
 import javax.swing.Icon;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Binary file type for Outlook {@code .msg} files. Registers the MSG icon and name so the files are
+ * recognizable in the Project view; the actual conversion lives in {@link ConvertMsgToEmlAction}.
+ */
 public final class MsgFileType extends UserBinaryFileType {
 
     public static final MsgFileType INSTANCE = new MsgFileType();

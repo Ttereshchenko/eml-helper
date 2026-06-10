@@ -3,12 +3,13 @@ package com.github.ttereshchenko.mailkit.conversion.msg;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.github.ttereshchenko.mailkit.conversion.ConversionException;
+import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
 import java.util.regex.Pattern;
@@ -157,17 +158,13 @@ class MsgToEmlConverterTest {
 
     @Test
     void emptyStreamFailsLoudly() {
+        // Must be the domain ConversionException specifically — a regression back to leaking POI
+        // internals (NotOLE2FileException etc.) would still have passed the old catch-anything test.
         var bytes = new byte[] {0x00, 0x01, 0x02};
-        try {
-            convertString(bytes);
-        } catch (IOException expected) {
-            assertNotNull(expected);
-            return;
-        } catch (Exception other) {
-            assertNotNull(other);
-            return;
-        }
-        throw new AssertionError("expected an exception for non-OLE input");
+        var out = new java.io.ByteArrayOutputStream();
+        assertThrows(
+                ConversionException.class,
+                () -> MsgToEmlConverter.convert(new ByteArrayInputStream(bytes), out, ConversionLog.NOOP));
     }
 
     @Test
@@ -200,7 +197,7 @@ class MsgToEmlConverterTest {
 
         var out = new java.io.ByteArrayOutputStream();
         // Before the fix the US-ASCII writer threw UnmappableCharacterException on the first non-ASCII byte.
-        MsgToEmlConverter.convert(new ByteArrayInputStream(bytes), out, null);
+        MsgToEmlConverter.convert(new ByteArrayInputStream(bytes), out, ConversionLog.NOOP);
         var eml = out.toString(java.nio.charset.StandardCharsets.UTF_8);
 
         assertTrue(eml.contains("Subject: Café résumé"), eml);
@@ -213,8 +210,8 @@ class MsgToEmlConverterTest {
         var garbage = "this is not an OLE2 .msg file".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         var out = new java.io.ByteArrayOutputStream();
         assertThrows(
-                com.github.ttereshchenko.mailkit.conversion.ConversionException.class,
-                () -> MsgToEmlConverter.convert(new ByteArrayInputStream(garbage), out, null));
+                ConversionException.class,
+                () -> MsgToEmlConverter.convert(new ByteArrayInputStream(garbage), out, ConversionLog.NOOP));
     }
 
     @Test
@@ -263,9 +260,98 @@ class MsgToEmlConverterTest {
         assertFalse(eml.contains("invite.ics"), eml);
     }
 
+    @Test
+    void mimeVersionSurvivesWhenTransportHeadersDeclareIt() throws Exception {
+        // The original MIME-Version is filtered out together with the original Content-Type (the
+        // serializer re-encodes the body), but before the fix it was also marked "present", so the
+        // output ended up with a multipart Content-Type and no MIME-Version header at all.
+        var headers = "MIME-Version: 1.0\r\n"
+                + "From: sender@example.com\r\n"
+                + "To: receiver@example.com\r\n"
+                + "Content-Type: text/plain; charset=us-ascii\r\n";
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .sender("Sender", "sender@example.com")
+                .recipientTo("Receiver", "receiver@example.com")
+                .transportHeaders(headers)
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("MIME-Version: 1.0"), eml);
+    }
+
+    @Test
+    void threadingHeadersAreRecoveredFromMapiProperties() throws Exception {
+        // Without stored transport headers, In-Reply-To/References used to be dropped entirely,
+        // breaking reply threading in the exported EML.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Re: thread")
+                .sender("A", "a@x")
+                .recipientTo("B", "b@x")
+                .inReplyTo("<parent-id@example.com>")
+                .references("<root-id@example.com> <parent-id@example.com>")
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("In-Reply-To: <parent-id@example.com>"), eml);
+        assertTrue(eml.contains("References: <root-id@example.com> <parent-id@example.com>"), eml);
+    }
+
+    @Test
+    void crLfInAttachmentFilenameCannotInjectHeaders() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .sender("A", "a@x")
+                .recipientTo("B", "b@x")
+                .textBody("body")
+                .attachment("evil.txt\r\nX-Injected: yes", "application/octet-stream", new byte[] {1})
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // Before the fix the quoted filename parameter emitted the CR/LF raw, splitting the
+        // Content-Disposition header and injecting an attacker-controlled X-Injected header line.
+        assertFalse(eml.lines().anyMatch(line -> line.startsWith("X-Injected:")), eml);
+        assertTrue(eml.contains("filename=\"evil.txt__X-Injected: yes\""), eml);
+    }
+
+    @Test
+    void attachmentWithoutPayloadIsEmittedEmptyAndLogged() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .sender("A", "a@x")
+                .recipientTo("B", "b@x")
+                .textBody("body")
+                .attachment("ghost.bin", "application/octet-stream", null)
+                .toBytes();
+
+        var errors = new ArrayList<String>();
+        var log = new ConversionLog() {
+            @Override
+            public void info(String message) {}
+
+            @Override
+            public void error(String message) {
+                errors.add(message);
+            }
+        };
+        var out = new java.io.ByteArrayOutputStream();
+        MsgToEmlConverter.convert(new ByteArrayInputStream(bytes), out, log);
+        var eml = out.toString(java.nio.charset.StandardCharsets.US_ASCII);
+
+        // Before the fix the extraction failure was swallowed (catch Exception ignored) — the
+        // attachment silently became a zero-byte file with no console trace.
+        assertTrue(eml.contains("filename=\"ghost.bin\""), eml);
+        assertTrue(errors.stream().anyMatch(message -> message.contains("no data")), errors::toString);
+    }
+
     private String convertString(byte[] input) throws Exception {
         var out = new java.io.ByteArrayOutputStream();
-        MsgToEmlConverter.convert(new ByteArrayInputStream(input), out, null);
+        MsgToEmlConverter.convert(new ByteArrayInputStream(input), out, ConversionLog.NOOP);
         return out.toString(java.nio.charset.StandardCharsets.US_ASCII);
     }
 }

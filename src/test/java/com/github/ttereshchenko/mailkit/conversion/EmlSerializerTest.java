@@ -12,6 +12,14 @@ import org.junit.jupiter.api.Test;
 class EmlSerializerTest {
 
     @Test
+    void testFilenameParameterNeutralizesControlCharacters() {
+        // CR/LF in an attacker-controlled attachment filename must not split the header line —
+        // before the fix the quoted ASCII form emitted them raw, allowing EML header injection.
+        var parameter = EmlSerializer.filenameParameter("filename", "evil.txt\r\nX-Injected: yes");
+        assertEquals("filename=\"evil.txt__X-Injected: yes\"", parameter);
+    }
+
+    @Test
     void testMessageIdAndInlineAttachments() throws Exception {
         EmlSerializer serializer = new EmlSerializer();
         serializer.setMessageId("<test-message-id@mailkit.org>");
