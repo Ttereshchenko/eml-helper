@@ -1,5 +1,7 @@
 package com.github.ttereshchenko.mailkit.pst;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.RandomAccessFile;
@@ -9,6 +11,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.zip.Deflater;
 import org.junit.jupiter.api.Test;
 
 class NodeDatabaseTest {
@@ -18,7 +21,7 @@ class NodeDatabaseTest {
         Path tempFile = Files.createTempFile("test_cycle", ".pst");
         try {
             try (RandomAccessFile raf = new RandomAccessFile(tempFile.toFile(), "rw")) {
-                raf.setLength(4096);
+                raf.setLength(8192);
                 ByteBuffer buf = ByteBuffer.allocate(4096).order(ByteOrder.LITTLE_ENDIAN);
 
                 int trailerOffset = 4056;
@@ -34,15 +37,11 @@ class NodeDatabaseTest {
             }
 
             try (FileChannel channel = FileChannel.open(tempFile, StandardOpenOption.READ)) {
-                assertThrows(
-                        PstException.class,
-                        () -> new NodeDatabase(
-                                channel,
-                                PstFile.Format.UNICODE_2013,
-                                PstFile.EncryptionType.NONE,
-                                0,
-                                0,
-                                64L * 1024 * 1024));
+                // Lookups descend lazily, so the cycle is detected (via the depth cap) when a block
+                // is resolved, not at construction; the root page itself is structurally valid.
+                var database = new NodeDatabase(
+                        channel, PstFile.Format.UNICODE_2013, PstFile.EncryptionType.NONE, 0, 4096, 64L * 1024 * 1024);
+                assertThrows(PstException.class, () -> database.getBlock(1L));
             }
         } finally {
             Files.deleteIfExists(tempFile);
@@ -50,13 +49,13 @@ class NodeDatabaseTest {
     }
 
     @Test
-    void testOversizedEntryTableThrowsException() throws Exception {
-        // cEnt * cbEnt would run past the fixed page buffer ([MS-PST] §2.2.2.7.7.1); before the bounds
-        // check this threw IndexOutOfBoundsException during construction instead of a clean PstException.
+    void testOversizedEntryTableThrowsAtOpen() throws Exception {
+        // cEnt * cbEnt would run past the fixed page buffer ([MS-PST] §2.2.2.7.7.1); the root pages
+        // are validated eagerly, so a corrupt root must throw a clean PstException at construction.
         Path tempFile = Files.createTempFile("test_oversized", ".pst");
         try {
             try (RandomAccessFile raf = new RandomAccessFile(tempFile.toFile(), "rw")) {
-                raf.setLength(4096);
+                raf.setLength(8192);
                 ByteBuffer buf = ByteBuffer.allocate(4096).order(ByteOrder.LITTLE_ENDIAN);
                 int trailerOffset = 4056;
                 buf.putShort(trailerOffset, (short) 4096); // numEntries: 4096 * 24 far exceeds the page
@@ -73,7 +72,7 @@ class NodeDatabaseTest {
                                 PstFile.Format.UNICODE_2013,
                                 PstFile.EncryptionType.NONE,
                                 0,
-                                0,
+                                4096,
                                 64L * 1024 * 1024));
             }
         } finally {
@@ -84,11 +83,11 @@ class NodeDatabaseTest {
     @Test
     void testOutOfRangeBlockOffsetThrowsException() throws Exception {
         // A leaf BBTENTRY whose BREF file offset points past the file must throw a clean PstException
-        // rather than reaching channel.read with an out-of-range position.
+        // when the block is resolved rather than reaching channel.read with an out-of-range position.
         Path tempFile = Files.createTempFile("test_bref", ".pst");
         try {
             try (RandomAccessFile raf = new RandomAccessFile(tempFile.toFile(), "rw")) {
-                raf.setLength(4096);
+                raf.setLength(8192);
                 ByteBuffer buf = ByteBuffer.allocate(4096).order(ByteOrder.LITTLE_ENDIAN);
                 int trailerOffset = 4056;
                 buf.putShort(trailerOffset, (short) 1); // numEntries
@@ -96,21 +95,15 @@ class NodeDatabaseTest {
                 buf.put(trailerOffset + 5, (byte) 0); // level = 0 (leaf)
                 // Leaf BBTENTRY 0: bid@0, fileOffset@8, size@16
                 buf.putLong(0, 1L); // bid
-                buf.putLong(8, 100_000L); // fileOffset well past the 4096-byte file
+                buf.putLong(8, 100_000L); // fileOffset well past the 8192-byte file
                 buf.putShort(16, (short) 64); // size
                 raf.write(buf.array());
             }
 
             try (FileChannel channel = FileChannel.open(tempFile, StandardOpenOption.READ)) {
-                assertThrows(
-                        PstException.class,
-                        () -> new NodeDatabase(
-                                channel,
-                                PstFile.Format.UNICODE_2013,
-                                PstFile.EncryptionType.NONE,
-                                0,
-                                0,
-                                64L * 1024 * 1024));
+                var database = new NodeDatabase(
+                        channel, PstFile.Format.UNICODE_2013, PstFile.EncryptionType.NONE, 0, 4096, 64L * 1024 * 1024);
+                assertThrows(PstException.class, () -> database.getBlock(1L));
             }
         } finally {
             Files.deleteIfExists(tempFile);
@@ -122,40 +115,43 @@ class NodeDatabaseTest {
         Path tempFile = Files.createTempFile("test_large", ".pst");
         try {
             // Compress 5MB of zeroes
-            java.util.zip.Deflater deflater = new java.util.zip.Deflater();
-            byte[] raw = new byte[5 * 1024 * 1024]; // 5MB
+            var deflater = new Deflater();
+            var raw = new byte[5 * 1024 * 1024]; // 5MB
             deflater.setInput(raw);
             deflater.finish();
-            byte[] comp = new byte[5 * 1024 * 1024];
-            int compSize = deflater.deflate(comp);
+            var compressed = new byte[5 * 1024 * 1024];
+            int compressedSize = deflater.deflate(compressed);
 
             try (RandomAccessFile raf = new RandomAccessFile(tempFile.toFile(), "rw")) {
-                raf.setLength(1024); // mock header
-                raf.seek(1024);
-                raf.write(comp, 0, compSize);
+                raf.setLength(8192 + compressedSize);
+
+                // BBT root: a leaf page at 0 with one entry describing the compressed block at 8192.
+                ByteBuffer buf = ByteBuffer.allocate(4096).order(ByteOrder.LITTLE_ENDIAN);
+                int trailerOffset = 4056;
+                buf.putShort(trailerOffset, (short) 1); // numEntries
+                buf.put(trailerOffset + 4, (byte) 24); // entrySize
+                buf.put(trailerOffset + 5, (byte) 0); // level = 0 (leaf)
+                buf.putLong(0, 4L); // bid (no internal flag)
+                buf.putLong(8, 8192L); // fileOffset
+                buf.putShort(16, (short) compressedSize); // size
+                buf.putInt(24, 5 * 1024 * 1024); // inflated size
+                raf.write(buf.array());
+
+                // NBT root: an empty leaf page at 4096 (all zeroes parse as cEnt=0).
+                raf.seek(8192);
+                raf.write(compressed, 0, compressedSize);
             }
 
             try (FileChannel channel = FileChannel.open(tempFile, StandardOpenOption.READ)) {
-                NodeDatabase database = new NodeDatabase(
-                        channel, PstFile.Format.UNICODE_2013, PstFile.EncryptionType.NONE, 0, 0, 64L * 1024 * 1024);
+                var database = new NodeDatabase(
+                        channel, PstFile.Format.UNICODE_2013, PstFile.EncryptionType.NONE, 0, 4096, 64L * 1024 * 1024);
 
-                // 1024 offset, compressed size, inflated size = 5MB
-                var block = new BlockEntry(1L, 1024L, compSize, 1, 5 * 1024 * 1024);
+                byte[] inflated = database.readNodeData(4L);
+                assertEquals(5 * 1024 * 1024, inflated.length);
 
-                // Inject block into BBT
-                var bbtField = NodeDatabase.class.getDeclaredField("bbt");
-                bbtField.setAccessible(true);
-                @SuppressWarnings("unchecked")
-                java.util.Map<Long, BlockEntry> bbt = (java.util.Map<Long, BlockEntry>) bbtField.get(database);
-                bbt.put(1L, block);
-
-                var readMethod = NodeDatabase.class.getDeclaredMethod(
-                        "readNodeData", long.class, int.class, java.util.Set.class, long[].class);
-                readMethod.setAccessible(true);
-                byte[] inflated =
-                        (byte[]) readMethod.invoke(database, 1L, 0, new java.util.HashSet<>(), new long[] {0});
-
-                org.junit.jupiter.api.Assertions.assertEquals(5 * 1024 * 1024, inflated.length);
+                try (var stream = database.openNodeDataStream(4L)) {
+                    assertArrayEquals(inflated, stream.readAllBytes());
+                }
             }
         } finally {
             Files.deleteIfExists(tempFile);

@@ -2,6 +2,19 @@ plugins {
     id 'java-library'
 }
 
+// Standalone-library packaging: ship sources and javadoc jars alongside the binary jar.
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+javadoc {
+    options.encoding = 'UTF-8'
+    // Keep doclint's html/reference checks but allow package-private types referenced from public
+    // Javadoc to be summarized without @param/@return on every accessor.
+    options.addStringOption('Xdoclint:all,-missing', '-quiet')
+}
+
 dependencies {
     testImplementation platform('org.junit:junit-bom:6.1.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'

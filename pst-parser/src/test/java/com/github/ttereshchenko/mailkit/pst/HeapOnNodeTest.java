@@ -15,7 +15,7 @@ class HeapOnNodeTest {
      * item in block 1 resolves correctly.
      */
     @Test
-    void testMultiBlockHeapOnNodeUnicodeStride() {
+    void testMultiBlockHeapOnNodeUnicodeStride() throws Exception {
         int stride = 8176;
         byte[] data = new byte[stride * 2];
         ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
@@ -62,7 +62,7 @@ class HeapOnNodeTest {
 
     /** ANSI nodes use a 12-byte trailer, so the block payload (and HN stride) is 8180. */
     @Test
-    void testMultiBlockHeapOnNodeAnsiStride() {
+    void testMultiBlockHeapOnNodeAnsiStride() throws Exception {
         int stride = 8180;
         byte[] data = new byte[stride * 2];
         ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
@@ -96,7 +96,7 @@ class HeapOnNodeTest {
 
     /** A crafted cAlloc that claims more allocations than the page holds must not read past data (M2). */
     @Test
-    void getItemReturnsEmptyWhenAllocationArrayOverflowsData() {
+    void getItemReturnsEmptyWhenAllocationArrayOverflowsData() throws Exception {
         byte[] data = new byte[64];
         ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
         buf.putShort(0, (short) 8); // ibHnpm -> page map at offset 8
@@ -113,7 +113,7 @@ class HeapOnNodeTest {
 
     /** pageOffset == data.length - 1 would make the 2-byte ibHnpm read run one byte past the array (M2). */
     @Test
-    void getItemHandlesOddLengthTailWithoutOutOfBounds() {
+    void getItemHandlesOddLengthTailWithoutOutOfBounds() throws Exception {
         byte[] data = new byte[8177]; // one block payload (8176) + 1 trailing byte
         data[2] = (byte) 0xEC; // bSig required by the constructor
         HeapOnNode hon = new HeapOnNode(data, 8176);

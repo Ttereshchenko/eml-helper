@@ -32,8 +32,39 @@ static void walk(PstFile pst, Folder folder) throws PstException {
 ```
 
 `PstFile` owns a read-only file channel and is `AutoCloseable`; always use it in a
-try-with-resources block. Instances are **not** thread-safe — confine a `PstFile` to a
-single thread.
+try-with-resources block.
+
+### Thread-safety
+
+A `PstFile` is safe for concurrent use by multiple threads (its lazy caches are
+synchronized and the channel uses positional reads). `Folder`, `Message` and
+`Attachment` instances are **not** thread-safe — confine each instance to a single
+thread. The natural multi-threaded pattern is one shared `PstFile` with each worker
+constructing its own `Folder`/`Message` objects.
+
+### Large files & memory
+
+Node and block lookups descend the on-disk b-trees lazily through a small page cache,
+so opening a multi-gigabyte store does not materialize its index. Attachment content
+can be read fully (`Attachment.getData()`) or streamed block-by-block
+(`Attachment.openDataStream()`) — prefer streaming for large payloads.
+
+A single node's expanded data (one attachment payload, message body, …) is capped by
+`maxNodeSize` (default 64 MiB, `PstFile.DEFAULT_MAX_NODE_SIZE`). Reads beyond the cap
+fail with `PstException`; pass a larger cap to `new PstFile(path, maxNodeSize)` to
+extract bigger attachments.
+
+### Corrupt and password-protected stores
+
+The header (magic, version, encryption type, b-tree roots) is validated eagerly at
+open; malformed structures encountered later raise `PstException` (an `IOException`
+subclass). `Folder`/`Message` constructors degrade to empty objects on damaged nodes
+so bulk exports can keep walking — check `isLoaded()`/`getLoadError()` when you need
+to distinguish.
+
+Outlook's "password protection" is only a CRC stored in the message store object — the
+content is **not** encrypted with it — so protected stores are read normally;
+`PstFile.isPasswordProtected()` surfaces the flag for callers that want to warn.
 
 ## Public API
 
@@ -47,17 +78,29 @@ accessors expose raw MAPI properties and NDB nodes: `PstFile.getNode`,
 `PstFile.allNodes`, `PstFile.readSubnodeEntry`, `PstFile.namedPropertyId`,
 `Message.getProperty`/`getStringProperty`, and `Attachment.getNode`. Prefer the typed
 getters where they exist; reach for these only when the model does not cover what you
-need (e.g. orphan recovery, appointment named properties).
+need (e.g. orphan recovery, appointment named properties). `Message.getProperty` takes
+the 16-bit property id; `PT_SYSTIME` values surface as `java.time.Instant` and
+multi-valued properties as immutable `List`s.
 
 ## Module identity
 
 The jar ships with `Automatic-Module-Name: com.github.ttereshchenko.mailkit.pst`, giving
 it a stable name on the JDK module path, plus `Implementation-Title`/`Implementation-Version`
-manifest entries.
+manifest entries. Sources and Javadoc jars are built alongside the binary jar.
 
 ## Supported formats
 
-ANSI, UNICODE and UNICODE_2013 stores; NONE / COMPRESSIBLE / HIGH encryption.
+ANSI, UNICODE and UNICODE_2013 (4 KiB pages, per-block compression — OST) stores;
+NONE / COMPRESSIBLE / HIGH encryption. An unrecognized encryption byte fails at open
+instead of decoding garbage.
+
+## Diagnostics
+
+The library logs through `java.lang.System.Logger` (the JDK platform logging API), so
+its diagnostics route into whatever logging backend the consuming application
+configures — degraded-but-recovered conditions (a corrupt folder, an unreadable
+attachment table, a failed RTF decompression) are logged at `WARNING`/`DEBUG` rather
+than silently swallowed.
 
 ## Build
 

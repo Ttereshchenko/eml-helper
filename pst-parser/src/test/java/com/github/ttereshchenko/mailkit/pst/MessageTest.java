@@ -2,7 +2,6 @@ package com.github.ttereshchenko.mailkit.pst;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -11,24 +10,20 @@ import org.junit.jupiter.api.Test;
 class MessageTest {
 
     @Test
-    void testExtractHtmlFromRtfDecoding() throws Exception {
-        Method method = Message.class.getDeclaredMethod("extractHtmlFromRtf", String.class, String.class);
-        method.setAccessible(true);
-
+    void testExtractHtmlFromRtfDecoding() {
         // Test \'e9 (é)
         String rtf = "{\\rtf1 \\htmlrtf0 <p>Hello \\'e9</p>}";
-        String html = (String) method.invoke(null, rtf, "windows-1252");
-        assertEquals("<p>Hello é</p>", html);
+        assertEquals("<p>Hello é</p>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
 
-        // Test \u8364 (₹/€ depending on font, but we just decode the unicode)
+        // Test \\u8364 (₹/€ depending on font, but we just decode the unicode)
         String rtfUnicode = "{\\rtf1 \\htmlrtf0 <span>\\u8364?</span>}";
-        String htmlUnicode = (String) method.invoke(null, rtfUnicode, "windows-1252");
-        assertEquals("<span>" + (char) 8364 + "</span>", htmlUnicode);
+        assertEquals("<span>" + (char) 8364 + "</span>", Message.extractHtmlFromRtf(rtfUnicode, "windows-1252"));
 
         // Test negative unicode \\u-1000
         String rtfUnicodeNegative = "{\\rtf1 \\htmlrtf0 <span>\\u-1000?</span>}";
-        String htmlUnicodeNegative = (String) method.invoke(null, rtfUnicodeNegative, "windows-1252");
-        assertEquals("<span>" + (char) (short) -1000 + "</span>", htmlUnicodeNegative);
+        assertEquals(
+                "<span>" + (char) (short) -1000 + "</span>",
+                Message.extractHtmlFromRtf(rtfUnicodeNegative, "windows-1252"));
     }
 
     @Test

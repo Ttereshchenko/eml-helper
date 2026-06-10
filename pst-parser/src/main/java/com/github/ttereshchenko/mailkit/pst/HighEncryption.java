@@ -2,7 +2,7 @@ package com.github.ttereshchenko.mailkit.pst;
 
 final class HighEncryption {
 
-    private static final byte[] HIGH_1 = {
+    static final byte[] HIGH_1 = {
         (byte) 0x41,
         0x36,
         0x13,
@@ -261,7 +261,7 @@ final class HighEncryption {
         0x3d
     };
 
-    private static final byte[] HIGH_2 = {
+    static final byte[] HIGH_2 = {
         0x14,
         0x53,
         0x0f,

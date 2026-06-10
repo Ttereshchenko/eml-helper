@@ -1,30 +1,34 @@
 package com.github.ttereshchenko.mailkit.pst;
 
-// TODO: re-visit log
-// import com.intellij.openapi.diagnostic.Logger;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.IntFunction;
 
 /**
- * A single message within a PST/OST store, wrapping its {@link PropertyContext}.
+ * A single message within a PST/OST store, wrapping its Property Context.
  *
  * <p>Exposes the MAPI properties most relevant to EML export — subject, sender/recipients, dates,
  * transport headers, plain-text/HTML/RTF bodies and attachments. Address resolution honours an
  * {@link AddressPreference} (routable SMTP vs. Exchange legacy DN). Construct one from a node id (or
  * {@link NodeEntry}) obtained via {@link Folder#getMessages()}.
+ *
+ * <p>Construction reads the message's properties; a corrupt or missing node degrades to an empty
+ * message rather than failing, so bulk exports can keep going — {@link #isLoaded()} /
+ * {@link #getLoadError()} report whether that happened.
+ *
+ * <p>Instances are not thread-safe; confine each to a single thread.
  */
 public class Message {
 
-    // TODO: re-visit log
-    // private static final Logger LOG = Logger.getInstance(Message.class);
+    private static final System.Logger LOG = System.getLogger(Message.class.getName());
 
     private static final int NID_ATTACHMENT_TABLE = 0x0671;
     private static final int NID_RECIPIENT_TABLE = 0x0692;
@@ -37,6 +41,7 @@ public class Message {
     private AddressPreference addressPreference = AddressPreference.PREFER_SMTP;
     private Charset cachedCharset;
     private String cachedRawRtf;
+    private Exception loadError;
 
     /**
      * Selects which address a message prefers when both a routable SMTP address and an Exchange
@@ -48,64 +53,115 @@ public class Message {
         PREFER_LEGACY_DN
     }
 
+    /** Sets the address preference for sender/recipient resolution; {@code null} resets to SMTP. */
     public void setAddressPreference(AddressPreference addressPreference) {
         this.addressPreference = addressPreference != null ? addressPreference : AddressPreference.PREFER_SMTP;
     }
 
+    /**
+     * Wraps the message with the given node id.
+     *
+     * @param pstFile the open store; must not be {@code null}
+     * @param nid the message's node id, e.g. from {@link Folder#getMessages()}
+     */
     public Message(PstFile pstFile, int nid) {
-        this.pstFile = pstFile;
+        this.pstFile = Objects.requireNonNull(pstFile, "pstFile");
         this.nid = nid;
         this.nodeDatabase = pstFile.nodeDatabase();
-        this.node = nodeDatabase.getNode(nid);
+        NodeEntry resolved = null;
+        try {
+            resolved = nodeDatabase.getNode(nid);
+        } catch (IOException exception) {
+            loadError = exception;
+            LOG.log(System.Logger.Level.DEBUG, () -> "Failed to resolve message node " + nid, exception);
+        }
+        this.node = resolved;
         loadProperties();
     }
 
+    /**
+     * Wraps the message backed by an already-resolved node entry, e.g. an embedded message resolved
+     * via {@link PstFile#readSubnodeEntry}.
+     *
+     * @param pstFile the open store; must not be {@code null}
+     * @param node the message's node entry; must not be {@code null}
+     */
     public Message(PstFile pstFile, NodeEntry node) {
-        this.pstFile = pstFile;
+        this.pstFile = Objects.requireNonNull(pstFile, "pstFile");
+        this.node = Objects.requireNonNull(node, "node");
         this.nid = node.nodeId();
         this.nodeDatabase = pstFile.nodeDatabase();
-        this.node = node;
         loadProperties();
     }
 
     private void loadProperties() {
         try {
-            if (node == null) return;
+            if (node == null) {
+                if (loadError == null) {
+                    loadError = new PstException("Message node not found in NBT: " + nid);
+                }
+                return;
+            }
 
             byte[] data = nodeDatabase.readNodeData(node.dataBid());
             this.propertyContext = new PropertyContext(data, nodeDatabase, node);
-            Charset charset = getMessageCharset();
-            this.propertyContext.decodeString8(charset);
+            this.propertyContext.decodeString8(getMessageCharset());
         } catch (Exception exception) {
-            // TODO: re-visit log
-            // LOG.warn("Failed to load properties for message node " + nid, exception);
+            // Degrades gracefully (all getters return their empty defaults), but record and log so
+            // genuine corruption is not hidden.
+            loadError = exception;
+            LOG.log(System.Logger.Level.WARNING, () -> "Failed to load properties for message node " + nid, exception);
         }
     }
 
+    /** This message's node id. */
     public int getNid() {
         return nid;
     }
 
+    /** Whether the message's properties were read successfully; see {@link #getLoadError()}. */
+    public boolean isLoaded() {
+        return loadError == null;
+    }
+
+    /**
+     * The failure that prevented the message's properties from loading, or {@code null} if loading
+     * succeeded. A non-null value usually means the node id does not exist or the store is damaged.
+     */
+    public Exception getLoadError() {
+        return loadError;
+    }
+
+    /** The MAPI message class (e.g. {@code IPM.Note}), or an empty string if absent. */
     public String getMessageClass() {
         if (propertyContext == null) return "";
         return propertyContext.getProperty(MapiProperties.PR_MESSAGE_CLASS_W) instanceof String value ? value : "";
     }
 
+    /** The subject, or an empty string if absent. */
     public String getSubject() {
         if (propertyContext == null) return "";
         return propertyContext.getProperty(MapiProperties.PR_SUBJECT_W) instanceof String value ? value : "";
     }
 
+    /** The plain-text body, or an empty string if absent. */
     public String getBody() {
         if (propertyContext == null) return "";
         return propertyContext.getProperty(MapiProperties.PR_BODY_W) instanceof String value ? value : "";
     }
 
+    /**
+     * The HTML body, or an empty string if the message has none. The returned markup is
+     * <em>normalized</em> for re-serialization, not the raw stored bytes: PR_HTML byte content is
+     * decoded with the message's code page and any {@code <meta charset=...>} is rewritten to UTF-8,
+     * and when only an RTF body exists its encapsulated HTML (\fromhtml) is extracted. Use
+     * {@link #getProperty} with {@link MapiProperties#PR_HTML} for the raw bytes.
+     */
     public String getHtmlBody() {
         if (propertyContext == null) return "";
-        Object obj = propertyContext.getProperty(MapiProperties.PR_HTML);
-        if (obj instanceof String value) return value;
-        if (obj instanceof byte[] bytes) {
+        Object value = propertyContext.getProperty(MapiProperties.PR_HTML);
+        if (value instanceof String text) return text;
+        if (value instanceof byte[] bytes) {
             Charset charset = getMessageCharset();
             String decoded = new String(bytes, charset).trim();
             decoded = decoded.replaceAll("(?i)(<meta[^>]*charset=[\"']?)[^\"'>]+([\"']?[^>]*>)", "$1utf-8$2");
@@ -125,11 +181,11 @@ public class Message {
         }
         Charset charset = Charset.forName("windows-1252");
         if (propertyContext != null) {
-            Object cpidObj = propertyContext.getProperty(MapiProperties.PR_INTERNET_CPID);
-            if (cpidObj == null) {
-                cpidObj = propertyContext.getProperty(MapiProperties.PR_MESSAGE_CODEPAGE);
+            Object codePage = propertyContext.getProperty(MapiProperties.PR_INTERNET_CPID);
+            if (codePage == null) {
+                codePage = propertyContext.getProperty(MapiProperties.PR_MESSAGE_CODEPAGE);
             }
-            if (cpidObj instanceof Number number) {
+            if (codePage instanceof Number number) {
                 charset = codePageToCharset(number.intValue());
             }
         }
@@ -137,8 +193,8 @@ public class Message {
         return charset;
     }
 
-    private Charset codePageToCharset(int cpid) {
-        return switch (cpid) {
+    private Charset codePageToCharset(int codePageId) {
+        return switch (codePageId) {
             case 1200 -> StandardCharsets.UTF_16LE;
             case 1201 -> StandardCharsets.UTF_16BE;
             case 20127 -> StandardCharsets.US_ASCII;
@@ -153,14 +209,14 @@ public class Message {
             case 50225 -> charsetOrDefault("ISO-2022-KR");
             case 51932 -> charsetOrDefault("EUC-JP");
             case 51949 -> charsetOrDefault("EUC-KR");
-            default -> charsetOrDefault("windows-" + cpid);
+            default -> charsetOrDefault("windows-" + codePageId);
         };
     }
 
     private static Charset charsetOrDefault(String name) {
         try {
             return Charset.forName(name);
-        } catch (Exception exception) {
+        } catch (Exception ignored) {
             return Charset.forName("windows-1252");
         }
     }
@@ -219,6 +275,7 @@ public class Message {
                     try {
                         html.append(new String(hexBuffer.toByteArray(), charsetName));
                     } catch (Exception ignored) {
+                        // unsupported charset name — skip the escaped bytes
                     }
                     continue;
                 }
@@ -272,15 +329,21 @@ public class Message {
                 && propertyContext.getProperty(MapiProperties.PR_RTF_COMPRESSED) instanceof byte[] compressed) {
             try {
                 rtf = LzFu.decode(compressed).trim();
-            } catch (Exception exception) {
-                // TODO: re-visit log
-                // LOG.debug("Failed to decompress RTF body for message node " + nid, exception);
+            } catch (RuntimeException exception) {
+                LOG.log(
+                        System.Logger.Level.DEBUG,
+                        () -> "Failed to decompress RTF body for message node " + nid,
+                        exception);
             }
         }
         cachedRawRtf = rtf;
         return rtf;
     }
 
+    /**
+     * The RTF body, or an empty string if the message has none (or its RTF only encapsulates HTML,
+     * which {@link #getHtmlBody()} surfaces instead).
+     */
     public String getRtfBody() {
         String rtf = getRawRtfBody();
         if (rtf.contains("\\fromhtml")) {
@@ -289,11 +352,13 @@ public class Message {
         return rtf;
     }
 
+    /** The raw PR_RTF_COMPRESSED bytes, or {@code null} if absent. */
     public byte[] getRtfCompressed() {
         if (propertyContext == null) return null;
         return propertyContext.getProperty(MapiProperties.PR_RTF_COMPRESSED) instanceof byte[] value ? value : null;
     }
 
+    /** The sender as {@code Name <address>}, name-only or address-only, or an empty string. */
     public String getSender() {
         String nameStr = getSenderName();
         String emailStr = getSenderEmail();
@@ -301,11 +366,13 @@ public class Message {
         return !nameStr.isEmpty() ? nameStr : emailStr;
     }
 
+    /** The sender's display name, or an empty string if absent. */
     public String getSenderName() {
         if (propertyContext == null) return "";
         return propertyContext.getProperty(MapiProperties.PR_SENDER_NAME_W) instanceof String value ? value : "";
     }
 
+    /** The sender's resolved address per the configured {@link AddressPreference}, or an empty string. */
     public String getSenderEmail() {
         if (propertyContext == null) return "";
         return resolveSenderEmail(propertyContext::getProperty, addressPreference);
@@ -367,32 +434,38 @@ public class Message {
         return "";
     }
 
+    /** The display string of the To: recipients (PR_DISPLAY_TO), or an empty string. */
     public String getTo() {
         if (propertyContext == null) return "";
         return propertyContext.getProperty(MapiProperties.PR_DISPLAY_TO_W) instanceof String value ? value : "";
     }
 
+    /** The display string of the Cc: recipients (PR_DISPLAY_CC), or an empty string. */
     public String getDisplayCc() {
         if (propertyContext == null) return "";
         return propertyContext.getProperty(MapiProperties.PR_DISPLAY_CC_W) instanceof String value ? value : "";
     }
 
+    /** The display string of the Bcc: recipients (PR_DISPLAY_BCC), or an empty string. */
     public String getDisplayBcc() {
         if (propertyContext == null) return "";
         return propertyContext.getProperty(MapiProperties.PR_DISPLAY_BCC_W) instanceof String value ? value : "";
     }
 
-    public Date getMessageDate() {
+    /**
+     * The message's origination time, or {@code null} if absent. Prefers PR_CLIENT_SUBMIT_TIME (the
+     * RFC 5322 §3.6.1 Date semantics) and falls back to the delivery time.
+     */
+    public Instant getMessageDate() {
         if (propertyContext == null) return null;
-        // RFC 5322 §3.6.1: the Date header is the origination (submit) time, so prefer
-        // PR_CLIENT_SUBMIT_TIME and fall back to the delivery time only when it is absent.
-        Object obj = propertyContext.getProperty(MapiProperties.PR_CLIENT_SUBMIT_TIME);
-        if (obj == null) {
-            obj = propertyContext.getProperty(MapiProperties.PR_MESSAGE_DELIVERY_TIME);
+        Object value = propertyContext.getProperty(MapiProperties.PR_CLIENT_SUBMIT_TIME);
+        if (value == null) {
+            value = propertyContext.getProperty(MapiProperties.PR_MESSAGE_DELIVERY_TIME);
         }
-        return obj instanceof Date date ? date : null;
+        return value instanceof Instant instant ? instant : null;
     }
 
+    /** The internet Message-ID, or {@code null} if absent. */
     public String getMessageId() {
         if (propertyContext == null) return null;
         return propertyContext.getProperty(MapiProperties.PR_INTERNET_MESSAGE_ID_W) instanceof String value
@@ -400,6 +473,7 @@ public class Message {
                 : null;
     }
 
+    /** The original transport headers (PR_TRANSPORT_MESSAGE_HEADERS), or an empty string. */
     public String getTransportHeaders() {
         if (propertyContext == null) return "";
         return propertyContext.getProperty(MapiProperties.PR_TRANSPORT_MESSAGE_HEADERS_W) instanceof String value
@@ -407,14 +481,23 @@ public class Message {
                 : "";
     }
 
+    /** Whether the message claims attachments (PR_HASATTACH). */
     public boolean hasAttachments() {
         if (propertyContext == null) return false;
-        Object obj = propertyContext.getProperty(MapiProperties.PR_HASATTACH);
-        if (obj instanceof Boolean flag) return flag;
-        if (obj instanceof Integer flag) return flag != 0;
-        return false;
+        return switch (propertyContext.getProperty(MapiProperties.PR_HASATTACH)) {
+            case Boolean flag -> flag;
+            case Integer flag -> flag != 0;
+            case null, default -> false;
+        };
     }
 
+    /**
+     * The message's attachments, parsed from its attachment table; empty if it has none. Attachment
+     * <em>content</em> is not materialized here — use {@link Attachment#getData()} or
+     * {@link Attachment#openDataStream()} per attachment. Failures while reading the table degrade
+     * to the attachments parsed so far (and are logged) so one bad attachment does not lose a
+     * message.
+     */
     public List<Attachment> getAttachments() {
         if (node == null || node.subBid() == 0) {
             return Collections.emptyList();
@@ -425,28 +508,32 @@ public class Message {
             byte[] tableData = nodeDatabase.readSubnodeData(node.subBid(), NID_ATTACHMENT_TABLE);
             if (tableData == null) return attachments;
 
-            TableContext tableContext = new TableContext(tableData, nodeDatabase, node, getMessageCharset());
+            var tableContext = new TableContext(tableData, nodeDatabase, node, getMessageCharset());
             for (Map<Integer, Object> row : tableContext.getRows()) {
-                Integer attachNid = (Integer) row.get(MapiProperties.PidTagLtpRowId);
-                if (attachNid != null) {
-                    NodeEntry attachEntry = nodeDatabase.readSubnodeEntry(node.subBid(), attachNid);
-                    if (attachEntry != null) {
-                        byte[] attachPcData = nodeDatabase.readNodeData(attachEntry.dataBid());
-                        if (attachPcData != null) {
-                            PropertyContext attachPc = new PropertyContext(attachPcData, nodeDatabase, attachEntry);
-                            attachPc.decodeString8(getMessageCharset());
-                            attachments.add(new Attachment(attachPc));
-                        }
-                    }
+                if (!(row.get(MapiProperties.PidTagLtpRowId) instanceof Integer attachNid)) {
+                    continue;
+                }
+                NodeEntry attachEntry = nodeDatabase.readSubnodeEntry(node.subBid(), attachNid);
+                if (attachEntry == null) {
+                    continue;
+                }
+                byte[] attachPcData = nodeDatabase.readNodeData(attachEntry.dataBid());
+                if (attachPcData != null) {
+                    var attachPc = new PropertyContext(attachPcData, nodeDatabase, attachEntry);
+                    attachPc.decodeString8(getMessageCharset());
+                    attachments.add(new Attachment(attachPc));
                 }
             }
-        } catch (IOException exception) {
-            // TODO: re-visit log
-            // LOG.warn("Failed to read attachments for message node " + nid, exception);
+        } catch (IOException | RuntimeException exception) {
+            LOG.log(System.Logger.Level.WARNING, () -> "Failed to read attachments for message node " + nid, exception);
         }
         return attachments;
     }
 
+    /**
+     * One row of the recipient table. {@link #type} is the MAPI recipient type: {@code 1} = To,
+     * {@code 2} = Cc, {@code 3} = Bcc (PR_RECIPIENT_TYPE).
+     */
     public static class Recipient {
         public final int type;
         public final String name;
@@ -459,6 +546,10 @@ public class Message {
         }
     }
 
+    /**
+     * The message's recipients, parsed from its recipient table; empty if it has none. Failures
+     * while reading the table degrade to an empty list (and are logged).
+     */
     public List<Recipient> getRecipients() {
         if (node == null || node.subBid() == 0) return Collections.emptyList();
         List<Recipient> recipients = new ArrayList<>();
@@ -466,11 +557,10 @@ public class Message {
             byte[] tableData = nodeDatabase.readSubnodeData(node.subBid(), NID_RECIPIENT_TABLE);
             if (tableData == null) return recipients;
 
-            TableContext tableContext = new TableContext(tableData, nodeDatabase, node, getMessageCharset());
+            var tableContext = new TableContext(tableData, nodeDatabase, node, getMessageCharset());
             recipients = parseRecipients(tableContext.getRows(), addressPreference);
-        } catch (IOException exception) {
-            // TODO: re-visit log
-            // LOG.warn("Failed to read recipients for message node " + nid, exception);
+        } catch (IOException | RuntimeException exception) {
+            LOG.log(System.Logger.Level.WARNING, () -> "Failed to read recipients for message node " + nid, exception);
         }
         return recipients;
     }
@@ -483,11 +573,11 @@ public class Message {
     static List<Recipient> parseRecipients(List<Map<Integer, Object>> rows, AddressPreference addressPreference) {
         var recipients = new ArrayList<Recipient>();
         for (var row : rows) {
-            var typeObj = row.get(MapiProperties.PR_RECIPIENT_TYPE);
-            var type = typeObj instanceof Number number ? number.intValue() : 1; // default to TO
+            var typeValue = row.get(MapiProperties.PR_RECIPIENT_TYPE);
+            var type = typeValue instanceof Number number ? number.intValue() : 1; // default to TO
 
-            var nameObj = row.get(MapiProperties.PR_DISPLAY_NAME_W);
-            var name = nameObj instanceof String displayName ? displayName : "";
+            var nameValue = row.get(MapiProperties.PR_DISPLAY_NAME_W);
+            var name = nameValue instanceof String displayName ? displayName : "";
 
             recipients.add(new Recipient(type, name, resolveRecipientEmail(row, addressPreference)));
         }
@@ -525,20 +615,23 @@ public class Message {
     }
 
     /**
-     * The raw MAPI property value for the given tag, or {@code null} if the message has no such
-     * property. Low-level access for tags the typed getters do not cover (e.g. the spam-confidence
-     * level or appointment start/end named properties).
+     * The raw MAPI property value for the given 16-bit property id (the upper half of a full MAPI
+     * property tag — pass {@code 0x0037}, not {@code 0x0037001F}), or {@code null} if the message
+     * has no such property. Low-level access for ids the typed getters do not cover (e.g. the
+     * spam-confidence level or appointment named properties resolved via
+     * {@link PstFile#namedPropertyId}). PT_SYSTIME values surface as {@link Instant}, multi-valued
+     * properties as immutable {@link List}s.
      */
-    public Object getProperty(int propertyTag) {
-        return propertyContext == null ? null : propertyContext.getProperty(propertyTag);
+    public Object getProperty(int propertyId) {
+        return propertyContext == null ? null : propertyContext.getProperty(propertyId);
     }
 
     /**
-     * The raw MAPI property value for the given tag as a {@code String}, or {@code null} if the
-     * property is absent or not a string.
+     * The raw MAPI property value for the given 16-bit property id as a {@code String}, or
+     * {@code null} if the property is absent or not a string.
      */
-    public String getStringProperty(int propertyTag) {
-        return propertyContext == null ? null : propertyContext.getString(propertyTag);
+    public String getStringProperty(int propertyId) {
+        return propertyContext == null ? null : propertyContext.getString(propertyId);
     }
 
     private static String imceaEncapsulate(String addrType, String address) {

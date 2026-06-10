@@ -240,5 +240,12 @@ public final class MapiProperties {
      */
     public static final int PR_CONTENT_FILTER_SPAM_CONFIDENCE_LEVEL = 0x4076;
 
+    /**
+     * The CRC of the Outlook password on the message store object (PidTagPstPassword). The content
+     * is not encrypted with the password; see {@link PstFile#isPasswordProtected()}.
+     * EML alternative: none.
+     */
+    public static final int PR_PST_PASSWORD = 0x67FF;
+
     private MapiProperties() {}
 }

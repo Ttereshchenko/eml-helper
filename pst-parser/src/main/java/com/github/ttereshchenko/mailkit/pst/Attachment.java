@@ -1,9 +1,16 @@
 package com.github.ttereshchenko.mailkit.pst;
 
+import java.io.IOException;
+import java.io.InputStream;
+
 /**
- * An attachment of a {@link Message}, backed by its sub-node {@link PropertyContext}.
+ * An attachment of a {@link Message}, backed by its sub-node Property Context.
  *
- * <p>Exposes the attachment filename, MIME type, embedded-message flag and decoded binary content.
+ * <p>Exposes the attachment filename, MIME type, embedded-message flag and binary content. The
+ * content can be {@linkplain #getData() materialized} or {@linkplain #openDataStream() streamed};
+ * prefer streaming for large attachments.
+ *
+ * <p>Instances are not thread-safe; confine each to a single thread.
  */
 public class Attachment {
     private final PropertyContext propertyContext;
@@ -21,35 +28,57 @@ public class Attachment {
         this.propertyContext = null;
     }
 
+    /** The long filename (PR_ATTACH_LONG_FILENAME), or an empty string if absent. */
     public String getLongFilename() {
-        Object obj = propertyContext.getProperty(MapiProperties.PR_ATTACH_LONG_FILENAME_W);
-        return obj instanceof String ? (String) obj : "";
+        return propertyContext.getProperty(MapiProperties.PR_ATTACH_LONG_FILENAME_W) instanceof String value
+                ? value
+                : "";
     }
 
+    /** The 8.3 filename (PR_ATTACH_FILENAME), or an empty string if absent. */
     public String getFilename() {
-        Object obj = propertyContext.getProperty(MapiProperties.PR_ATTACH_FILENAME_W);
-        return obj instanceof String ? (String) obj : "";
+        return propertyContext.getProperty(MapiProperties.PR_ATTACH_FILENAME_W) instanceof String value ? value : "";
     }
 
+    /** The MIME type (PR_ATTACH_MIME_TAG), or an empty string if absent. */
     public String getMimeTag() {
-        Object obj = propertyContext.getProperty(MapiProperties.PR_ATTACH_MIME_TAG_W);
-        return obj instanceof String ? (String) obj : "";
+        return propertyContext.getProperty(MapiProperties.PR_ATTACH_MIME_TAG_W) instanceof String value ? value : "";
     }
 
+    /**
+     * The attachment content fully materialized in memory, or {@code null} if absent. Reads larger
+     * than the store's configured {@code maxNodeSize} fail; for large attachments prefer
+     * {@link #openDataStream()}.
+     */
     public byte[] getData() {
-        Object obj = propertyContext.getProperty(MapiProperties.PR_ATTACH_DATA_BIN);
-        return obj instanceof byte[] ? (byte[]) obj : null;
+        return propertyContext.getProperty(MapiProperties.PR_ATTACH_DATA_BIN) instanceof byte[] value ? value : null;
     }
 
+    /**
+     * Opens a stream over the attachment content without materializing it, reading the underlying
+     * store block by block; or {@code null} if the attachment has no binary content (e.g. an
+     * embedded message). The stream is independent of this attachment and need not be exhausted.
+     *
+     * @throws IOException if the underlying store cannot be read
+     */
+    public InputStream openDataStream() throws IOException {
+        return propertyContext == null ? null : propertyContext.openBinaryStream(MapiProperties.PR_ATTACH_DATA_BIN);
+    }
+
+    /**
+     * The node id of the embedded message when this attachment embeds one (PR_ATTACH_DATA_OBJ —
+     * same id as PR_ATTACH_DATA_BIN), or {@code null}. Resolve it against {@link #getNode()}'s
+     * sub-node tree via {@link PstFile#readSubnodeEntry}.
+     */
     public Integer getEmbeddedMessageNodeId() {
-        Object obj = propertyContext.getProperty(
+        Object value = propertyContext.getProperty(
                 MapiProperties.PR_ATTACH_DATA_BIN); // PR_ATTACH_DATA_OBJ has the same ID 0x3701
-        return obj instanceof Integer ? (Integer) obj : null;
+        return value instanceof Integer nodeId ? nodeId : null;
     }
 
+    /** The attach method (PR_ATTACH_METHOD), or {@code 0} if absent. */
     public int getAttachMethod() {
-        Object obj = propertyContext.getProperty(MapiProperties.PR_ATTACH_METHOD);
-        return obj instanceof Integer ? (Integer) obj : 0;
+        return propertyContext.getProperty(MapiProperties.PR_ATTACH_METHOD) instanceof Integer value ? value : 0;
     }
 
     PropertyContext getPropertyContext() {
@@ -64,21 +93,21 @@ public class Attachment {
         return propertyContext == null ? null : propertyContext.getNode();
     }
 
+    /** The Content-ID for inline (cid:) references (PR_ATTACH_CONTENT_ID), or {@code null}. */
     public String getContentId() {
-        Object obj = propertyContext.getProperty(MapiProperties.PR_ATTACH_CONTENT_ID_W);
-        return obj instanceof String ? (String) obj : null;
+        return propertyContext.getProperty(MapiProperties.PR_ATTACH_CONTENT_ID_W) instanceof String value
+                ? value
+                : null;
     }
 
+    /** Whether the attachment is meant to render inline, per its disposition or attach flags. */
     public boolean isInline() {
-        Object obj = propertyContext.getProperty(MapiProperties.PR_ATTACH_DISPOSITION);
-        if (obj instanceof String) {
-            return "inline".equalsIgnoreCase((String) obj);
+        if (propertyContext.getProperty(MapiProperties.PR_ATTACH_DISPOSITION) instanceof String disposition) {
+            return "inline".equalsIgnoreCase(disposition);
         }
-        Object flags = propertyContext.getProperty(MapiProperties.PR_ATTACH_FLAGS);
-        if (flags instanceof Integer) {
-            int flagsInt = (Integer) flags;
+        if (propertyContext.getProperty(MapiProperties.PR_ATTACH_FLAGS) instanceof Integer flags) {
             // attRenderedInBody (0x4) or ATT_INVISIBLE_IN_HTML (0x1) or ATT_HIDDEN (0x7FFE)
-            return (flagsInt & 0x00000004) != 0 || (flagsInt & 0x00000001) != 0 || flagsInt == 0x7FFE;
+            return (flags & 0x00000004) != 0 || (flags & 0x00000001) != 0 || flags == 0x7FFE;
         }
         return false;
     }
