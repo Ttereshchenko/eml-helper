@@ -97,4 +97,174 @@ public record XclientConfig(
                 value,
                 optional);
     }
+
+    public XclientConfig withPort(Integer value) {
+        return new XclientConfig(
+                addr,
+                name,
+                value,
+                proto,
+                helo,
+                login,
+                destAddr,
+                destPort,
+                reverseName,
+                extra,
+                rawCommand,
+                beforeStartTls,
+                optional);
+    }
+
+    public XclientConfig withProto(String value) {
+        return new XclientConfig(
+                addr,
+                name,
+                port,
+                value,
+                helo,
+                login,
+                destAddr,
+                destPort,
+                reverseName,
+                extra,
+                rawCommand,
+                beforeStartTls,
+                optional);
+    }
+
+    public XclientConfig withHelo(String value) {
+        return new XclientConfig(
+                addr,
+                name,
+                port,
+                proto,
+                value,
+                login,
+                destAddr,
+                destPort,
+                reverseName,
+                extra,
+                rawCommand,
+                beforeStartTls,
+                optional);
+    }
+
+    public XclientConfig withLogin(String value) {
+        return new XclientConfig(
+                addr,
+                name,
+                port,
+                proto,
+                helo,
+                value,
+                destAddr,
+                destPort,
+                reverseName,
+                extra,
+                rawCommand,
+                beforeStartTls,
+                optional);
+    }
+
+    public XclientConfig withDestAddr(String value) {
+        return new XclientConfig(
+                addr,
+                name,
+                port,
+                proto,
+                helo,
+                login,
+                value,
+                destPort,
+                reverseName,
+                extra,
+                rawCommand,
+                beforeStartTls,
+                optional);
+    }
+
+    public XclientConfig withDestPort(Integer value) {
+        return new XclientConfig(
+                addr,
+                name,
+                port,
+                proto,
+                helo,
+                login,
+                destAddr,
+                value,
+                reverseName,
+                extra,
+                rawCommand,
+                beforeStartTls,
+                optional);
+    }
+
+    public XclientConfig withReverseName(String value) {
+        return new XclientConfig(
+                addr,
+                name,
+                port,
+                proto,
+                helo,
+                login,
+                destAddr,
+                destPort,
+                value,
+                extra,
+                rawCommand,
+                beforeStartTls,
+                optional);
+    }
+
+    public XclientConfig withExtra(Map<String, String> value) {
+        return new XclientConfig(
+                addr,
+                name,
+                port,
+                proto,
+                helo,
+                login,
+                destAddr,
+                destPort,
+                reverseName,
+                value,
+                rawCommand,
+                beforeStartTls,
+                optional);
+    }
+
+    public XclientConfig withRawCommand(String value) {
+        return new XclientConfig(
+                addr,
+                name,
+                port,
+                proto,
+                helo,
+                login,
+                destAddr,
+                destPort,
+                reverseName,
+                extra,
+                value,
+                beforeStartTls,
+                optional);
+    }
+
+    public XclientConfig withOptional(boolean value) {
+        return new XclientConfig(
+                addr,
+                name,
+                port,
+                proto,
+                helo,
+                login,
+                destAddr,
+                destPort,
+                reverseName,
+                extra,
+                rawCommand,
+                beforeStartTls,
+                value);
+    }
 }

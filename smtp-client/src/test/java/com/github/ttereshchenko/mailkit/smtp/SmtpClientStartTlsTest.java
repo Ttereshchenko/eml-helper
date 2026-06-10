@@ -38,6 +38,12 @@ class SmtpClientStartTlsTest {
             assertFalse(result.tls().protocol().isBlank());
             assertNotNull(result.tls().cipherSuite());
             assertFalse(result.tls().cipherSuite().isBlank());
+            // The peer certificate snapshot must survive past the closed socket.
+            var peer = result.tls().peer();
+            assertFalse(peer.isEmpty(), "peer certificate snapshot should be captured");
+            assertFalse(peer.subject().isBlank(), "subject DN expected");
+            assertEquals(64, peer.fingerprintSha256().length(), "SHA-256 hex fingerprint expected");
+            assertTrue(peer.chainPem().contains("-----BEGIN CERTIFICATE-----"), "PEM chain expected");
             assertTrue(result.cleanlyClosed());
             assertEquals(Phase.QUIT, result.lastPhaseReached());
         }

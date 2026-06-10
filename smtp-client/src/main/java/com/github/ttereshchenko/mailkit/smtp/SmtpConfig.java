@@ -11,8 +11,8 @@ import java.time.Duration;
 import java.util.Objects;
 
 /**
- * Wire-level knobs for a single SMTP transaction. Each phase folds in more knobs without changing
- * the record's public shape — callers reach the new bits via dedicated {@code with*} helpers.
+ * Wire-level knobs for a single SMTP transaction. Callers usually start from
+ * {@link #defaults(String)} and adjust individual knobs via the {@code with*} helpers.
  */
 public record SmtpConfig(
         String host,
@@ -30,8 +30,14 @@ public record SmtpConfig(
         XclientConfig xclient) {
 
     public enum Protocol {
+        /** Plain rfc5321 HELO, no extensions. */
         SMTP,
+        /** EHLO with extension negotiation (falls back to HELO when EHLO is rejected). */
         ESMTP,
+        /**
+         * Reserved: rfc2033 LMTP (LHLO + per-recipient final replies) is not implemented yet, and
+         * configuring it is rejected rather than silently behaving like ESMTP.
+         */
         LMTP
     }
 
@@ -54,6 +60,12 @@ public record SmtpConfig(
         if (timeout.isNegative() || timeout.isZero()) {
             throw new IllegalArgumentException("timeout must be positive");
         }
+        if (protocol == Protocol.LMTP) {
+            throw new IllegalArgumentException(
+                    "LMTP is not supported yet (requires LHLO and per-recipient DATA replies, rfc2033)");
+        }
+        SmtpEnvelope.requireNoLineBreaks(host, "host");
+        SmtpEnvelope.requireNoLineBreaks(ehloHost, "ehloHost");
     }
 
     public static SmtpConfig defaults(String host) {
@@ -71,6 +83,12 @@ public record SmtpConfig(
                 TransportConfig.defaults(),
                 ProxyConfig.disabled(),
                 XclientConfig.disabled());
+    }
+
+    public SmtpConfig withHost(String newHost) {
+        return new SmtpConfig(
+                newHost, port, ehloHost, protocol, timeout, stopAfter, dropAfter, tls, auth, esmtp, transport, proxy,
+                xclient);
     }
 
     public SmtpConfig withPort(int newPort) {
@@ -207,10 +225,21 @@ public record SmtpConfig(
 
     static String defaultEhloHost() {
         try {
-            var local = InetAddress.getLocalHost().getCanonicalHostName();
-            return local == null || local.isBlank() ? "mailkit.local" : local;
+            // getHostName, not getCanonicalHostName: the canonical lookup does a reverse-DNS
+            // query that can stall for seconds on misconfigured resolvers.
+            var local = InetAddress.getLocalHost().getHostName();
+            return local == null || local.isBlank() ? "mailkit.local" : bracketIfAddressLiteral(local);
         } catch (UnknownHostException ignored) {
             return "mailkit.local";
         }
+    }
+
+    /** rfc5321 §4.1.3: an IP used as the EHLO identity must be sent as an address literal. */
+    static String bracketIfAddressLiteral(String host) {
+        if (host.indexOf(':') >= 0) {
+            return "[IPv6:" + host + "]";
+        }
+        var digitsAndDots = host.chars().allMatch(character -> character == '.' || Character.isDigit(character));
+        return digitsAndDots && host.indexOf('.') >= 0 ? "[" + host + "]" : host;
     }
 }

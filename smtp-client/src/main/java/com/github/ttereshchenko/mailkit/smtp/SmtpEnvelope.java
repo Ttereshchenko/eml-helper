@@ -7,7 +7,7 @@ import java.util.Objects;
 /**
  * SMTP envelope — the addresses the server routes on, distinct from the {@code From:} / {@code To:}
  * headers carried inside the message body. DSN fields ({@code NOTIFY}, {@code ORCPT}, {@code ENVID},
- * {@code RET}) are placeholders in Phase 1 and wired into MAIL/RCPT lines in Phase 3.
+ * {@code RET}, rfc3461) are serialised onto the MAIL / RCPT lines when set.
  */
 public record SmtpEnvelope(String mailFrom, List<Recipient> recipients, String envid, RetMode ret) {
 
@@ -27,7 +27,7 @@ public record SmtpEnvelope(String mailFrom, List<Recipient> recipients, String e
     public record Recipient(String address, List<DsnNotify> notifyOn, String orcpt) {
         public Recipient {
             Objects.requireNonNull(address, "address");
-            requireNoLineBreaks(address, "recipient address");
+            requireSafeAddress(address, "recipient address");
             requireNoLineBreaks(orcpt, "ORCPT");
             notifyOn = notifyOn == null ? List.of() : List.copyOf(notifyOn);
         }
@@ -40,7 +40,7 @@ public record SmtpEnvelope(String mailFrom, List<Recipient> recipients, String e
     public SmtpEnvelope {
         Objects.requireNonNull(mailFrom, "mailFrom");
         Objects.requireNonNull(recipients, "recipients");
-        requireNoLineBreaks(mailFrom, "MAIL FROM");
+        requireSafeAddress(mailFrom, "MAIL FROM");
         requireNoLineBreaks(envid, "ENVID");
         if (recipients.isEmpty()) {
             throw new IllegalArgumentException("recipients must not be empty");
@@ -72,6 +72,30 @@ public record SmtpEnvelope(String mailFrom, List<Recipient> recipients, String e
             if (character == '\r' || character == '\n' || character == '\0') {
                 throw new IllegalArgumentException(
                         field + " must not contain a line break or NUL (SMTP command injection) at index " + index);
+            }
+        }
+    }
+
+    /**
+     * Addresses are written as {@code MAIL FROM:<address>} / {@code RCPT TO:<address>}, so on top
+     * of {@link #requireNoLineBreaks} they must not contain whitespace, angle brackets, or other
+     * control characters — any of those would terminate the path early and let extra ESMTP
+     * parameters be smuggled onto the command line (parameter injection). Non-ASCII characters
+     * remain allowed (SMTPUTF8, rfc6531); exotic-but-legal quoted local parts containing spaces
+     * are intentionally not supported by this client.
+     */
+    static void requireSafeAddress(String value, String field) {
+        requireNoLineBreaks(value, field);
+        for (var index = 0; index < value.length(); index++) {
+            var character = value.charAt(index);
+            if (character == '<'
+                    || character == '>'
+                    || character == ' '
+                    || character == '\t'
+                    || character < 0x20
+                    || character == 0x7F) {
+                throw new IllegalArgumentException(field + " must not contain whitespace, angle brackets, or control"
+                        + " characters (ESMTP parameter injection) at index " + index);
             }
         }
     }

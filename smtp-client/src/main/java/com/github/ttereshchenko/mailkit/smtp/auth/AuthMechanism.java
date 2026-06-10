@@ -4,8 +4,8 @@ import java.util.Locale;
 
 /**
  * SASL mechanisms supported by the client. Wire names match what servers advertise in EHLO.
- * NTLM is deferred per the Phase 2 decision; modern M365 SMTP uses OAuth2 and on-prem Exchange
- * is the only legacy NTLM-SMTP holdout.
+ * NTLM is intentionally unsupported: modern M365 SMTP uses OAuth2 and on-prem Exchange is the
+ * only legacy NTLM-SMTP holdout.
  */
 public enum AuthMechanism {
     PLAIN("PLAIN"),
@@ -28,9 +28,15 @@ public enum AuthMechanism {
         return wireName;
     }
 
-    /** PLAIN, LOGIN, and CRAM-MD5 expose credentials in cleartext on the wire and require TLS. */
+    /**
+     * Mechanisms that put a directly reusable credential on the wire and therefore require TLS
+     * (or an explicit {@code allowPlaintextAuth} override): PLAIN and LOGIN carry the password
+     * itself, XOAUTH2 and OAUTHBEARER carry a live bearer token (as good as a password to anyone
+     * sniffing), and CRAM-MD5 is included conservatively — it does not reveal the password but is
+     * cheap to crack offline from a captured exchange.
+     */
     public boolean isPlaintextOnTheWire() {
-        return this == PLAIN || this == LOGIN || this == CRAM_MD5;
+        return this == PLAIN || this == LOGIN || this == CRAM_MD5 || this == XOAUTH2 || this == OAUTHBEARER;
     }
 
     public static AuthMechanism fromWireName(String name) {

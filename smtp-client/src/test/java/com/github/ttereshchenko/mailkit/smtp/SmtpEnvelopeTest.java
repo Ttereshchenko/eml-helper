@@ -67,9 +67,29 @@ class SmtpEnvelopeTest {
 
     @Test
     void acceptsInternationalizedUtf8Addresses() {
-        // SMTPUTF8 addresses carry non-ASCII code points; only CR / LF / NUL are forbidden, so an
-        // address with multibyte characters must still construct cleanly.
+        // SMTPUTF8 addresses carry non-ASCII code points; an address with multibyte characters
+        // must still construct cleanly.
         var envelope = assertDoesNotThrow(() -> SmtpEnvelope.of("user@例え.example", "rcpt@例え.example"));
         assertEquals("user@例え.example", envelope.mailFrom());
+    }
+
+    @Test
+    void rejectsAngleBracketInMailFrom() {
+        // "a@b> SIZE=0" would close the forward-path early and inject an ESMTP parameter.
+        assertThrows(IllegalArgumentException.class, () -> SmtpEnvelope.of("a@example.com> SIZE=0", "to@example.com"));
+    }
+
+    @Test
+    void rejectsSpaceInRecipientAddress() {
+        assertThrows(
+                IllegalArgumentException.class, () -> SmtpEnvelope.of("from@example.com", "to@example.com FOO=BAR"));
+    }
+
+    @Test
+    void rejectsTabAndControlCharactersInAddresses() {
+        assertThrows(IllegalArgumentException.class, () -> SmtpEnvelope.of("from@example.com", "to@exa\tmple.com"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> SmtpEnvelope.of("from@example.com", ("to@exa" + (char) 0x07 + "mple.com")));
     }
 }

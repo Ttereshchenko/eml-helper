@@ -17,6 +17,7 @@ import com.github.ttereshchenko.mailkit.smtp.transport.MxResolver;
 import com.github.ttereshchenko.mailkit.smtp.transport.TcpConnector;
 import com.github.ttereshchenko.mailkit.smtp.xclient.XclientCommandBuilder;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -30,18 +31,38 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import javax.naming.NamingException;
+import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLSocket;
 
 /**
  * Drives a single SMTP / ESMTP transaction. Owns no state between calls; each {@link #send} runs
- * against a fresh socket. Phase 2 adds STARTTLS and TLS-on-connect on top of the Phase 1 wire
- * client without changing the entry-point signature.
+ * against a fresh socket. Covers STARTTLS and TLS-on-connect, SASL authentication, PIPELINING,
+ * CHUNKING (BDAT), PRDR, DSN parameters, the PROXY protocol preamble, and XCLIENT.
  */
 public final class SmtpClient {
 
     private static final byte[] DOT_CRLF = {'.', '\r', '\n'};
     private static final byte[] CRLF = {'\r', '\n'};
     private static final int CHUNK_SIZE = 8192;
+    private static final int BDAT_CHUNK_SIZE = 256 * 1024;
+    // Bounds for server replies: a hostile or broken server must not be able to grow client
+    // memory without limit by streaming endless "250-..." continuations or a newline-free line.
+    private static final int MAX_REPLY_LINES = 500;
+    private static final int MAX_REPLY_LINE_CHARS = 8192;
+
+    private final TcpConnector connector;
+    private final MxResolver mxResolver;
+
+    public SmtpClient() {
+        this(new TcpConnector(), new MxResolver());
+    }
+
+    /** Seam for custom transports and DNS resolution (and for tests that fake either). */
+    public SmtpClient(TcpConnector connector, MxResolver mxResolver) {
+        this.connector = Objects.requireNonNull(connector, "connector");
+        this.mxResolver = Objects.requireNonNull(mxResolver, "mxResolver");
+    }
 
     public SendResult send(SmtpConfig config, SmtpEnvelope envelope, MessageSource source) throws SmtpException {
         return send(config, envelope, source, CancellationToken.NEVER, SmtpTranscript.NULL_LISTENER);
@@ -107,18 +128,32 @@ public final class SmtpClient {
             throws SmtpException, IOException {
         session.enterPhase(Phase.CONNECT);
         cancel(cancel, session);
-        var destinationHost = resolveDestinationHost(config, envelope, transcript);
-        try {
-            var fresh =
-                    new TcpConnector().connect(destinationHost, config.port(), config.timeout(), config.transport());
-            connection.initialize(fresh);
-        } catch (IOException failure) {
+        var destinationHosts = resolveDestinationHosts(config, envelope, transcript);
+        Socket fresh = null;
+        IOException lastConnectFailure = null;
+        for (var destinationHost : destinationHosts) {
+            try {
+                fresh = connector.connect(destinationHost, config.port(), config.timeout(), config.transport());
+                break;
+            } catch (IOException failure) {
+                // RFC 5321 §5.1: when the best-preference MX is unreachable, try the alternates.
+                lastConnectFailure = failure;
+                transcript.append(
+                        SmtpTranscript.Direction.INFO,
+                        ("could not connect to " + destinationHost + ":" + config.port() + " — " + failure.getMessage())
+                                .getBytes(StandardCharsets.UTF_8),
+                        Phase.CONNECT);
+            }
+        }
+        if (fresh == null) {
             throw new SmtpException(
                     SmtpException.Kind.CONNECT_FAILED,
                     Phase.CONNECT,
-                    "could not connect to " + destinationHost + ":" + config.port() + " — " + failure.getMessage(),
-                    failure);
+                    "could not connect to " + String.join(", ", destinationHosts) + ":" + config.port() + " — "
+                            + lastConnectFailure.getMessage(),
+                    lastConnectFailure);
         }
+        connection.initialize(fresh);
 
         writeProxyHeaderIfConfigured(connection, config, transcript);
 
@@ -244,17 +279,7 @@ public final class SmtpClient {
 
             session.enterPhase(Phase.DOT);
             writeLineRaw(connection.output(), transcript, Phase.DOT, DOT_CRLF, SmtpTranscript.Direction.CLIENT, ".");
-            if (negotiation.usePrdr()) {
-                readPrdrPerRecipientResponses(connection, transcript, dispositions);
-            } else {
-                var dotResponse = readResponse(connection, transcript, Phase.DOT);
-                if (!dotResponse.isPositiveCompletion()) {
-                    throw new SmtpException(
-                            SmtpException.Kind.DATA_REJECTED,
-                            Phase.DOT,
-                            "DATA terminator rejected: " + dotResponse.code() + " " + dotResponse.firstLine());
-                }
-            }
+            readDataVerdict(connection, transcript, dispositions, negotiation.usePrdr(), Phase.DOT);
             if (shouldStop(config, Phase.DOT)) {
                 throw stop(config, connection, transcript, Phase.DOT);
             }
@@ -298,12 +323,9 @@ public final class SmtpClient {
 
             if (negotiation.useBdat()) {
                 session.enterPhase(Phase.BDAT);
-                performBdat(connection, transcript, source, cancel, session);
+                performBdat(connection, transcript, source, cancel, session, dispositions, negotiation.usePrdr());
                 if (shouldStop(config, Phase.BDAT)) {
                     throw stop(config, connection, transcript, Phase.BDAT);
-                }
-                if (negotiation.usePrdr()) {
-                    readPrdrPerRecipientResponses(connection, transcript, dispositions);
                 }
             } else {
                 session.enterPhase(Phase.DATA);
@@ -324,17 +346,7 @@ public final class SmtpClient {
                 session.enterPhase(Phase.DOT);
                 writeLineRaw(
                         connection.output(), transcript, Phase.DOT, DOT_CRLF, SmtpTranscript.Direction.CLIENT, ".");
-                if (negotiation.usePrdr()) {
-                    readPrdrPerRecipientResponses(connection, transcript, dispositions);
-                } else {
-                    var dotResponse = readResponse(connection, transcript, Phase.DOT);
-                    if (!dotResponse.isPositiveCompletion()) {
-                        throw new SmtpException(
-                                SmtpException.Kind.DATA_REJECTED,
-                                Phase.DOT,
-                                "DATA terminator rejected: " + dotResponse.code() + " " + dotResponse.firstLine());
-                    }
-                }
+                readDataVerdict(connection, transcript, dispositions, negotiation.usePrdr(), Phase.DOT);
                 if (shouldStop(config, Phase.DOT)) {
                     throw stop(config, connection, transcript, Phase.DOT);
                 }
@@ -407,6 +419,11 @@ public final class SmtpClient {
         var response = command(connection, transcript, Phase.STARTTLS, "STARTTLS");
         if (!response.isPositiveCompletion()) {
             if (mode == TlsConfig.Mode.STARTTLS_OPTIONAL) {
+                transcript.append(
+                        SmtpTranscript.Direction.INFO,
+                        ("STARTTLS rejected (" + response.code() + ") — continuing in cleartext (STARTTLS_OPTIONAL)")
+                                .getBytes(StandardCharsets.UTF_8),
+                        Phase.STARTTLS);
                 return false;
             }
             throw new SmtpException(
@@ -442,6 +459,14 @@ public final class SmtpClient {
                                     + sslSocket.getSession().getCipherSuite())
                             .getBytes(StandardCharsets.UTF_8),
                     reportedAs);
+        } catch (SSLException handshakeFailure) {
+            // SSLHandshakeException is an IOException — without this catch an untrusted chain or a
+            // hostname mismatch would be misreported as a generic IO_ERROR instead of TLS_FAILED.
+            throw new SmtpException(
+                    SmtpException.Kind.TLS_FAILED,
+                    reportedAs,
+                    "TLS handshake failed: " + handshakeFailure.getMessage(),
+                    handshakeFailure);
         } catch (GeneralSecurityException securityFailure) {
             throw new SmtpException(
                     SmtpException.Kind.TLS_FAILED,
@@ -537,10 +562,17 @@ public final class SmtpClient {
         }
     }
 
-    private String resolveDestinationHost(SmtpConfig config, SmtpEnvelope envelope, SmtpTranscript transcript)
+    /**
+     * Resolves the connection candidates. Without MX routing this is just the configured host.
+     * With MX routing the candidates are all MX hosts of the <b>MAIL FROM</b> domain in preference
+     * order (swaks {@code --copy-routing} semantics — recipients' domains are deliberately not
+     * consulted; see {@code TransportConfig#useMxRouting()}), so the caller can fall back to the
+     * next MX when one is unreachable (rfc5321 §5.1).
+     */
+    private List<String> resolveDestinationHosts(SmtpConfig config, SmtpEnvelope envelope, SmtpTranscript transcript)
             throws SmtpException {
         if (!config.transport().useMxRouting()) {
-            return config.host();
+            return List.of(config.host());
         }
         var atIndex = envelope.mailFrom().indexOf('@');
         if (atIndex < 0 || atIndex == envelope.mailFrom().length() - 1) {
@@ -551,21 +583,28 @@ public final class SmtpClient {
         }
         var domain = envelope.mailFrom().substring(atIndex + 1);
         try {
-            var mxHosts = new MxResolver().resolve(domain);
+            var mxHosts = new ArrayList<>(mxResolver.resolve(domain));
+            if (mxHosts.size() == 1 && mxHosts.get(0).isEmpty()) {
+                // "0 ." — null MX (rfc7505): the domain declares it accepts no mail at all.
+                throw new SmtpException(
+                        SmtpException.Kind.CONNECT_FAILED,
+                        Phase.CONNECT,
+                        "domain " + domain + " declines all mail (null MX, rfc7505)");
+            }
+            mxHosts.removeIf(String::isEmpty);
             if (mxHosts.isEmpty()) {
                 transcript.append(
                         SmtpTranscript.Direction.INFO,
                         ("no MX records for " + domain + " — falling back to A/AAAA").getBytes(StandardCharsets.UTF_8),
                         Phase.CONNECT);
-                return domain;
+                return List.of(domain);
             }
-            var chosen = mxHosts.get(0);
             transcript.append(
                     SmtpTranscript.Direction.INFO,
-                    ("MX routing: " + domain + " -> " + chosen).getBytes(StandardCharsets.UTF_8),
+                    ("MX routing: " + domain + " -> " + String.join(", ", mxHosts)).getBytes(StandardCharsets.UTF_8),
                     Phase.CONNECT);
-            return chosen;
-        } catch (javax.naming.NamingException failure) {
+            return List.copyOf(mxHosts);
+        } catch (NamingException failure) {
             throw new SmtpException(
                     SmtpException.Kind.CONNECT_FAILED,
                     Phase.CONNECT,
@@ -652,37 +691,23 @@ public final class SmtpClient {
         return parameters.toString().trim();
     }
 
+    /**
+     * Streams the message via CHUNKING (rfc3030): CRLF-normalized (no dot-stuffing) chunks of
+     * {@link #BDAT_CHUNK_SIZE}, each intermediate chunk acknowledged with a 250, then a final
+     * {@code BDAT n LAST} whose verdict is read through {@link #readDataVerdict} so PRDR
+     * per-recipient replies are honoured.
+     */
     private void performBdat(
             Connection connection,
             SmtpTranscript transcript,
             MessageSource source,
             CancellationToken cancel,
-            SmtpSession session)
+            SmtpSession session,
+            ArrayList<SendResult.RecipientDisposition> dispositions,
+            boolean prdrNegotiated)
             throws IOException, SmtpException {
-        // Phase-3 BDAT implementation: read the message into memory once, normalize, send as a
-        // single chunk with LAST. Streaming chunked BDAT is a follow-up — single-chunk wins on
-        // simplicity and matches the typical .eml send pattern (a single message per connection).
-        var payload = readAndNormalize(source);
-        writeCommand(connection.output(), transcript, Phase.BDAT, "BDAT " + payload.length + " LAST");
-        connection.output().write(payload);
-        connection.output().flush();
-        transcript.append(
-                SmtpTranscript.Direction.INFO,
-                ("BDAT payload: " + payload.length + " bytes").getBytes(StandardCharsets.UTF_8),
-                Phase.BDAT);
-        cancel(cancel, session);
-        var bdatResponse = readResponse(connection, transcript, Phase.BDAT);
-        if (!bdatResponse.isPositiveCompletion()) {
-            throw new SmtpException(
-                    SmtpException.Kind.DATA_REJECTED,
-                    Phase.BDAT,
-                    "BDAT rejected: " + bdatResponse.code() + " " + bdatResponse.firstLine());
-        }
-    }
-
-    /** Reads the entire payload into a CRLF-normalized buffer. Used by BDAT — no dot-stuffing. */
-    private byte[] readAndNormalize(MessageSource source) throws IOException {
-        var output = new java.io.ByteArrayOutputStream();
+        var pending = new ByteArrayOutputStream(CHUNK_SIZE);
+        var totalBytes = 0L;
         try (var stream = source.open()) {
             var buffer = new byte[CHUNK_SIZE];
             var sawCr = false;
@@ -693,41 +718,88 @@ public final class SmtpClient {
                     continue;
                 }
                 var normalized = normalize(buffer, read, sawCr, lineStart, false);
-                output.write(normalized.bytes());
+                pending.write(normalized.bytes());
                 sawCr = normalized.endedWithCr();
                 lineStart = normalized.endsAtLineStart();
+                if (pending.size() >= BDAT_CHUNK_SIZE) {
+                    totalBytes += sendBdatChunk(connection, transcript, pending.toByteArray(), false);
+                    pending.reset();
+                    var chunkAck = readResponse(connection, transcript, Phase.BDAT);
+                    if (!chunkAck.isPositiveCompletion()) {
+                        throw new SmtpException(
+                                SmtpException.Kind.DATA_REJECTED,
+                                Phase.BDAT,
+                                "BDAT chunk rejected: " + chunkAck.code() + " " + chunkAck.firstLine());
+                    }
+                    cancel(cancel, session);
+                }
             }
             if (!lineStart) {
-                output.write(CRLF);
+                pending.write(CRLF);
             }
         }
-        return output.toByteArray();
+        totalBytes += sendBdatChunk(connection, transcript, pending.toByteArray(), true);
+        transcript.append(
+                SmtpTranscript.Direction.INFO,
+                ("BDAT payload: " + totalBytes + " bytes").getBytes(StandardCharsets.UTF_8),
+                Phase.BDAT);
+        cancel(cancel, session);
+        readDataVerdict(connection, transcript, dispositions, prdrNegotiated, Phase.BDAT);
     }
 
-    private void readPrdrPerRecipientResponses(
-            Connection connection, SmtpTranscript transcript, ArrayList<SendResult.RecipientDisposition> dispositions)
+    private int sendBdatChunk(Connection connection, SmtpTranscript transcript, byte[] chunk, boolean last)
+            throws IOException {
+        writeCommand(connection.output(), transcript, Phase.BDAT, "BDAT " + chunk.length + (last ? " LAST" : ""));
+        connection.output().write(chunk);
+        connection.output().flush();
+        return chunk.length;
+    }
+
+    /**
+     * Reads the server's verdict after the end of message data ({@code <CRLF>.<CRLF>} or the LAST
+     * BDAT chunk). Without PRDR this is a single reply. When PRDR was negotiated, the server
+     * either sends a single uniform reply (all recipients shared the same fate) or a {@code 353}
+     * intermediate reply followed by one reply per recipient accepted at RCPT time and a closing
+     * overall reply (draft-hall-prdr, as implemented by Exim). Per-recipient replies overwrite the
+     * matching {@code dispositions} entries.
+     */
+    private void readDataVerdict(
+            Connection connection,
+            SmtpTranscript transcript,
+            ArrayList<SendResult.RecipientDisposition> dispositions,
+            boolean prdrNegotiated,
+            Phase phase)
             throws IOException, SmtpException {
-        // PRDR sends N per-recipient responses (one per recipient that was accepted at RCPT time)
-        // followed by a final overall response. We replace each accepted recipient's disposition
-        // with the per-recipient verdict; the final response is the overall DATA verdict.
-        for (var index = 0; index < dispositions.size(); index++) {
-            var current = dispositions.get(index);
-            if (!current.accepted()) {
-                continue;
+        var first = readResponse(connection, transcript, phase);
+        if (prdrNegotiated && first.code() == 353) {
+            for (var index = 0; index < dispositions.size(); index++) {
+                var current = dispositions.get(index);
+                if (!current.accepted()) {
+                    continue;
+                }
+                var response = readResponse(connection, transcript, phase);
+                dispositions.set(
+                        index,
+                        new SendResult.RecipientDisposition(
+                                current.address(),
+                                response.code(),
+                                response.firstLine(),
+                                response.isPositiveCompletion()));
             }
-            var response = readResponse(connection, transcript, Phase.DOT);
-            var perRecipientAccepted = response.isPositiveCompletion();
-            dispositions.set(
-                    index,
-                    new SendResult.RecipientDisposition(
-                            current.address(), response.code(), response.firstLine(), perRecipientAccepted));
+            var overall = readResponse(connection, transcript, phase);
+            if (!overall.isPositiveCompletion()) {
+                throw new SmtpException(
+                        SmtpException.Kind.DATA_REJECTED,
+                        phase,
+                        "PRDR final response rejected: " + overall.code() + " " + overall.firstLine());
+            }
+            return;
         }
-        var finalResponse = readResponse(connection, transcript, Phase.DOT);
-        if (!finalResponse.isPositiveCompletion()) {
+        if (!first.isPositiveCompletion()) {
             throw new SmtpException(
                     SmtpException.Kind.DATA_REJECTED,
-                    Phase.DOT,
-                    "PRDR final response rejected: " + finalResponse.code() + " " + finalResponse.firstLine());
+                    phase,
+                    "message data rejected: " + first.code() + " " + first.firstLine());
         }
     }
 
@@ -739,9 +811,15 @@ public final class SmtpClient {
         }
         var selector = new AuthMechanismSelector(auth.authMap());
         var advertised = session.capabilityArguments("AUTH");
-        var picked = selector.pick(auth.mechanism(), advertised);
+        var picked =
+                selector.pick(auth.mechanism(), advertised, auth.credentials().kind());
         if (picked == null) {
-            if (auth.optional()) {
+            if (auth.optional() || auth.optionalStrict()) {
+                transcript.append(
+                        SmtpTranscript.Direction.INFO,
+                        "no usable AUTH mechanism advertised — skipping authentication (optional)"
+                                .getBytes(StandardCharsets.UTF_8),
+                        session.currentPhase());
                 return;
             }
             throw new SmtpException(
@@ -767,21 +845,51 @@ public final class SmtpClient {
                     "could not build " + picked.wireName() + " client: " + failure.getMessage(),
                     failure);
         }
-        var initial = client.initial();
-        var authLine = "AUTH " + picked.wireName();
-        if (initial != null) {
-            authLine += " " + Base64.getEncoder().encodeToString(initial);
-        }
-        writeAuthCommand(connection.output(), transcript, authLine);
-        var response = readResponse(connection, transcript, Phase.AUTH);
-        while (response.code() == 334) {
-            var challenge = decodeChallenge(response.firstLine());
-            var reply = client.respond(challenge);
-            var encoded = reply == null ? "" : Base64.getEncoder().encodeToString(reply);
-            writeAuthCommand(connection.output(), transcript, encoded);
+        SmtpResponse response;
+        try {
+            var initial = client.initial();
+            var authLine = "AUTH " + picked.wireName();
+            if (initial != null) {
+                // rfc4954 §4: a present-but-empty initial response is transmitted as "=".
+                authLine +=
+                        " " + (initial.length == 0 ? "=" : Base64.getEncoder().encodeToString(initial));
+            }
+            writeAuthCommand(connection.output(), transcript, authLine);
             response = readResponse(connection, transcript, Phase.AUTH);
+            while (response.code() == 334) {
+                var challenge = decodeChallenge(response.firstLine());
+                var reply = client.respond(challenge);
+                var encoded = reply == null ? "" : Base64.getEncoder().encodeToString(reply);
+                writeAuthCommand(connection.output(), transcript, encoded);
+                response = readResponse(connection, transcript, Phase.AUTH);
+            }
+            if (response.code() == 235 && !client.isComplete()) {
+                // rfc4954 §4 allows the final SASL additional data (e.g. the SCRAM server-final
+                // message) to ride base64-encoded in the text of the 235 success reply.
+                var additionalData = tryDecodeBase64(response.firstLine());
+                if (additionalData != null) {
+                    client.respond(additionalData);
+                }
+            }
+        } catch (RuntimeException mechanismFailure) {
+            // Mechanism implementations signal protocol problems (bad server signature, malformed
+            // challenge, unexpected round) with unchecked exceptions — keep the SmtpException
+            // contract for callers and carry the transcript along.
+            throw new SmtpException(
+                    SmtpException.Kind.AUTH_FAILED,
+                    Phase.AUTH,
+                    picked.wireName() + " authentication failed: " + mechanismFailure.getMessage(),
+                    mechanismFailure);
         }
         if (response.code() != 235) {
+            if (auth.optional() && !auth.optionalStrict()) {
+                transcript.append(
+                        SmtpTranscript.Direction.INFO,
+                        ("AUTH rejected (" + response.code() + ") — continuing unauthenticated (optional)")
+                                .getBytes(StandardCharsets.UTF_8),
+                        Phase.AUTH);
+                return;
+            }
             throw new SmtpException(
                     SmtpException.Kind.AUTH_FAILED,
                     Phase.AUTH,
@@ -792,6 +900,27 @@ public final class SmtpClient {
                     SmtpException.Kind.AUTH_FAILED,
                     Phase.AUTH,
                     "AUTH ended with 235 but " + picked.wireName() + " client is not in a complete state");
+        }
+    }
+
+    /**
+     * Lenient base64 probe for additional data inside a 235 reply: servers differ on whether the
+     * blob is the whole reply text or the last token after an enhanced status code.
+     */
+    private static byte[] tryDecodeBase64(String text) {
+        var candidate = text.trim();
+        try {
+            return Base64.getDecoder().decode(candidate);
+        } catch (IllegalArgumentException ignored) {
+            var lastSpace = candidate.lastIndexOf(' ');
+            if (lastSpace < 0) {
+                return null;
+            }
+            try {
+                return Base64.getDecoder().decode(candidate.substring(lastSpace + 1));
+            } catch (IllegalArgumentException alsoNotBase64) {
+                return null;
+            }
         }
     }
 
@@ -823,6 +952,15 @@ public final class SmtpClient {
         session.enterPhase(phase);
         var verb = config.protocol() == SmtpConfig.Protocol.SMTP ? "HELO" : "EHLO";
         var response = command(connection, transcript, phase, verb + " " + config.ehloHost());
+        if ("EHLO".equals(verb) && response.isPermanentNegative()) {
+            // rfc5321 §3.2: a pre-ESMTP server may reject EHLO outright — retry once with HELO.
+            transcript.append(
+                    SmtpTranscript.Direction.INFO,
+                    ("EHLO rejected (" + response.code() + ") — falling back to HELO").getBytes(StandardCharsets.UTF_8),
+                    phase);
+            verb = "HELO";
+            response = command(connection, transcript, phase, verb + " " + config.ehloHost());
+        }
         if (!response.isPositiveCompletion()) {
             throw new SmtpException(
                     SmtpException.Kind.PROTOCOL_VIOLATION,
@@ -964,7 +1102,11 @@ public final class SmtpClient {
         var lines = new ArrayList<String>();
         int code = -1;
         while (true) {
-            var raw = reader.readLine();
+            if (lines.size() >= MAX_REPLY_LINES) {
+                throw new SmtpException(
+                        SmtpException.Kind.PROTOCOL_VIOLATION, phase, "reply exceeds " + MAX_REPLY_LINES + " lines");
+            }
+            var raw = readReplyLine(reader, phase);
             if (raw == null) {
                 throw new SmtpException(
                         SmtpException.Kind.IO_ERROR, phase, "server closed connection while reading response");
@@ -1000,6 +1142,32 @@ public final class SmtpClient {
                         SmtpException.Kind.PROTOCOL_VIOLATION, phase, "invalid reply separator: '" + raw + "'");
             }
         }
+    }
+
+    /**
+     * Reads one CRLF-terminated reply line with a hard length cap (defense against a server that
+     * never sends a newline). Returns null on a clean EOF before any byte of the line.
+     */
+    private static String readReplyLine(BufferedReader reader, Phase phase) throws IOException, SmtpException {
+        var builder = new StringBuilder(96);
+        int next;
+        while ((next = reader.read()) != -1) {
+            if (next == '\n') {
+                var length = builder.length();
+                if (length > 0 && builder.charAt(length - 1) == '\r') {
+                    builder.setLength(length - 1);
+                }
+                return builder.toString();
+            }
+            builder.append((char) next);
+            if (builder.length() > MAX_REPLY_LINE_CHARS) {
+                throw new SmtpException(
+                        SmtpException.Kind.PROTOCOL_VIOLATION,
+                        phase,
+                        "reply line exceeds " + MAX_REPLY_LINE_CHARS + " characters");
+            }
+        }
+        return builder.isEmpty() ? null : builder.toString();
     }
 
     private static Map<String, List<String>> parseCapabilities(SmtpResponse response) {

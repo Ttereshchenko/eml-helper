@@ -1,9 +1,13 @@
 package com.github.ttereshchenko.mailkit.smtp.xclient;
 
+import com.github.ttereshchenko.mailkit.smtp.Xtext;
+
 /**
  * Serialises an {@link XclientConfig} into the wire command. Empty unset fields are dropped so
- * the line is short enough for parser-strict servers. When {@code rawCommand} is set it is used
- * verbatim, allowing callers to emit attributes the standard formatter does not know about.
+ * the line is short enough for parser-strict servers, and attribute values are xtext-encoded as
+ * Postfix expects (XCLIENT_README), so spaces or control bytes cannot break the attribute list.
+ * When {@code rawCommand} is set it is used verbatim, allowing callers to emit attributes the
+ * standard formatter does not know about.
  */
 public final class XclientCommandBuilder {
 
@@ -37,6 +41,6 @@ public final class XclientCommandBuilder {
         if (text.isBlank()) {
             return;
         }
-        builder.append(' ').append(key).append('=').append(text);
+        builder.append(' ').append(key).append('=').append(Xtext.encode(text));
     }
 }

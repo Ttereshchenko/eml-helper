@@ -67,6 +67,37 @@ class MxResolverTest {
         assertEquals(List.of("mx.example.com"), resolved);
     }
 
+    @Test
+    void nullMxRecordSurfacesAsEmptyHostname() throws Exception {
+        // rfc7505: "0 ." means the domain accepts no mail; the resolver exposes it as "" so the
+        // client can refuse to send instead of dialing an empty host.
+        var attribute = new BasicAttribute("MX");
+        attribute.add("0 .");
+        var fixture = new FixtureContext(Map.of("example.com", attribute));
+
+        var resolved = new MxResolver(() -> fixture).resolve("example.com");
+
+        assertEquals(List.of(""), resolved);
+    }
+
+    @Test
+    void equalPreferenceRecordsAreAllPresentAndPrecedeWorsePreferences() throws Exception {
+        // Equal-preference records are shuffled (rfc5321 §5.1 load spreading), so assert set
+        // membership per preference tier rather than a fixed order.
+        var attribute = new BasicAttribute("MX");
+        attribute.add("10 mxa.example.com.");
+        attribute.add("10 mxb.example.com.");
+        attribute.add("20 backup.example.com.");
+        var fixture = new FixtureContext(Map.of("example.com", attribute));
+
+        var resolved = new MxResolver(() -> fixture).resolve("example.com");
+
+        assertEquals(3, resolved.size());
+        assertEquals("backup.example.com", resolved.get(2));
+        assertTrue(
+                resolved.subList(0, 2).containsAll(List.of("mxa.example.com", "mxb.example.com")), resolved.toString());
+    }
+
     /** Minimal DirContext stub — only {@code getAttributes(String, String[])} is exercised. */
     private static final class FixtureContext implements DirContext {
 

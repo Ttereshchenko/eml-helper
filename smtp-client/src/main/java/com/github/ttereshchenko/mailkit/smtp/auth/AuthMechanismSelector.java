@@ -36,18 +36,44 @@ public final class AuthMechanismSelector {
         this(Map.of());
     }
 
+    /** AUTO selection without credential-kind filtering — prefer {@link #pick(AuthMechanism, List, AuthCredentials.Kind)}. */
     public AuthMechanism pick(AuthMechanism requested, List<String> advertised) {
+        return pick(requested, advertised, null);
+    }
+
+    /**
+     * Picks a mechanism. An explicit {@code requested} mechanism is honored when advertised,
+     * regardless of credential kind. In AUTO mode ({@code requested == null}) candidates that
+     * cannot work with the supplied credential kind are skipped — a password is never sent as a
+     * bearer token and vice versa. A null {@code credentialKind} disables the filter.
+     */
+    public AuthMechanism pick(AuthMechanism requested, List<String> advertised, AuthCredentials.Kind credentialKind) {
         Objects.requireNonNull(advertised, "advertised");
         var resolved = applyMap(advertised);
         if (requested != null) {
             return resolved.contains(requested) ? requested : null;
         }
         for (var candidate : AUTO_ORDER) {
-            if (resolved.contains(candidate)) {
+            if (resolved.contains(candidate) && isCompatible(candidate, credentialKind)) {
                 return candidate;
             }
         }
         return null;
+    }
+
+    private static boolean isCompatible(AuthMechanism mechanism, AuthCredentials.Kind credentialKind) {
+        if (credentialKind == null) {
+            return true;
+        }
+        return switch (credentialKind) {
+            case PASSWORD ->
+                switch (mechanism) {
+                    case SCRAM_SHA_256, SCRAM_SHA_1, DIGEST_MD5, CRAM_MD5, PLAIN, LOGIN -> true;
+                    case XOAUTH2, OAUTHBEARER, EXTERNAL -> false;
+                };
+            case BEARER_TOKEN -> mechanism == AuthMechanism.XOAUTH2 || mechanism == AuthMechanism.OAUTHBEARER;
+            case EXTERNAL -> mechanism == AuthMechanism.EXTERNAL;
+        };
     }
 
     private List<AuthMechanism> applyMap(List<String> advertised) {

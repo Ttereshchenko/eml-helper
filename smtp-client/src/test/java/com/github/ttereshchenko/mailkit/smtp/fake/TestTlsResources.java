@@ -5,6 +5,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.X509Certificate;
+import java.util.Base64;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
@@ -67,6 +70,35 @@ public final class TestTlsResources {
                 }
             }
         };
+    }
+
+    /** The localhost server certificate from the bundled keystore, PEM-encoded. */
+    public static String serverCertPem() throws GeneralSecurityException, IOException {
+        var certificate = (X509Certificate) loadKeystoreEntry().getCertificate(firstAlias());
+        return pemBlock("CERTIFICATE", certificate.getEncoded());
+    }
+
+    /** The matching private key, unencrypted PKCS#8 PEM. */
+    public static String serverKeyPem() throws GeneralSecurityException, IOException {
+        var key = (PrivateKey) loadKeystoreEntry().getKey(firstAlias(), PASSWORD);
+        return pemBlock("PRIVATE KEY", key.getEncoded());
+    }
+
+    private static KeyStore loadKeystoreEntry() throws GeneralSecurityException, IOException {
+        var keyStore = KeyStore.getInstance("PKCS12");
+        try (var stream = openKeystore()) {
+            keyStore.load(stream, PASSWORD);
+        }
+        return keyStore;
+    }
+
+    private static String firstAlias() throws GeneralSecurityException, IOException {
+        return loadKeystoreEntry().aliases().nextElement();
+    }
+
+    private static String pemBlock(String label, byte[] der) {
+        var base64 = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(der);
+        return "-----BEGIN " + label + "-----\n" + base64 + "\n-----END " + label + "-----\n";
     }
 
     private static InputStream openKeystore() throws IOException {
