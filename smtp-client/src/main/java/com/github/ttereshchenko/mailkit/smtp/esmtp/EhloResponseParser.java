@@ -44,10 +44,21 @@ public final class EhloResponseParser {
             var parts = line.split("\\s+");
             var keyword = parts[0].toUpperCase(Locale.ROOT);
             var arguments = new ArrayList<String>(parts.length - 1);
+            // Legacy pre-rfc2554 servers advertise "AUTH=PLAIN LOGIN"; fold the inline first
+            // mechanism back into the argument list so AUTH is recognized.
+            if (keyword.startsWith("AUTH=") && keyword.length() > "AUTH=".length()) {
+                arguments.add(keyword.substring("AUTH=".length()));
+                keyword = "AUTH";
+            }
             for (var index = 1; index < parts.length; index++) {
                 arguments.add(parts[index]);
             }
-            result.put(keyword, arguments);
+            // Duplicate keyword lines (e.g. a second AUTH line) merge their arguments instead of
+            // the last line silently winning.
+            result.merge(keyword, arguments, (existing, additional) -> {
+                existing.addAll(additional);
+                return existing;
+            });
         }
         return result;
     }

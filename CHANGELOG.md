@@ -21,6 +21,15 @@
 
 ### Fixed
 
+- Sending via SMTP now reports a failed TLS handshake (untrusted certificate, hostname mismatch) as a TLS error instead of a generic I/O error, so the failure reason is clear in the send result.
+- OAuth-token sign-in (XOAUTH2 / OAUTHBEARER) is no longer attempted over an unencrypted connection unless plaintext authentication is explicitly allowed — bearer tokens now get the same protection as passwords.
+- Sends to servers that deliver per-recipient verdicts (PRDR, e.g. Exim) now read the verdicts correctly; previously the per-recipient results could be misattributed and the session desynchronized.
+- "Use MX routing" now tries every MX host of the sender domain in preference order instead of only the first one, refuses domains that declare "no mail accepted" (null MX), and reports the failed hosts in the send transcript.
+- "Authentication optional" now matches its description: a rejected sign-in no longer aborts the send, while the strict variant still treats a rejection as fatal.
+- Client certificates with EC (and Ed25519) keys can now be used for mutual TLS; unsupported key formats (encrypted or PKCS#1 PEM) are reported with an actionable message instead of a cryptic parse error.
+- Sending to very old servers that reject `EHLO` now falls back to `HELO` automatically, and legacy `AUTH=` capability advertisements are recognized.
+- When optional STARTTLS is rejected by the server, the cleartext downgrade is now noted in the send transcript.
+- Large messages sent with CHUNKING (BDAT) are now streamed in chunks instead of being buffered fully in memory.
 - Converting a malformed or malicious PST/OST archive no longer crashes the IDE: deeply nested folder trees, corrupt or oversized internal structures, and messages with an excessive number or size of attachments are now skipped cleanly with a logged warning instead of aborting the whole conversion.
 - Converted EML files are now hardened against header injection — control characters smuggled into a message's email addresses, Message-ID, or attachment metadata can no longer add or spoof headers in the output.
 - The `Date:` header of a converted message now reflects the original submission time rather than the delivery time, in line with RFC 5322.

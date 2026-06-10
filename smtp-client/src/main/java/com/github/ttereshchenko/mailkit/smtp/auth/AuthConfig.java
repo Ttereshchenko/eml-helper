@@ -5,9 +5,13 @@ import java.util.Objects;
 
 /**
  * AUTH knobs attached to {@link com.github.ttereshchenko.mailkit.smtp.SmtpConfig SmtpConfig}. The
- * mechanism may be {@code null} (AUTO mode — pick strongest advertised). Plaintext-vulnerable
- * mechanisms over a non-TLS socket are refused unless {@link #allowPlaintextAuth} is explicitly
- * set per-send.
+ * mechanism may be {@code null} (AUTO mode — pick strongest advertised that fits the credential
+ * kind). Plaintext-vulnerable mechanisms over a non-TLS socket are refused unless
+ * {@link #allowPlaintextAuth} is explicitly set per-send.
+ *
+ * <p>Optional semantics mirror swaks: {@link #optional} authenticates when possible but neither a
+ * missing usable mechanism nor a rejected AUTH aborts the send; {@link #optionalStrict} also
+ * tolerates a missing mechanism, but once authentication is attempted a rejection is fatal.
  */
 public record AuthConfig(
         AuthMechanism mechanism,

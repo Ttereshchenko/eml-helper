@@ -64,4 +64,36 @@ class TcpConnectorTest {
             socket.close();
         }
     }
+
+    @Test
+    void mxModeFiltersPrivateRangesIncludingUlaAndCgnat() throws Exception {
+        TcpConnector.AddressResolver resolver = host -> new InetAddress[] {
+            InetAddress.getByName("127.0.0.1"),
+            InetAddress.getByName("10.1.2.3"),
+            InetAddress.getByName("100.64.0.1"), // CGNAT 100.64/10
+            InetAddress.getByName("fd00::1") // IPv6 ULA fc00::/7
+        };
+        var connector = new TcpConnector(resolver);
+        var config = TransportConfig.defaults().withMxRouting(true);
+        try {
+            connector.connect("mx.example", 25, Duration.ofSeconds(1), config);
+            fail("expected IOException — every candidate is in a private range");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("no addresses match"), expected.getMessage());
+        }
+    }
+
+    @Test
+    void mxModeAllowsPrivateTargetsWhenExplicitlyOptedIn() throws Exception {
+        try (var server = new ServerSocket(0)) {
+            TcpConnector.AddressResolver resolver = host -> new InetAddress[] {InetAddress.getByName("127.0.0.1")};
+            var connector = new TcpConnector(resolver);
+            var config = TransportConfig.defaults().withMxRouting(true).withAllowPrivateMxTargets(true);
+
+            var socket = connector.connect("mx.example", server.getLocalPort(), Duration.ofSeconds(2), config);
+
+            assertTrue(socket.isConnected());
+            socket.close();
+        }
+    }
 }

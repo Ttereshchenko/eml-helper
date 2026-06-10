@@ -46,4 +46,33 @@ class AuthMechanismSelectorTest {
         var picked = new AuthMechanismSelector().pick(null, List.of());
         assertNull(picked);
     }
+
+    @Test
+    void autoWithPasswordCredentialsSkipsBearerMechanisms() {
+        // XOAUTH2 outranks PLAIN in AUTO order, but a password must never be sent as a token.
+        var picked = new AuthMechanismSelector()
+                .pick(null, List.of("XOAUTH2", "OAUTHBEARER", "PLAIN"), AuthCredentials.Kind.PASSWORD);
+        assertEquals(AuthMechanism.PLAIN, picked);
+    }
+
+    @Test
+    void autoWithBearerTokenOnlyConsidersBearerMechanisms() {
+        var picked = new AuthMechanismSelector()
+                .pick(null, List.of("SCRAM-SHA-256", "PLAIN", "XOAUTH2"), AuthCredentials.Kind.BEARER_TOKEN);
+        assertEquals(AuthMechanism.XOAUTH2, picked);
+    }
+
+    @Test
+    void autoWithExternalCredentialsOnlyConsidersExternal() {
+        var picked =
+                new AuthMechanismSelector().pick(null, List.of("PLAIN", "EXTERNAL"), AuthCredentials.Kind.EXTERNAL);
+        assertEquals(AuthMechanism.EXTERNAL, picked);
+    }
+
+    @Test
+    void explicitChoiceBypassesCredentialKindFilter() {
+        var picked = new AuthMechanismSelector()
+                .pick(AuthMechanism.XOAUTH2, List.of("XOAUTH2"), AuthCredentials.Kind.PASSWORD);
+        assertEquals(AuthMechanism.XOAUTH2, picked);
+    }
 }

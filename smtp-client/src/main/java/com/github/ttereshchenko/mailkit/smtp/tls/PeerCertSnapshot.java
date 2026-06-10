@@ -1,6 +1,5 @@
 package com.github.ttereshchenko.mailkit.smtp.tls;
 
-import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Objects;
 
@@ -29,11 +28,5 @@ public record PeerCertSnapshot(
 
     public boolean isEmpty() {
         return subject.isEmpty() && chainPem.isEmpty();
-    }
-
-    @SuppressWarnings("unused")
-    public X509Certificate placeholder() {
-        // Retained as a marker so callers know full X509 reconstruction is available via chainPem.
-        return null;
     }
 }

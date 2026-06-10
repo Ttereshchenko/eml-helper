@@ -1,5 +1,47 @@
 plugins {
     id 'java-library'
+    id 'maven-publish'
+}
+
+group = 'com.github.ttereshchenko'
+version = rootProject.version
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+jar {
+    manifest {
+        // Stable JPMS name so modular consumers do not depend on the jar filename.
+        attributes 'Automatic-Module-Name': 'com.github.ttereshchenko.mailkit.smtp'
+    }
+}
+
+tasks.withType(Javadoc).configureEach {
+    options.addStringOption('Xdoclint:none', '-quiet')
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            artifactId = 'mailkit-smtp-client'
+            pom {
+                name = 'MailKit SMTP Client'
+                description = 'Standalone SMTP/ESMTP client: STARTTLS and implicit TLS, SASL auth ' +
+                        '(PLAIN, LOGIN, CRAM-MD5, DIGEST-MD5, SCRAM, XOAUTH2, OAUTHBEARER, EXTERNAL), ' +
+                        'PIPELINING, CHUNKING, PRDR, DSN, SIZE, 8BITMIME, SMTPUTF8, PROXY protocol, XCLIENT.'
+                url = 'https://github.com/ttereshchenko/mailkit'
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+            }
+        }
+    }
 }
 
 sourceSets {

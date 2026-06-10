@@ -33,4 +33,19 @@ class EhloResponseParserTest {
         assertTrue(caps.containsKey("STARTTLS"));
         assertTrue(caps.containsKey("PIPELINING"));
     }
+
+    @Test
+    void legacyAuthEqualsAdvertisementIsFoldedIntoAuth() {
+        // Pre-rfc2554 servers advertise "AUTH=PLAIN LOGIN" — clients must still see AUTH.
+        var response = new SmtpResponse(250, List.of("hello", "AUTH=PLAIN LOGIN"));
+        var caps = EhloResponseParser.parse(response);
+        assertEquals(List.of("PLAIN", "LOGIN"), caps.get("AUTH"));
+    }
+
+    @Test
+    void duplicateKeywordLinesMergeTheirArguments() {
+        var response = new SmtpResponse(250, List.of("hello", "AUTH PLAIN", "AUTH=LOGIN CRAM-MD5"));
+        var caps = EhloResponseParser.parse(response);
+        assertEquals(List.of("PLAIN", "LOGIN", "CRAM-MD5"), caps.get("AUTH"));
+    }
 }

@@ -1,6 +1,7 @@
 package com.github.ttereshchenko.mailkit.smtp.transport;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Objects;
@@ -35,8 +36,10 @@ public final class MxResolver {
 
     /**
      * Returns the MX hostnames for {@code domain} ordered from highest priority (lowest
-     * preference number) first. An empty list means no MX records — RFC 5321 §5 says the client
-     * should then fall back to the A/AAAA of the domain itself; callers are responsible for that.
+     * preference number) first; records sharing a preference are shuffled for load spreading
+     * (rfc5321 §5.1). An empty list means no MX records — RFC 5321 §5 says the client should then
+     * fall back to the A/AAAA of the domain itself; callers are responsible for that. A null MX
+     * record ({@code 0 .}, rfc7505) surfaces as an empty hostname so callers can refuse to send.
      */
     public List<String> resolve(String domain) throws NamingException {
         Objects.requireNonNull(domain, "domain");
@@ -75,8 +78,19 @@ public final class MxResolver {
         }
         raw.sort((left, right) -> Integer.compare(left.preference(), right.preference()));
         var ordered = new ArrayList<String>(raw.size());
-        for (var record : raw) {
-            ordered.add(record.host());
+        var index = 0;
+        while (index < raw.size()) {
+            var groupEnd = index;
+            while (groupEnd < raw.size()
+                    && raw.get(groupEnd).preference() == raw.get(index).preference()) {
+                groupEnd++;
+            }
+            var group = new ArrayList<>(raw.subList(index, groupEnd));
+            Collections.shuffle(group);
+            for (var record : group) {
+                ordered.add(record.host());
+            }
+            index = groupEnd;
         }
         return ordered;
     }

@@ -54,9 +54,13 @@ public final class SmtpTranscript {
         this.listener = Objects.requireNonNull(listener, "listener");
     }
 
-    public synchronized void append(Direction direction, byte[] bytes, Phase phase) {
+    public void append(Direction direction, byte[] bytes, Phase phase) {
         var entry = new Entry(direction, bytes, System.nanoTime(), phase);
-        entries.add(entry);
+        synchronized (this) {
+            entries.add(entry);
+        }
+        // Outside the monitor: a slow or re-entrant listener must not stall other transcript
+        // readers (or deadlock by calling back into this transcript).
         listener.onEntry(entry);
     }
 

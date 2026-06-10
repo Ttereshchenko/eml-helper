@@ -3,7 +3,7 @@ package com.github.ttereshchenko.mailkit.smtp;
 /**
  * Per-send toggles for ESMTP extensions. Each toggle defaults to a sensible "use if advertised"
  * value, so a caller who knows nothing about the extension surface still gets correct behavior;
- * power users (and the swaks-equivalent UI in Phase 7) flip individual knobs per-send.
+ * power users flip individual knobs per-send.
  */
 public record EsmtpConfig(
         boolean usePipelining,

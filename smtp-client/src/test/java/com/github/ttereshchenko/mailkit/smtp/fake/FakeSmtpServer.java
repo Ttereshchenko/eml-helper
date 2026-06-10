@@ -76,6 +76,12 @@ public final class FakeSmtpServer implements AutoCloseable {
             return this;
         }
 
+        /** Writes reply lines without reading a client line first (PRDR per-recipient replies). */
+        public Builder pushLines(String... lines) {
+            steps.add(new Step.Push(List.of(lines)));
+            return this;
+        }
+
         public FakeSmtpServer start() throws IOException {
             var server = new FakeSmtpServer(bannerLines, steps, dropOnConnect, tlsOnConnect);
             server.startListening();
@@ -93,6 +99,8 @@ public final class FakeSmtpServer implements AutoCloseable {
         record Bdat(String reply) implements Step {}
 
         record Drop() implements Step {}
+
+        record Push(List<String> lines) implements Step {}
     }
 
     private final List<String> bannerLines;
@@ -226,6 +234,10 @@ public final class FakeSmtpServer implements AutoCloseable {
                 Objects.requireNonNull(drop);
                 connection.close();
                 yield false;
+            }
+            case Step.Push push -> {
+                writeLines(connection.output(), push.lines());
+                yield true;
             }
         };
     }

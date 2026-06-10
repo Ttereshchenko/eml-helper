@@ -29,7 +29,11 @@ public record TlsConfig(
         NONE,
         /** STARTTLS must be advertised; failure to negotiate is fatal. */
         STARTTLS_REQUIRED,
-        /** STARTTLS used when advertised; falls through if not. */
+        /**
+         * STARTTLS used when advertised; continues in cleartext when it is not advertised AND
+         * when the advertised command is rejected by the server (the downgrade is noted in the
+         * transcript). Use {@link #STARTTLS_OPTIONAL_STRICT} to make a rejection fatal.
+         */
         STARTTLS_OPTIONAL,
         /** STARTTLS used when advertised; failure to negotiate is fatal but absence is fine. */
         STARTTLS_OPTIONAL_STRICT,
@@ -196,6 +200,38 @@ public record TlsConfig(
                 verifyCa,
                 verifyHostname,
                 overrideHost,
+                caBundlePath,
+                clientCertPath,
+                clientKeyPath,
+                clientChainPath,
+                sniHost,
+                allowSelfSigned);
+    }
+
+    public TlsConfig withSniHost(String newSniHost) {
+        return new TlsConfig(
+                mode,
+                protocols,
+                cipherSuites,
+                verifyCa,
+                verifyHostname,
+                hostnameOverride,
+                caBundlePath,
+                clientCertPath,
+                clientKeyPath,
+                clientChainPath,
+                newSniHost,
+                allowSelfSigned);
+    }
+
+    public TlsConfig withCipherSuites(List<String> newCipherSuites) {
+        return new TlsConfig(
+                mode,
+                protocols,
+                newCipherSuites,
+                verifyCa,
+                verifyHostname,
+                hostnameOverride,
                 caBundlePath,
                 clientCertPath,
                 clientKeyPath,

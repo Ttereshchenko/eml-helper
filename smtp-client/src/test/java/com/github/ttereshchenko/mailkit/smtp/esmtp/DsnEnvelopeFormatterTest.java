@@ -52,4 +52,23 @@ class DsnEnvelopeFormatterTest {
         var line = DsnEnvelopeFormatter.formatRcptTo(SmtpEnvelope.Recipient.of("to@example.com"));
         assertEquals("RCPT TO:<to@example.com>", line);
     }
+
+    @Test
+    void envidIsXtextEncoded() {
+        // rfc3461 §4.4: ENVID is xtext — space, '+', and '=' must be escaped as +HH.
+        var envelope = new SmtpEnvelope(
+                "sender@example.com",
+                List.of(SmtpEnvelope.Recipient.of("to@example.com")),
+                "id with space+plus=eq",
+                SmtpEnvelope.RetMode.DEFAULT);
+        var line = DsnEnvelopeFormatter.formatMailFrom(envelope, null);
+        assertEquals("MAIL FROM:<sender@example.com> ENVID=id+20with+20space+2Bplus+3Deq", line);
+    }
+
+    @Test
+    void orcptAddressPartIsXtextEncodedAfterTheAddrType() {
+        var recipient = new SmtpEnvelope.Recipient("to@example.com", List.of(), "rfc822;weird user@example.com");
+        var line = DsnEnvelopeFormatter.formatRcptTo(recipient);
+        assertEquals("RCPT TO:<to@example.com> ORCPT=rfc822;weird+20user@example.com", line);
+    }
 }

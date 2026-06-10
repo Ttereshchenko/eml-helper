@@ -70,6 +70,86 @@ class SmtpClientXclientTest {
     }
 
     @Test
+    void xclient250ContinuesWithoutReEhlo() throws Exception {
+        try (var server = FakeSmtpServer.builder()
+                .expect("EHLO ", "250-fake.local", "250 XCLIENT NAME ADDR")
+                .expect("XCLIENT NAME=upstream.example.com", "250 OK go ahead")
+                .expect("MAIL FROM:", "250 OK")
+                .expect("RCPT TO:", "250 OK")
+                .expect("DATA", "354 go")
+                .expectData("250 queued")
+                .expect("QUIT", "221 bye")
+                .start()) {
+            var xclient = XclientConfig.disabled().withName("upstream.example.com");
+            var config =
+                    SmtpConfig.defaults("127.0.0.1").withPort(server.port()).withXclient(xclient);
+
+            var result = new SmtpClient()
+                    .send(
+                            config,
+                            SmtpEnvelope.of("from@example.com", "to@example.com"),
+                            MessageSource.ofString("body\r\n"));
+
+            assertTrue(result.cleanlyClosed());
+            var ehloCount = server.receivedLines().stream()
+                    .filter(line -> line.startsWith("EHLO "))
+                    .count();
+            assertEquals(1, ehloCount, "a 250 XCLIENT reply must not trigger a re-EHLO");
+        }
+    }
+
+    @Test
+    void xclientRejectionSurfacesProtocolViolation() throws Exception {
+        try (var server = FakeSmtpServer.builder()
+                .expect("EHLO ", "250-fake.local", "250 XCLIENT NAME ADDR")
+                .expect("XCLIENT NAME=upstream.example.com", "550 not authorized")
+                .start()) {
+            var xclient = XclientConfig.disabled().withName("upstream.example.com");
+            var config =
+                    SmtpConfig.defaults("127.0.0.1").withPort(server.port()).withXclient(xclient);
+            try {
+                new SmtpClient()
+                        .send(
+                                config,
+                                SmtpEnvelope.of("from@example.com", "to@example.com"),
+                                MessageSource.ofString("body"));
+                fail("expected PROTOCOL_VIOLATION");
+            } catch (SmtpException failure) {
+                assertEquals(SmtpException.Kind.PROTOCOL_VIOLATION, failure.kind());
+                assertTrue(failure.getMessage().contains("XCLIENT rejected"), failure.getMessage());
+            }
+        }
+    }
+
+    @Test
+    void xclientUnadvertisedIsSkippedWhenOptional() throws Exception {
+        try (var server = FakeSmtpServer.builder()
+                .expect("EHLO ", "250 fake.local")
+                .expect("MAIL FROM:", "250 OK")
+                .expect("RCPT TO:", "250 OK")
+                .expect("DATA", "354 go")
+                .expectData("250 queued")
+                .expect("QUIT", "221 bye")
+                .start()) {
+            var xclient = XclientConfig.disabled().withName("upstream.example.com"); // optional stays true
+            var config =
+                    SmtpConfig.defaults("127.0.0.1").withPort(server.port()).withXclient(xclient);
+
+            var result = new SmtpClient()
+                    .send(
+                            config,
+                            SmtpEnvelope.of("from@example.com", "to@example.com"),
+                            MessageSource.ofString("body\r\n"));
+
+            assertTrue(result.cleanlyClosed());
+            var transcriptText = result.transcript().render(false);
+            assertTrue(
+                    transcriptText.contains("XCLIENT requested but not advertised"),
+                    "optional skip should be noted in the transcript:\n" + transcriptText);
+        }
+    }
+
+    @Test
     void xclientUnadvertisedFailsWhenNotOptional() throws Exception {
         try (var server =
                 FakeSmtpServer.builder().expect("EHLO ", "250 fake.local").start()) {

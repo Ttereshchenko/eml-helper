@@ -41,7 +41,9 @@ public final class TcpConnector {
         if (candidates.isEmpty()) {
             throw new IOException("no addresses match " + config.ipFamily() + " for host " + host);
         }
-        var timeoutMillis = (int) Math.min(Integer.MAX_VALUE, timeout.toMillis());
+        // Clamp to at least 1ms: Duration.toMillis truncates sub-millisecond values to 0, which
+        // Socket interprets as "no timeout at all".
+        var timeoutMillis = (int) Math.clamp(timeout.toMillis(), 1L, Integer.MAX_VALUE);
         IOException last = null;
         for (var candidate : candidates) {
             var socket = new Socket();
@@ -72,19 +74,32 @@ public final class TcpConnector {
         var all = resolver.resolve(host);
         var matched = new ArrayList<InetAddress>(all.length);
         for (var address : all) {
-            if (config.useMxRouting()
-                    && (address.isLoopbackAddress()
-                            || address.isLinkLocalAddress()
-                            || address.isSiteLocalAddress()
-                            || address.isAnyLocalAddress())) {
-                if (!Boolean.getBoolean("mailkit.test.allow_local_mx")) {
-                    continue;
-                }
+            if (config.useMxRouting() && !config.allowPrivateMxTargets() && isPrivateRange(address)) {
+                continue;
             }
             if (config.ipFamily().matches(address)) {
                 matched.add(address);
             }
         }
         return matched;
+    }
+
+    /**
+     * Addresses an MX answer should never steer a mail client into: loopback, link-local,
+     * RFC 1918 / deprecated site-local, the wildcard, IPv6 unique-local fc00::/7, and CGNAT
+     * 100.64/10.
+     */
+    private static boolean isPrivateRange(InetAddress address) {
+        if (address.isLoopbackAddress()
+                || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress()
+                || address.isAnyLocalAddress()) {
+            return true;
+        }
+        var bytes = address.getAddress();
+        if (bytes.length == 16 && (bytes[0] & 0xFE) == 0xFC) {
+            return true;
+        }
+        return bytes.length == 4 && (bytes[0] & 0xFF) == 100 && (bytes[1] & 0xC0) == 0x40;
     }
 }

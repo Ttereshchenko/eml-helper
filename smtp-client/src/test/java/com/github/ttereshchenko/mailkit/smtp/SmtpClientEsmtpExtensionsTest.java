@@ -104,7 +104,7 @@ class SmtpClientEsmtpExtensionsTest {
                 .expect("MAIL FROM:", "250 OK")
                 .expect("RCPT TO:", "250 OK")
                 .expect("DATA", "354 go")
-                .expectData("250 OK queued", "250 queued for prdr-rcpt")
+                .expectData("250 OK queued")
                 .expect("QUIT", "221 bye")
                 .start()) {
             var esmtp = EsmtpConfig.defaults().withPrdr(true);
@@ -125,6 +125,85 @@ class SmtpClientEsmtpExtensionsTest {
             assertTrue(mailLine.contains("SMTPUTF8"), mailLine);
             assertTrue(mailLine.contains("SIZE="), mailLine);
             assertTrue(mailLine.contains("PRDR"), mailLine);
+        }
+    }
+
+    @Test
+    void eightBitMimeNeverPolicyOmitsBodyParameterEvenWhenAdvertised() throws Exception {
+        try (var server = FakeSmtpServer.builder()
+                .expect("EHLO ", "250-fake.local", "250 8BITMIME")
+                .expect("MAIL FROM:", "250 OK")
+                .expect("RCPT TO:", "250 OK")
+                .expect("DATA", "354 go")
+                .expectData("250 queued")
+                .expect("QUIT", "221 bye")
+                .start()) {
+            var esmtp = EsmtpConfig.defaults().withEightBitMime(EsmtpConfig.EightBitMimePolicy.NEVER);
+            var config =
+                    SmtpConfig.defaults("127.0.0.1").withPort(server.port()).withEsmtp(esmtp);
+
+            var result = new SmtpClient()
+                    .send(
+                            config,
+                            SmtpEnvelope.of("from@example.com", "to@example.com"),
+                            MessageSource.ofString("body with é"));
+
+            assertTrue(result.cleanlyClosed());
+            for (var line : server.receivedLines()) {
+                assertTrue(!line.contains("BODY=8BITMIME"), "NEVER policy must not declare BODY=8BITMIME: " + line);
+            }
+        }
+    }
+
+    @Test
+    void declareSizeOnMailDisabledOmitsSizeParameter() throws Exception {
+        try (var server = FakeSmtpServer.builder()
+                .expect("EHLO ", "250-fake.local", "250 SIZE 1048576")
+                .expect("MAIL FROM:", "250 OK")
+                .expect("RCPT TO:", "250 OK")
+                .expect("DATA", "354 go")
+                .expectData("250 queued")
+                .expect("QUIT", "221 bye")
+                .start()) {
+            var esmtp = EsmtpConfig.defaults().withDeclareSizeOnMail(false);
+            var config =
+                    SmtpConfig.defaults("127.0.0.1").withPort(server.port()).withEsmtp(esmtp);
+
+            new SmtpClient()
+                    .send(
+                            config,
+                            SmtpEnvelope.of("from@example.com", "to@example.com"),
+                            MessageSource.ofString("body\r\n"));
+
+            var mailLine = server.receivedLines().stream()
+                    .filter(line -> line.startsWith("MAIL FROM:"))
+                    .findFirst()
+                    .orElseThrow();
+            assertTrue(!mailLine.contains("SIZE="), mailLine);
+        }
+    }
+
+    @Test
+    void honorSizeDisabledSendsDespiteAdvertisedLimit() throws Exception {
+        try (var server = FakeSmtpServer.builder()
+                .expect("EHLO ", "250-fake.local", "250 SIZE 10")
+                .expect("MAIL FROM:", "250 OK")
+                .expect("RCPT TO:", "250 OK")
+                .expect("DATA", "354 go")
+                .expectData("250 queued")
+                .expect("QUIT", "221 bye")
+                .start()) {
+            var esmtp = EsmtpConfig.defaults().withHonorSize(false);
+            var config =
+                    SmtpConfig.defaults("127.0.0.1").withPort(server.port()).withEsmtp(esmtp);
+
+            var result = new SmtpClient()
+                    .send(
+                            config,
+                            SmtpEnvelope.of("from@example.com", "to@example.com"),
+                            MessageSource.ofString("this message is way longer than ten bytes"));
+
+            assertTrue(result.cleanlyClosed());
         }
     }
 

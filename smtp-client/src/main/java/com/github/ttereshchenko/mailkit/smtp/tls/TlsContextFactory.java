@@ -7,8 +7,10 @@ import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyStore;
+import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -168,6 +170,14 @@ public final class TlsContextFactory {
 
     private static java.security.PrivateKey loadPrivateKey(Path path) throws IOException, GeneralSecurityException {
         var pem = Files.readString(path, StandardCharsets.US_ASCII);
+        if (pem.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
+            throw new GeneralSecurityException("encrypted PKCS#8 keys are not supported — decrypt first"
+                    + " (openssl pkcs8 -topk8 -nocrypt): " + path);
+        }
+        if (pem.contains("-----BEGIN RSA PRIVATE KEY-----") || pem.contains("-----BEGIN EC PRIVATE KEY-----")) {
+            throw new GeneralSecurityException("PKCS#1/SEC1 PEM keys are not supported — convert to PKCS#8"
+                    + " (openssl pkcs8 -topk8 -nocrypt): " + path);
+        }
         var startMarker = "-----BEGIN PRIVATE KEY-----";
         var endMarker = "-----END PRIVATE KEY-----";
         var startIndex = pem.indexOf(startMarker);
@@ -177,8 +187,21 @@ public final class TlsContextFactory {
         }
         var base64 = pem.substring(startIndex + startMarker.length(), endIndex).replaceAll("\\s+", "");
         var bytes = Base64.getDecoder().decode(base64);
-        var keyFactory = KeyFactory.getInstance("RSA");
-        return keyFactory.generatePrivate(new PKCS8EncodedKeySpec(bytes));
+        var keySpec = new PKCS8EncodedKeySpec(bytes);
+        // PKCS#8 does not say which algorithm the key is for — try the families used for client
+        // certificates in the wild.
+        InvalidKeySpecException lastRejection = null;
+        for (var algorithm : List.of("RSA", "EC", "EdDSA")) {
+            try {
+                return KeyFactory.getInstance(algorithm).generatePrivate(keySpec);
+            } catch (InvalidKeySpecException rejection) {
+                lastRejection = rejection;
+            } catch (NoSuchAlgorithmException ignored) {
+                // provider without this family — try the next one
+            }
+        }
+        throw new GeneralSecurityException(
+                "unsupported PKCS#8 key algorithm (tried RSA, EC, EdDSA) at: " + path, lastRejection);
     }
 
     static final class TrustEverythingManager implements X509TrustManager {

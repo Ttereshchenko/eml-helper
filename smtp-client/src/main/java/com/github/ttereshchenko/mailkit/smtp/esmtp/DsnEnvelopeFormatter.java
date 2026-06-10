@@ -1,6 +1,7 @@
 package com.github.ttereshchenko.mailkit.smtp.esmtp;
 
 import com.github.ttereshchenko.mailkit.smtp.SmtpEnvelope;
+import com.github.ttereshchenko.mailkit.smtp.Xtext;
 import java.util.stream.Collectors;
 
 /**
@@ -17,7 +18,8 @@ public final class DsnEnvelopeFormatter {
         var builder =
                 new StringBuilder("MAIL FROM:<").append(envelope.mailFrom()).append('>');
         if (envelope.envid() != null && !envelope.envid().isBlank()) {
-            builder.append(" ENVID=").append(envelope.envid());
+            // rfc3461 §4.4: ENVID is transmitted as xtext.
+            builder.append(" ENVID=").append(Xtext.encode(envelope.envid()));
         }
         if (envelope.ret() != SmtpEnvelope.RetMode.DEFAULT) {
             builder.append(" RET=").append(envelope.ret().name());
@@ -35,8 +37,21 @@ public final class DsnEnvelopeFormatter {
             builder.append(" NOTIFY=").append(joined);
         }
         if (recipient.orcpt() != null && !recipient.orcpt().isBlank()) {
-            builder.append(" ORCPT=").append(recipient.orcpt());
+            builder.append(" ORCPT=").append(encodeOrcpt(recipient.orcpt()));
         }
         return builder.toString();
+    }
+
+    /**
+     * ORCPT is {@code addr-type ";" xtext} (rfc3461 §4.2): the address-type token passes through,
+     * the address after the first {@code ;} is xtext-encoded. A value without a {@code ;} is
+     * encoded wholesale.
+     */
+    private static String encodeOrcpt(String orcpt) {
+        var separator = orcpt.indexOf(';');
+        if (separator < 0) {
+            return Xtext.encode(orcpt);
+        }
+        return orcpt.substring(0, separator) + ";" + Xtext.encode(orcpt.substring(separator + 1));
     }
 }
