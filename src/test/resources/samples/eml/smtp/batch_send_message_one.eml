@@ -1,0 +1,8 @@
+From: batch-one@example.com
+To: recipient@example.com
+Subject: batch send message one
+Date: Mon, 09 Jun 2026 10:00:00 +0000
+Message-ID: <batch-send-one@example.com>
+
+First message of the multi-select SMTP batch-send sample pair.
+Select both batch_send samples and invoke "Send EML..." to verify the batch dialog.

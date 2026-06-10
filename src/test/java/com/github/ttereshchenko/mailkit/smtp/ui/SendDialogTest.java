@@ -2,6 +2,7 @@ package com.github.ttereshchenko.mailkit.smtp.ui;
 
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfile;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfileService;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,7 +37,7 @@ public class SendDialogTest extends BasePlatformTestCase {
     }
 
     public void testSendButtonIsNeverTheDefaultFocusedButton() {
-        var dialog = new SendDialog(getProject(), null);
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
         try {
             assertFalse(
                     "OK (Send) action must NOT be flagged as the default keyboard action",
@@ -49,7 +50,7 @@ public class SendDialogTest extends BasePlatformTestCase {
     public void testDialogInstantiatesWithoutAFileWhenNoSourceProvided() {
         // Constructor calling init() must complete without throwing — full rendering only happens
         // on show(), which the headless test framework does not drive.
-        var dialog = new SendDialog(getProject(), null);
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
         try {
             assertEquals("Send EML", dialog.getTitle());
         } finally {
@@ -65,7 +66,7 @@ public class SendDialogTest extends BasePlatformTestCase {
         service.upsert(profile);
         var profileId = profile.identifier;
 
-        var dialog = new SendDialog(getProject(), null);
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
         try {
             dialog.setEnvelopeForTest("from@example.com", "to@example.com");
             dialog.setOneTimePasswordForTest("one-time-pw");
@@ -116,8 +117,48 @@ public class SendDialogTest extends BasePlatformTestCase {
             assertFalse(
                     "OK (Send) action must NOT be flagged as the default keyboard action",
                     dialog.isOkActionMarkedAsDefault());
+            assertTrue("a single-file dialog keeps the From/Subject preview", dialog.hasHeaderPreviewRows());
+            assertEquals(1, dialog.statusTableModel().getRowCount());
         } finally {
             dialog.close(0);
         }
+    }
+
+    public void testMultiFileDialogShowsAPendingRowPerFileAndSkipsHeaderPreview() throws Exception {
+        var dialog = new SendDialog(getProject(), createBatchSampleFiles());
+        try {
+            assertEquals("Send 2 EML Files", dialog.getTitle());
+            assertFalse("multi-file dialogs have no per-message header preview", dialog.hasHeaderPreviewRows());
+            var model = dialog.statusTableModel();
+            assertEquals(2, model.getRowCount());
+            assertEquals(BatchSendController.FileStatus.PENDING, model.statusAt(0));
+            assertEquals(BatchSendController.FileStatus.PENDING, model.statusAt(1));
+        } finally {
+            dialog.close(0);
+        }
+    }
+
+    public void testFailurePolicyDefaultsToContinueAndIsCarriedIntoTheRequest() throws Exception {
+        var files = createBatchSampleFiles();
+        var dialog = new SendDialog(getProject(), files);
+        try {
+            assertEquals(SendDialog.FailurePolicy.CONTINUE_ON_FAILURE, dialog.selectedFailurePolicy());
+            dialog.setEnvelopeForTest("from@example.com", "to@example.com");
+
+            var request = dialog.buildSendRequest();
+
+            assertEquals(files, request.sourceFiles());
+            assertEquals(SendDialog.FailurePolicy.CONTINUE_ON_FAILURE, request.failurePolicy());
+        } finally {
+            dialog.close(0);
+        }
+    }
+
+    private List<VirtualFile> createBatchSampleFiles() throws Exception {
+        var sampleOne = Files.readString(Path.of("src/test/resources/samples/eml/smtp/batch_send_message_one.eml"));
+        var sampleTwo = Files.readString(Path.of("src/test/resources/samples/eml/smtp/batch_send_message_two.eml"));
+        return List.of(
+                myFixture.getTempDirFixture().createFile("batch_send_message_one.eml", sampleOne),
+                myFixture.getTempDirFixture().createFile("batch_send_message_two.eml", sampleTwo));
     }
 }

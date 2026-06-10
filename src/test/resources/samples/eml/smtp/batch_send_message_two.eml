@@ -1,0 +1,8 @@
+From: batch-two@example.com
+To: recipient@example.com
+Subject: batch send message two
+Date: Mon, 09 Jun 2026 10:05:00 +0000
+Message-ID: <batch-send-two@example.com>
+
+Second message of the multi-select SMTP batch-send sample pair.
+It shares the envelope typed once in the dialog but keeps its own headers and body.
