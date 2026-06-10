@@ -29,6 +29,7 @@
         <ul>
           <li><strong>Send EML:</strong> A powerful, <i>swaks</i>-equivalent embedded client. Send EMLs through configured profiles using STARTTLS, TLS-on-connect, and SASL (including SCRAM-SHA-256).</li>
           <li><strong>Quick Access:</strong> A "Send EML..." button directly in the editor toolbar, which can be toggled off in settings.</li>
+          <li><strong>Batch Sending:</strong> Select several EML files and send them in one go — a shared envelope, per-file progress right in the dialog, and a choice to continue or stop when a message fails.</li>
           <li><strong>Advanced SMTP Features:</strong> ESMTP extensions, XCLIENT, HAProxy PROXY v1/v2, and per-send envelope overrides.</li>
           <li><strong>Profile Management:</strong> PasswordSafe-backed profiles manage everything from Security/TLS to Relay framing. Live tool-window transcript keeps you informed.</li>
         </ul>
@@ -166,7 +167,7 @@
         <action id="mailkit.SendViaSmtp"
                 class="com.github.ttereshchenko.mailkit.smtp.ui.SendViaSmtpAction"
                 text="Send EML…"
-                description="Send this EML message through a configured SMTP server"
+                description="Send the selected EML message(s) through a configured SMTP server"
                 icon="/icons/eml.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>

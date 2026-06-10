@@ -10,6 +10,8 @@ import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfile;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfileService;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfiles;
 import com.github.ttereshchenko.mailkit.smtp.tls.TlsConfig;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectUtil;
@@ -18,15 +20,17 @@ import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.SimpleListCellRenderer;
+import com.intellij.ui.components.JBScrollPane;
+import com.intellij.ui.table.JBTable;
 import com.intellij.util.ui.FormBuilder;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -35,12 +39,15 @@ import javax.swing.JPasswordField;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.table.AbstractTableModel;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * The "Send via SMTP…" dialog. Basic view only in Phase 7 — Advanced tabs (Connection / Auth / TLS
- * / Headers / Protocol / XCLIENT / PROXY / DSN / Output) land in Phase 8 polish. The dialog's
- * Cancel button is intentionally the default-focused control; the test in
+ * The "Send via SMTP…" dialog. Accepts one or more {@code .eml} files; the envelope (From / To)
+ * is entered once and shared by every message, while each file's content goes out unchanged as
+ * DATA. After Send is pressed the dialog stays open: the file table shows live per-message
+ * progress, the Cancel button becomes "Cancel Remaining" while the batch runs and "Close" once it
+ * finishes. The dialog's Cancel button is intentionally the default-focused control; the test in
  * {@code SendDialogTest} asserts this.
  */
 public final class SendDialog extends DialogWrapper {
@@ -53,8 +60,31 @@ public final class SendDialog extends DialogWrapper {
      */
     private static final int MAX_HEADER_SCAN_BYTES = 64 * 1024;
 
+    /** What the batch does with the remaining messages after one of them fails. */
+    public enum FailurePolicy {
+        CONTINUE_ON_FAILURE("Continue with remaining messages"),
+        STOP_ON_FIRST_FAILURE("Stop at first failure");
+
+        private final String label;
+
+        FailurePolicy(String label) {
+            this.label = label;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    private enum DialogState {
+        IDLE,
+        SENDING,
+        DONE
+    }
+
     private final Project project;
-    private final VirtualFile sourceFile;
+    private final List<VirtualFile> sourceFiles;
     private final SmtpProfileService profileService;
     private final SmtpCredentialStore credentialStore;
 
@@ -67,17 +97,26 @@ public final class SendDialog extends DialogWrapper {
     private final JLabel subjectLabel = new JLabel();
     private final JLabel fromHeaderLabel = new JLabel();
     private final JComboBox<StopAfterChoice> stopAfterPicker = new JComboBox<>();
+    private final JComboBox<FailurePolicy> failurePolicyPicker = new JComboBox<>(FailurePolicy.values());
     private final JPasswordField passwordField = new JPasswordField();
+    private final FileStatusTableModel statusTableModel;
 
+    private DialogState state = DialogState.IDLE;
+    private BatchSendController controller;
     private SendRequest committedRequest;
 
-    public SendDialog(@Nullable Project project, VirtualFile sourceFile) {
+    public SendDialog(@Nullable Project project, @Nullable VirtualFile sourceFile) {
+        this(project, sourceFile == null ? List.of() : List.of(sourceFile));
+    }
+
+    public SendDialog(@Nullable Project project, List<VirtualFile> sourceFiles) {
         super(project);
         this.project = project;
-        this.sourceFile = sourceFile;
+        this.sourceFiles = List.copyOf(sourceFiles);
         this.profileService = SmtpProfileService.getInstance();
         this.credentialStore = new SmtpCredentialStore();
-        setTitle("Send EML");
+        this.statusTableModel = new FileStatusTableModel(buildFileLabels());
+        setTitle(this.sourceFiles.size() > 1 ? "Send " + this.sourceFiles.size() + " EML Files" : "Send EML");
         setOKButtonText("Send");
         setCancelButtonText("Cancel");
         init();
@@ -92,21 +131,27 @@ public final class SendDialog extends DialogWrapper {
                 "(unnamed)", profile -> profile.name == null || profile.name.isBlank() ? "(unnamed)" : profile.name));
         populateProfilePicker();
         populateStopAfterPicker();
-        sourceSummaryLabel.setText(
-                sourceFile == null ? "(no file — composing from envelope only)" : formatSource(sourceFile));
+        failurePolicyPicker.setSelectedItem(FailurePolicy.CONTINUE_ON_FAILURE);
+        sourceSummaryLabel.setText(formatSourceSummary());
         subjectLabel.setText("");
         fromHeaderLabel.setText("");
         onProfilePicked();
-        com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            var defaults = parseEmlHeaders();
-            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
-                subjectLabel.setText(defaults.subject);
-                fromHeaderLabel.setText(defaults.from);
+        if (sourceFiles.size() == 1) {
+            ApplicationManager.getApplication().executeOnPooledThread(() -> {
+                var defaults = parseEmlHeaders();
+                // any(): a pure label update that must also run while this dialog is modal.
+                ApplicationManager.getApplication()
+                        .invokeLater(
+                                () -> {
+                                    subjectLabel.setText(defaults.subject);
+                                    fromHeaderLabel.setText(defaults.from);
+                                },
+                                ModalityState.any());
             });
-        });
+        }
         profilePicker.addActionListener(event -> onProfilePicked());
 
-        var panel = FormBuilder.createFormBuilder()
+        var formBuilder = FormBuilder.createFormBuilder()
                 .addLabeledComponent("Source:", sourceSummaryLabel)
                 .addLabeledComponent("Profile:", profilePicker)
                 .addLabeledComponent("Host:", hostField)
@@ -114,37 +159,122 @@ public final class SendDialog extends DialogWrapper {
                 .addSeparator()
                 .addLabeledComponent("Envelope From:", envelopeFromField)
                 .addLabeledComponent("Envelope To:", envelopeToField)
-                .addSeparator()
-                .addLabeledComponent("Message Subject:", subjectLabel)
-                .addLabeledComponent("Message From:", fromHeaderLabel)
-                .addSeparator()
+                .addSeparator();
+        if (sourceFiles.size() == 1) {
+            formBuilder
+                    .addLabeledComponent("Message Subject:", subjectLabel)
+                    .addLabeledComponent("Message From:", fromHeaderLabel)
+                    .addSeparator();
+        }
+        var form = formBuilder
+                .addLabeledComponent("On failure:", failurePolicyPicker)
                 .addLabeledComponent("Stop after phase:", stopAfterPicker)
                 .addLabeledComponent("Password (one-time):", passwordField)
                 .getPanel();
-        var wrapper = new JPanel(new BorderLayout());
+
+        var statusTable = new JBTable(statusTableModel);
+        statusTable.setShowGrid(false);
+        statusTable.getColumnModel().getColumn(1).setMaxWidth(100);
+
+        var wrapper = new JPanel(new BorderLayout(0, 8));
         wrapper.setPreferredSize(new Dimension(620, 480));
-        wrapper.add(panel, BorderLayout.CENTER);
+        wrapper.add(form, BorderLayout.NORTH);
+        wrapper.add(new JBScrollPane(statusTable), BorderLayout.CENTER);
         return wrapper;
     }
 
     @Override
     protected void doOKAction() {
+        if (state != DialogState.IDLE) {
+            return;
+        }
         try {
             var request = buildSendRequest();
             if (!confirmInsecureTransport(request.config())) {
                 return;
             }
             committedRequest = request;
-            super.doOKAction();
+            startBatch(request);
         } catch (ConfigurationException failure) {
             Messages.showErrorDialog(getContentPanel(), failure.getLocalizedMessage(), "Invalid Send Request");
         }
     }
 
+    @Override
+    public void doCancelAction() {
+        switch (state) {
+            case IDLE, DONE -> super.doCancelAction();
+            case SENDING -> {
+                // First click only asks the batch to stop; the button is re-enabled as "Close"
+                // when batchFinished arrives. Never dispose the dialog while a send is in flight.
+                if (controller != null) {
+                    controller.requestCancel();
+                }
+                getCancelAction().setEnabled(false);
+            }
+        }
+    }
+
+    private void startBatch(SendRequest request) {
+        state = DialogState.SENDING;
+        setInputsEnabled(false);
+        getOKAction().setEnabled(false);
+        setOKButtonText("Sending…");
+        setCancelButtonText("Cancel Remaining");
+        controller = new BatchSendController(project);
+        // Default-modality runnables queue behind this modal dialog and would never run while it
+        // is open — callbacks must be scheduled in the dialog's own modality state.
+        var modality = ModalityState.stateForComponent(getContentPanel());
+        controller.start(request, new BatchSendController.BatchListener() {
+            @Override
+            public void fileStarted(int index) {
+                onEdt(() -> statusTableModel.setStatus(index, BatchSendController.FileStatus.SENDING, ""));
+            }
+
+            @Override
+            public void fileFinished(int index, BatchSendController.FileStatus status, String detail) {
+                onEdt(() -> statusTableModel.setStatus(index, status, detail));
+            }
+
+            @Override
+            public void batchFinished(int sent, int failed, int skipped, boolean cancelled) {
+                onEdt(SendDialog.this::onBatchFinished);
+            }
+
+            private void onEdt(Runnable update) {
+                ApplicationManager.getApplication()
+                        .invokeLater(
+                                () -> {
+                                    if (!isDisposed()) {
+                                        update.run();
+                                    }
+                                },
+                                modality);
+            }
+        });
+    }
+
+    private void onBatchFinished() {
+        state = DialogState.DONE;
+        setCancelButtonText("Close");
+        getCancelAction().setEnabled(true);
+    }
+
+    private void setInputsEnabled(boolean enabled) {
+        profilePicker.setEnabled(enabled);
+        envelopeFromField.setEnabled(enabled);
+        envelopeToField.setEnabled(enabled);
+        hostField.setEnabled(enabled);
+        portSpinner.setEnabled(enabled);
+        stopAfterPicker.setEnabled(enabled);
+        failurePolicyPicker.setEnabled(enabled);
+        passwordField.setEnabled(enabled);
+    }
+
     /**
      * Warns before sending over a channel that is not guaranteed-encrypted — TLS mode NONE
      * (cleartext) or an OPTIONAL STARTTLS mode that can be stripped to cleartext. Returns
-     * {@code true} when the send should proceed.
+     * {@code true} when the send should proceed. Asked once per batch, before the first message.
      */
     private boolean confirmInsecureTransport(SmtpConfig config) {
         if (config.tls().guaranteesEncryption()) {
@@ -257,19 +387,26 @@ public final class SendDialog extends DialogWrapper {
             config = config.withPort(portOverride);
         }
 
-        // The "Password (one-time)" field is exactly that: used for this send only, never persisted
-        // to PasswordSafe. Override the auth credentials with a transient supplier instead.
+        // The "Password (one-time)" field is exactly that: used for this batch only, never
+        // persisted to PasswordSafe. Override the auth credentials with a transient supplier
+        // instead. The supplier clones the array per send, so it serves every message in the
+        // batch.
         var oneTimePassword = passwordField.getPassword();
         if (oneTimePassword.length > 0) {
             config = applyOneTimePassword(config, oneTimePassword);
         }
-        return new SendRequest(config, envelope, sourceFile);
+        var failurePolicy = (FailurePolicy) failurePolicyPicker.getSelectedItem();
+        return new SendRequest(
+                config,
+                envelope,
+                sourceFiles,
+                failurePolicy == null ? FailurePolicy.CONTINUE_ON_FAILURE : failurePolicy);
     }
 
     /**
      * Returns a copy of {@code config} whose AUTH password is supplied by the typed one-time value
      * instead of whatever is stored in {@code PasswordSafe}. The override is transient — it lives
-     * only inside the returned {@link SmtpConfig}, so the send uses it once and nothing is written
+     * only inside the returned {@link SmtpConfig}, so the batch uses it and nothing is written
      * back to the credential store. When auth is disabled the password has no destination and the
      * config is returned unchanged.
      */
@@ -293,9 +430,10 @@ public final class SendDialog extends DialogWrapper {
 
     private DefaultsFromHeaders parseEmlHeaders() {
         var defaults = new DefaultsFromHeaders();
-        if (sourceFile == null) {
+        if (sourceFiles.size() != 1) {
             return defaults;
         }
+        var sourceFile = sourceFiles.get(0);
         try {
             byte[] bytes;
             try (var input = sourceFile.getInputStream()) {
@@ -318,7 +456,7 @@ public final class SendDialog extends DialogWrapper {
                 if (colon <= 0) {
                     continue;
                 }
-                var name = line.substring(0, colon).trim().toLowerCase(java.util.Locale.ROOT);
+                var name = line.substring(0, colon).trim().toLowerCase(Locale.ROOT);
                 var value = line.substring(colon + 1).trim();
                 switch (name) {
                     case "from" -> defaults.from = stripAngles(value);
@@ -343,11 +481,39 @@ public final class SendDialog extends DialogWrapper {
         return value;
     }
 
-    private String formatSource(VirtualFile file) {
+    private String formatSourceSummary() {
+        if (sourceFiles.isEmpty()) {
+            return "(no file — composing from envelope only)";
+        }
+        if (sourceFiles.size() == 1) {
+            return formatSource(sourceFiles.get(0));
+        }
+        var totalBytes = 0L;
+        for (var file : sourceFiles) {
+            totalBytes += file.getLength();
+        }
+        return sourceFiles.size() + " files · " + formatSize(totalBytes);
+    }
+
+    private List<String> buildFileLabels() {
+        if (sourceFiles.isEmpty()) {
+            return List.of("(envelope only)");
+        }
+        var labels = new ArrayList<String>(sourceFiles.size());
+        for (var file : sourceFiles) {
+            labels.add(projectRelativePath(file));
+        }
+        return labels;
+    }
+
+    private String projectRelativePath(VirtualFile file) {
         var base = project == null ? null : ProjectUtil.guessProjectDir(project);
         var relative = base == null ? null : VfsUtilCore.getRelativePath(file, base);
-        var path = relative != null ? relative : file.getPath();
-        return path + " · " + formatSize(file.getLength());
+        return relative != null ? relative : file.getPath();
+    }
+
+    private String formatSource(VirtualFile file) {
+        return projectRelativePath(file) + " · " + formatSize(file.getLength());
     }
 
     private static String formatSize(long bytes) {
@@ -357,10 +523,11 @@ public final class SendDialog extends DialogWrapper {
         if (bytes < 1024 * 1024) {
             return (bytes / 1024) + " KB";
         }
-        return String.format(java.util.Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
+        return String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
     }
 
-    public record SendRequest(SmtpConfig config, SmtpEnvelope envelope, VirtualFile sourceFile) {
+    public record SendRequest(
+            SmtpConfig config, SmtpEnvelope envelope, List<VirtualFile> sourceFiles, FailurePolicy failurePolicy) {
         public List<String> recipients() {
             var addresses = new ArrayList<String>(envelope.recipients().size());
             for (var rcpt : envelope.recipients()) {
@@ -368,9 +535,60 @@ public final class SendDialog extends DialogWrapper {
             }
             return addresses;
         }
+    }
 
-        public Path sourcePath() {
-            return sourceFile == null ? null : Path.of(sourceFile.getPath());
+    /** Per-file progress rows backing the dialog's status table. */
+    static final class FileStatusTableModel extends AbstractTableModel {
+
+        private static final String[] COLUMNS = {"File", "Status", "Detail"};
+
+        private final List<String> fileLabels;
+        private final List<BatchSendController.FileStatus> statuses;
+        private final List<String> details;
+
+        FileStatusTableModel(List<String> fileLabels) {
+            this.fileLabels = fileLabels;
+            this.statuses = new ArrayList<>(fileLabels.size());
+            this.details = new ArrayList<>(fileLabels.size());
+            for (var ignored : fileLabels) {
+                statuses.add(BatchSendController.FileStatus.PENDING);
+                details.add("");
+            }
+        }
+
+        void setStatus(int index, BatchSendController.FileStatus status, String detail) {
+            statuses.set(index, status);
+            details.set(index, detail == null ? "" : detail);
+            fireTableRowsUpdated(index, index);
+        }
+
+        BatchSendController.FileStatus statusAt(int index) {
+            return statuses.get(index);
+        }
+
+        @Override
+        public int getRowCount() {
+            return fileLabels.size();
+        }
+
+        @Override
+        public int getColumnCount() {
+            return COLUMNS.length;
+        }
+
+        @Override
+        public String getColumnName(int column) {
+            return COLUMNS[column];
+        }
+
+        @Override
+        public Object getValueAt(int rowIndex, int columnIndex) {
+            return switch (columnIndex) {
+                case 0 -> fileLabels.get(rowIndex);
+                case 1 -> statuses.get(rowIndex);
+                case 2 -> details.get(rowIndex);
+                default -> "";
+            };
         }
     }
 
@@ -427,6 +645,18 @@ public final class SendDialog extends DialogWrapper {
 
     String messageSubjectLabelText() {
         return subjectLabel.getText();
+    }
+
+    FileStatusTableModel statusTableModel() {
+        return statusTableModel;
+    }
+
+    FailurePolicy selectedFailurePolicy() {
+        return (FailurePolicy) failurePolicyPicker.getSelectedItem();
+    }
+
+    boolean hasHeaderPreviewRows() {
+        return sourceFiles.size() == 1;
     }
 
     private static JSpinner buildPortSpinner() {

@@ -43,9 +43,19 @@ public final class SmtpConsoleService {
      * the console before the first entry so repeat sends do not pile up.
      */
     public SmtpTranscript.Listener liveTranscriptListener(String header) {
+        return liveTranscriptListener(header, true);
+    }
+
+    /**
+     * Variant for batch sends: pass {@code clearFirst = false} for every message after the first
+     * so the transcripts of one batch stack in the console instead of overwriting each other.
+     */
+    public SmtpTranscript.Listener liveTranscriptListener(String header, boolean clearFirst) {
         var console = ensureConsole();
         activateToolWindow();
-        console.clear();
+        if (clearFirst) {
+            console.clear();
+        }
         if (header != null && !header.isBlank()) {
             console.print("# " + header + "\n", ConsoleViewContentType.SYSTEM_OUTPUT);
         }

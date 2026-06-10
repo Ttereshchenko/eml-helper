@@ -86,20 +86,60 @@ public class SendViaSmtpActionTest extends BasePlatformTestCase {
         assertTrue(event.getPresentation().isEnabledAndVisible());
     }
 
-    private AnActionEvent buildEvent(@Nullable VirtualFile file) {
-        return buildEventWithPlace(file, "test", com.intellij.openapi.actionSystem.ActionUiKind.NONE);
+    public void testActionVisibleForAMultiFileEmlSelection() throws Exception {
+        service.setEgressEnabled(true);
+        var first = myFixture.getTempDirFixture().createFile("first.eml", "From: a@b.c\r\n\r\nbody\r\n");
+        var second = myFixture.getTempDirFixture().createFile("second.eml", "From: a@b.c\r\n\r\nbody\r\n");
+        var event = buildEvent(first, second);
+
+        new SendViaSmtpAction().update(event);
+
+        assertTrue(event.getPresentation().isEnabledAndVisible());
+    }
+
+    public void testActionHiddenWhenSelectionMixesEmlAndNonEmlFiles() throws Exception {
+        service.setEgressEnabled(true);
+        var emlFile = myFixture.getTempDirFixture().createFile("ok.eml", "From: a@b.c\r\n\r\nbody\r\n");
+        var txtFile = myFixture.getTempDirFixture().createFile("notes.txt", "plain text");
+        var event = buildEvent(emlFile, txtFile);
+
+        new SendViaSmtpAction().update(event);
+
+        assertFalse(event.getPresentation().isEnabledAndVisible());
+    }
+
+    public void testActionHiddenForAnEmptySelection() {
+        service.setEgressEnabled(true);
+        var event = buildEvent();
+
+        new SendViaSmtpAction().update(event);
+
+        assertFalse(event.getPresentation().isEnabledAndVisible());
+    }
+
+    private AnActionEvent buildEvent(VirtualFile... files) {
+        return buildEventWithPlace(files, "test", com.intellij.openapi.actionSystem.ActionUiKind.NONE);
     }
 
     private AnActionEvent buildEventWithPlace(@Nullable VirtualFile file, String place) {
-        return buildEventWithPlace(file, place, com.intellij.openapi.actionSystem.ActionUiKind.NONE);
+        return buildEventWithPlace(
+                file == null ? new VirtualFile[0] : new VirtualFile[] {file},
+                place,
+                com.intellij.openapi.actionSystem.ActionUiKind.NONE);
     }
 
     private AnActionEvent buildEventWithPlace(
             @Nullable VirtualFile file, String place, com.intellij.openapi.actionSystem.ActionUiKind uiKind) {
-        var context = file == null
+        return buildEventWithPlace(file == null ? new VirtualFile[0] : new VirtualFile[] {file}, place, uiKind);
+    }
+
+    private AnActionEvent buildEventWithPlace(
+            VirtualFile[] files, String place, com.intellij.openapi.actionSystem.ActionUiKind uiKind) {
+        var context = files.length == 0
                 ? DataContext.EMPTY_CONTEXT
                 : SimpleDataContext.builder()
-                        .add(CommonDataKeys.VIRTUAL_FILE, file)
+                        .add(CommonDataKeys.VIRTUAL_FILE, files[0])
+                        .add(CommonDataKeys.VIRTUAL_FILE_ARRAY, files)
                         .build();
         var presentation = new Presentation();
         return AnActionEvent.createEvent(context, presentation, place, uiKind, null);
