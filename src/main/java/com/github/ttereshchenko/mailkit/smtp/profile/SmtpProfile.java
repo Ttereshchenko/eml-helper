@@ -87,6 +87,36 @@ public final class SmtpProfile {
         return "";
     }
 
+    /**
+     * Sets the default header {@code name} to {@code value}, replacing an existing pair
+     * (case-insensitive name match) in place or appending a new one. A blank value removes
+     * the pair instead.
+     */
+    public void setDefaultHeaderValue(String name, String value) {
+        if (Objects.isNull(name) || name.isBlank()) {
+            return;
+        }
+        if (Objects.isNull(defaultHeaders)) {
+            defaultHeaders = new ArrayList<>();
+        }
+        var blank = Objects.isNull(value) || value.isBlank();
+        for (var iterator = defaultHeaders.iterator(); iterator.hasNext(); ) {
+            var header = iterator.next();
+            if (Objects.nonNull(header.name)
+                    && header.name.toLowerCase(Locale.ROOT).equals(name.toLowerCase(Locale.ROOT))) {
+                if (blank) {
+                    iterator.remove();
+                } else {
+                    header.value = value;
+                }
+                return;
+            }
+        }
+        if (!blank) {
+            defaultHeaders.add(new DefaultHeader(name, value));
+        }
+    }
+
     public SmtpProfile copy() {
         var copy = new SmtpProfile();
         copy.identifier = identifier;
