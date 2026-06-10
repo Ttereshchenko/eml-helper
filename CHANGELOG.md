@@ -14,6 +14,7 @@
 - PST/OST conversion now exports calendar items: appointments and meeting requests are written as EML with an attached calendar invite (`invite.ics`) carrying the start/end time and location, instead of being silently skipped.
 - The PST conversion dialog now displays a list of supported and ignored message classes, and includes a link to open a GitHub issue to request support for new ones.
 - Added a "Send EML..." button directly to the editor toolbar for quick access. This button can be toggled off via the "Show 'Send EML...' button in editor toolbar" setting under **Tools > MailKit > SMTP**.
+- When you change the host, port, or envelope From/To in the Send dialog, a checkbox now offers to save those values back to the selected profile — useful when pointing an existing profile at a new environment. The checkbox appears only while the values differ from the profile and is off by default, so a one-off override never touches the profile.
 - "Send EML…" now accepts a multi-file selection: pick several `.eml` files in the Project view and send them from one dialog. The envelope is entered once and shared by every message, an "On failure" option chooses between continuing with the remaining messages or stopping at the first failure, and the dialog stays open showing live per-file progress with the ability to cancel the remaining sends. Each message still gets its own console transcript and audit-log entry.
 
 ### Changed

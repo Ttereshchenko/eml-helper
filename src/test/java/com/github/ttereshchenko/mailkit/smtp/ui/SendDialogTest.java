@@ -154,6 +154,90 @@ public class SendDialogTest extends BasePlatformTestCase {
         }
     }
 
+    public void testUpdateProfileCheckboxIsHiddenWhileFieldsMatchTheProfile() {
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
+        try {
+            var checkbox = dialog.updateProfileBoxForTest();
+            assertFalse("checkbox must stay hidden while fields match the profile", checkbox.isVisible());
+            assertFalse("checkbox must start unchecked", checkbox.isSelected());
+        } finally {
+            dialog.close(0);
+        }
+    }
+
+    public void testUpdateProfileCheckboxAppearsOnOverrideAndHidesWhenValuesAreRestored() {
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
+        try {
+            var checkbox = dialog.updateProfileBoxForTest();
+            dialog.setHostPortForTest("smtp.new-env.local", 2525);
+            assertTrue("checkbox must appear once host/port diverge from the profile", checkbox.isVisible());
+            assertEquals("Update profile \"Mailpit-dev\" with these values", checkbox.getText());
+
+            checkbox.setSelected(true);
+            dialog.setHostPortForTest("localhost", 1025);
+            assertFalse("checkbox must hide again when the fields match the profile", checkbox.isVisible());
+            assertFalse("checkbox must uncheck when it hides, so a stale opt-in cannot linger", checkbox.isSelected());
+        } finally {
+            dialog.close(0);
+        }
+    }
+
+    public void testCheckedUpdateBoxPersistsOverriddenValuesToTheSameProfile() throws Exception {
+        // Manual-verification sample for this feature.
+        var sample = Files.readString(Path.of("src/test/resources/samples/eml/smtp/save_overrides_to_profile.eml"));
+        var file = myFixture.getTempDirFixture().createFile("save_overrides_to_profile.eml", sample);
+        var originalIdentifier = service.getProfiles().get(0).identifier;
+
+        var dialog = new SendDialog(getProject(), file);
+        try {
+            dialog.setHostPortForTest("smtp.new-env.local", 2525);
+            dialog.setEnvelopeForTest("ci@new-env.local", "qa@new-env.local");
+            dialog.updateProfileBoxForTest().setSelected(true);
+            // Mirror the production order: validation first, then the opt-in save.
+            dialog.buildSendRequest();
+
+            dialog.persistOverridesForTest();
+
+            var saved = service.findById(originalIdentifier).orElseThrow();
+            assertEquals("smtp.new-env.local", saved.host);
+            assertEquals(2525, saved.port);
+            assertEquals("ci@new-env.local", saved.findDefaultHeaderValue("From"));
+            assertEquals("qa@new-env.local", saved.findDefaultHeaderValue("To"));
+            assertEquals("Mailpit-dev", saved.name);
+            assertTrue("the default flag must survive the update", saved.isDefault);
+            assertEquals(
+                    "the update must not duplicate the profile",
+                    1,
+                    service.getProfiles().size());
+            assertFalse(
+                    "after saving, the fields match the profile again so the checkbox hides",
+                    dialog.updateProfileBoxForTest().isVisible());
+        } finally {
+            dialog.close(0);
+        }
+    }
+
+    public void testUncheckedUpdateBoxLeavesTheProfileUntouched() throws Exception {
+        var originalIdentifier = service.getProfiles().get(0).identifier;
+
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
+        try {
+            dialog.setHostPortForTest("smtp.new-env.local", 2525);
+            dialog.setEnvelopeForTest("ci@new-env.local", "qa@new-env.local");
+            assertTrue(dialog.updateProfileBoxForTest().isVisible());
+
+            dialog.persistOverridesForTest();
+
+            var untouched = service.findById(originalIdentifier).orElseThrow();
+            assertEquals("localhost", untouched.host);
+            assertEquals(1025, untouched.port);
+            assertEquals("", untouched.findDefaultHeaderValue("From"));
+            assertEquals("", untouched.findDefaultHeaderValue("To"));
+        } finally {
+            dialog.close(0);
+        }
+    }
+
     private List<VirtualFile> createBatchSampleFiles() throws Exception {
         var sampleOne = Files.readString(Path.of("src/test/resources/samples/eml/smtp/batch_send_message_one.eml"));
         var sampleTwo = Files.readString(Path.of("src/test/resources/samples/eml/smtp/batch_send_message_two.eml"));

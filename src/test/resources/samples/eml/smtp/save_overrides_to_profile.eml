@@ -1,0 +1,11 @@
+From: sender@old-env.example
+To: recipient@old-env.example
+Subject: Save overridden Send-dialog values back to the profile
+Date: Tue, 09 Jun 2026 10:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+
+Open this file with "Send EML", pick a profile, then change the host, port,
+or envelope addresses: an "Update profile ... with these values" checkbox
+appears. Tick it and the overrides are saved back to the selected profile;
+leave it unticked and the overrides stay per-send only.

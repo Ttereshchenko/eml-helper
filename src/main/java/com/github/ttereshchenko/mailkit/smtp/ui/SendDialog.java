@@ -19,7 +19,9 @@ import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.ui.DocumentAdapter;
 import com.intellij.ui.SimpleListCellRenderer;
+import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.table.JBTable;
 import com.intellij.util.ui.FormBuilder;
@@ -31,6 +33,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -39,7 +42,9 @@ import javax.swing.JPasswordField;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.event.DocumentEvent;
 import javax.swing.table.AbstractTableModel;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -99,6 +104,7 @@ public final class SendDialog extends DialogWrapper {
     private final JComboBox<StopAfterChoice> stopAfterPicker = new JComboBox<>();
     private final JComboBox<FailurePolicy> failurePolicyPicker = new JComboBox<>(FailurePolicy.values());
     private final JPasswordField passwordField = new JPasswordField();
+    private final JBCheckBox updateProfileBox = new JBCheckBox();
     private final FileStatusTableModel statusTableModel;
 
     private DialogState state = DialogState.IDLE;
@@ -151,6 +157,17 @@ public final class SendDialog extends DialogWrapper {
         }
         profilePicker.addActionListener(event -> onProfilePicked());
 
+        var refreshOnEdit = new DocumentAdapter() {
+            @Override
+            protected void textChanged(@NotNull DocumentEvent event) {
+                refreshUpdateProfileBox();
+            }
+        };
+        hostField.getDocument().addDocumentListener(refreshOnEdit);
+        envelopeFromField.getDocument().addDocumentListener(refreshOnEdit);
+        envelopeToField.getDocument().addDocumentListener(refreshOnEdit);
+        portSpinner.addChangeListener(event -> refreshUpdateProfileBox());
+
         var formBuilder = FormBuilder.createFormBuilder()
                 .addLabeledComponent("Source:", sourceSummaryLabel)
                 .addLabeledComponent("Profile:", profilePicker)
@@ -159,6 +176,7 @@ public final class SendDialog extends DialogWrapper {
                 .addSeparator()
                 .addLabeledComponent("Envelope From:", envelopeFromField)
                 .addLabeledComponent("Envelope To:", envelopeToField)
+                .addComponentToRightColumn(updateProfileBox)
                 .addSeparator();
         if (sourceFiles.size() == 1) {
             formBuilder
@@ -193,6 +211,7 @@ public final class SendDialog extends DialogWrapper {
             if (!confirmInsecureTransport(request.config())) {
                 return;
             }
+            persistOverridesToProfileIfRequested();
             committedRequest = request;
             startBatch(request);
         } catch (ConfigurationException failure) {
@@ -269,6 +288,7 @@ public final class SendDialog extends DialogWrapper {
         stopAfterPicker.setEnabled(enabled);
         failurePolicyPicker.setEnabled(enabled);
         passwordField.setEnabled(enabled);
+        updateProfileBox.setEnabled(enabled);
     }
 
     /**
@@ -334,6 +354,60 @@ public final class SendDialog extends DialogWrapper {
         portSpinner.setValue(selected.port);
         envelopeFromField.setText(selected.findDefaultHeaderValue("From"));
         envelopeToField.setText(selected.findDefaultHeaderValue("To"));
+        refreshUpdateProfileBox();
+    }
+
+    /**
+     * Shows the "Update profile … with these values" checkbox only while the editable
+     * profile-sourced fields (host, port, envelope From/To) diverge from the selected profile.
+     * While the fields match, the box hides and unchecks, so saving is always a per-send opt-in.
+     */
+    private void refreshUpdateProfileBox() {
+        var selected = (SmtpProfile) profilePicker.getSelectedItem();
+        if (selected == null) {
+            updateProfileBox.setSelected(false);
+            updateProfileBox.setVisible(false);
+            return;
+        }
+        var dirty = !hostField.getText().trim().equals(Objects.requireNonNullElse(selected.host, ""))
+                || (Integer) portSpinner.getValue() != selected.port
+                || !envelopeFromField.getText().trim().equals(selected.findDefaultHeaderValue("From"))
+                || !envelopeToField.getText().trim().equals(selected.findDefaultHeaderValue("To"));
+        if (!dirty) {
+            updateProfileBox.setSelected(false);
+        }
+        var displayName = selected.name == null || selected.name.isBlank() ? "(unnamed)" : selected.name;
+        updateProfileBox.setText("Update profile \"" + displayName + "\" with these values");
+        updateProfileBox.setVisible(dirty);
+    }
+
+    /**
+     * Writes the overridden host/port/From/To back to the selected profile when the user ticked
+     * the update checkbox. Runs only after {@link #buildSendRequest()} validated the values. The
+     * one-time password is never part of the save. After the upsert the picker is repopulated so
+     * the in-dialog profile matches what was persisted.
+     */
+    private void persistOverridesToProfileIfRequested() {
+        if (!updateProfileBox.isVisible() || !updateProfileBox.isSelected()) {
+            return;
+        }
+        var selected = (SmtpProfile) profilePicker.getSelectedItem();
+        if (selected == null) {
+            return;
+        }
+        var updated = selected.copy();
+        updated.host = hostField.getText().trim();
+        updated.port = (Integer) portSpinner.getValue();
+        updated.setDefaultHeaderValue("From", envelopeFromField.getText().trim());
+        updated.setDefaultHeaderValue("To", envelopeToField.getText().trim());
+        profileService.upsert(updated);
+        populateProfilePicker();
+        for (var index = 0; index < profilePicker.getItemCount(); index++) {
+            if (Objects.equals(profilePicker.getItemAt(index).identifier, updated.identifier)) {
+                profilePicker.setSelectedIndex(index);
+                break;
+            }
+        }
     }
 
     SendRequest buildSendRequest() throws ConfigurationException {
@@ -629,6 +703,19 @@ public final class SendDialog extends DialogWrapper {
     void setEnvelopeForTest(String from, String toAddresses) {
         envelopeFromField.setText(from);
         envelopeToField.setText(toAddresses);
+    }
+
+    void setHostPortForTest(String host, int port) {
+        hostField.setText(host);
+        portSpinner.setValue(port);
+    }
+
+    JBCheckBox updateProfileBoxForTest() {
+        return updateProfileBox;
+    }
+
+    void persistOverridesForTest() {
+        persistOverridesToProfileIfRequested();
     }
 
     void setOneTimePasswordForTest(String password) {
