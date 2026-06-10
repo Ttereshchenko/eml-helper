@@ -185,9 +185,10 @@ public final class EmlSerializer {
             }
         }
 
-        if (!present.contains("mime-version")) {
-            out.append("MIME-Version: 1.0").append(CRLF);
-        }
+        // Always re-emit MIME-Version: the transport block's own MIME-Version is filtered out along
+        // with the original Content-Type/CTE (the serializer re-encodes the body structure itself),
+        // so honoring `present` here used to leave the generated message with no MIME-Version at all.
+        out.append("MIME-Version: 1.0").append(CRLF);
 
         bodies.sort((body1, body2) -> {
             int rank1 =
@@ -457,6 +458,11 @@ public final class EmlSerializer {
      * encoded-words are forbidden inside a quoted-string parameter value (RFC 2047 §5).
      */
     static String filenameParameter(String key, String filename) {
+        // The filename comes from attacker-controlled MSG/PST attachment properties. In the quoted
+        // ASCII form below a raw CR/LF would terminate the header line and inject arbitrary headers
+        // into the generated EML, so control characters are neutralized first (the RFC 2231 path
+        // %-encodes them anyway, but keep both paths identical).
+        filename = filename.replaceAll("[\\u0000-\\u001F\\u007F]", "_");
         if (isPureAscii(filename)) {
             var escaped = filename.replace("\\", "\\\\").replace("\"", "\\\"");
             return key + "=\"" + escaped + "\"";

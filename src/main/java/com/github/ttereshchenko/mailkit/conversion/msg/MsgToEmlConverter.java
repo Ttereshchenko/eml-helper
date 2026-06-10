@@ -1,7 +1,7 @@
 package com.github.ttereshchenko.mailkit.conversion.msg;
 
-import com.github.ttereshchenko.mailkit.conversion.ConversionConsoleService;
 import com.github.ttereshchenko.mailkit.conversion.ConversionException;
+import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -11,6 +11,7 @@ import java.io.OutputStreamWriter;
 import java.io.StringWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.Date;
 import java.util.Objects;
 import org.apache.poi.hsmf.MAPIMessage;
@@ -25,6 +26,20 @@ import org.apache.poi.hsmf.exceptions.ChunkNotFoundException;
 import org.apache.poi.poifs.filesystem.EntryUtils;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 
+/**
+ * Converts an Outlook {@code .msg} file (an OLE2/CFB container, parsed by Apache POI's HSMF module)
+ * into a standards-compliant EML document written through {@link EmlSerializer}.
+ *
+ * <p>Both modern Unicode and legacy ANSI MSG files are supported; for ANSI files the string codepage
+ * is detected from the message's codepage properties/headers before any text is read. Plain-text,
+ * HTML, and RTF bodies (including MS-OXRTFEX HTML-encapsulated RTF) are exported, attachments —
+ * including recursively nested {@code .msg} messages (capped at depth 10) and OLE objects — are
+ * preserved, and transport headers missing from the source are synthesized from MAPI properties.
+ *
+ * <p>Every parse-level failure mode of the underlying POI parser is collapsed into
+ * {@link ConversionException}; progress and degradations (e.g. an attachment whose payload could not
+ * be extracted) are reported through the supplied {@link ConversionLog}.
+ */
 public final class MsgToEmlConverter {
 
     // Kept in step with PstToEmlConverter.MAX_EMBEDDED_DEPTH so both pipelines truncate alike.
@@ -32,27 +47,72 @@ public final class MsgToEmlConverter {
 
     private MsgToEmlConverter() {}
 
-    public static void convert(InputStream msgStream, OutputStream outStream, ConversionConsoleService console)
+    /**
+     * Converts the MSG document supplied as a stream. The underlying parser buffers the entire stream
+     * in memory; prefer {@link #convert(Path, OutputStream, ConversionLog)} when the message already
+     * exists on disk.
+     *
+     * @param msgStream raw {@code .msg} bytes; fully consumed but not closed
+     * @param outStream destination for the generated EML (encoded as UTF-8); flushed but not closed
+     * @param log progress/degradation sink; never {@code null} (pass {@link ConversionLog#NOOP})
+     * @throws ConversionException if the input is not an OLE2 container or its MAPI structures are
+     *     corrupt or truncated — POI's checked and unchecked parse failures are wrapped with the
+     *     original exception kept as the cause
+     */
+    public static void convert(InputStream msgStream, OutputStream outStream, ConversionLog log)
             throws ConversionException {
         Objects.requireNonNull(msgStream, "msgStream");
         Objects.requireNonNull(outStream, "outStream");
+        Objects.requireNonNull(log, "log");
         try (var message = new MAPIMessage(msgStream)) {
-            // UTF-8 (matching the PST path): a stored transport-header block may legitimately carry
-            // non-ASCII bytes. A US-ASCII encoder with CodingErrorAction.REPORT aborts the whole
-            // conversion on the first such byte, which is a common real-world failure.
-            var writer = new OutputStreamWriter(outStream, StandardCharsets.UTF_8);
-            convert(message, 0, writer, console);
-            writer.flush();
+            writeEml(message, outStream, log);
         } catch (ChunkNotFoundException | IOException | RuntimeException failure) {
-            // POI surfaces malformed input as its own checked ChunkNotFoundException, various unchecked
-            // exceptions (e.g. RecordFormatException), and parse-level IOExceptions (NotOLE2FileException).
-            // Collapse them into one domain type so the conversion API has a clean exception boundary.
-            var detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
-            throw new ConversionException("Failed to convert MSG to EML: " + detail, failure);
+            throw wrap(failure);
         }
     }
 
-    static void convert(MAPIMessage message, int depth, Writer writer, ConversionConsoleService console)
+    /**
+     * Converts a {@code .msg} file in place on disk. Unlike
+     * {@link #convert(InputStream, OutputStream, ConversionLog)} this opens the file through a
+     * file-channel-backed block store, so OLE blocks are read on demand instead of the whole file
+     * being buffered in heap — use this overload for large messages.
+     *
+     * @param msgPath path to the {@code .msg} file
+     * @param outStream destination for the generated EML (encoded as UTF-8); flushed but not closed
+     * @param log progress/degradation sink; never {@code null} (pass {@link ConversionLog#NOOP})
+     * @throws ConversionException if the file cannot be read, is not an OLE2 container, or its MAPI
+     *     structures are corrupt or truncated
+     */
+    public static void convert(Path msgPath, OutputStream outStream, ConversionLog log) throws ConversionException {
+        Objects.requireNonNull(msgPath, "msgPath");
+        Objects.requireNonNull(outStream, "outStream");
+        Objects.requireNonNull(log, "log");
+        try (var message = new MAPIMessage(msgPath.toFile())) {
+            writeEml(message, outStream, log);
+        } catch (ChunkNotFoundException | IOException | RuntimeException failure) {
+            throw wrap(failure);
+        }
+    }
+
+    private static void writeEml(MAPIMessage message, OutputStream outStream, ConversionLog log)
+            throws IOException, ChunkNotFoundException {
+        // UTF-8 (matching the PST path): a stored transport-header block may legitimately carry
+        // non-ASCII bytes. A US-ASCII encoder with CodingErrorAction.REPORT aborts the whole
+        // conversion on the first such byte, which is a common real-world failure.
+        var writer = new OutputStreamWriter(outStream, StandardCharsets.UTF_8);
+        convert(message, 0, writer, log);
+        writer.flush();
+    }
+
+    private static ConversionException wrap(Exception failure) {
+        // POI surfaces malformed input as its own checked ChunkNotFoundException, various unchecked
+        // exceptions (e.g. RecordFormatException), and parse-level IOExceptions (NotOLE2FileException).
+        // Collapse them into one domain type so the conversion API has a clean exception boundary.
+        var detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+        return new ConversionException("Failed to convert MSG to EML: " + detail, failure);
+    }
+
+    static void convert(MAPIMessage message, int depth, Writer writer, ConversionLog log)
             throws IOException, ChunkNotFoundException {
         if (depth > MAX_EMBEDDED_DEPTH) {
             // Mirror the PST converter: emit a stub rather than throwing, so an over-deep nested
@@ -64,6 +124,12 @@ public final class MsgToEmlConverter {
             return;
         }
         message.setReturnNullOnMissingChunk(true);
+        if (message.has7BitEncodingStrings()) {
+            // Legacy ANSI MSG: string chunks are stored as 8-bit bytes whose codepage lives in
+            // PR_MESSAGE_CODEPAGE / PR_INTERNET_CPID / the headers charset. Without this detection POI
+            // decodes every string as windows-1252, mojibaking Cyrillic/CJK subjects and bodies.
+            message.guess7BitEncoding();
+        }
 
         var details = message.getRecipientDetailsChunks();
         if (details != null && details.length > 2048) {
@@ -88,6 +154,17 @@ public final class MsgToEmlConverter {
             serializer.setMessageId(messageId);
         }
 
+        // Recover reply-threading headers from MAPI when the original transport headers are absent;
+        // EmlSerializer's transport-header dedup keeps these from doubling up when they are present.
+        var inReplyTo = readMainString(message, MAPIProperty.IN_REPLY_TO_ID);
+        if (inReplyTo != null && !inReplyTo.isBlank()) {
+            serializer.addCustomHeader("In-Reply-To", inReplyTo.trim());
+        }
+        var references = readMainString(message, MAPIProperty.INTERNET_REFERENCES);
+        if (references != null && !references.isBlank()) {
+            serializer.addCustomHeader("References", references.trim());
+        }
+
         var sclProp = MAPIProperty.createCustom(0x4076, Types.LONG, "SPAM_CONFIDENCE_LEVEL");
         var sclChunks = message.getMainChunks().getProperties().get(sclProp);
         if (sclChunks != null && !sclChunks.isEmpty()) {
@@ -97,20 +174,19 @@ public final class MsgToEmlConverter {
             }
         }
 
-        populateBodies(message, serializer, console);
+        populateBodies(message, serializer);
         // An appointment's subject/body/date are exported as a normal email above. We deliberately do
         // NOT synthesize an invite.ics here: POI/HSMF exposes no reliable named-property API to read the
         // appointment's start/end/location (PidLidAppointmentStartWhole etc.), so the only invite we
         // could build would carry placeholder DTSTART/DTEND ("now") and no LOCATION — a structurally
         // valid but semantically wrong calendar entry. Emitting nothing is more honest than emitting that.
 
-        populateAttachments(message, depth, serializer, console);
+        populateAttachments(message, depth, serializer, log);
 
         serializer.writeTo(writer);
     }
 
-    private static void populateBodies(
-            MAPIMessage message, EmlSerializer serializer, ConversionConsoleService console) {
+    private static void populateBodies(MAPIMessage message, EmlSerializer serializer) {
         boolean hasPlain = false;
         boolean hasHtml = false;
         try {
@@ -151,8 +227,7 @@ public final class MsgToEmlConverter {
         }
     }
 
-    private static void populateAttachments(
-            MAPIMessage message, int depth, EmlSerializer serializer, ConversionConsoleService console)
+    private static void populateAttachments(MAPIMessage message, int depth, EmlSerializer serializer, ConversionLog log)
             throws IOException {
         var raw = message.getAttachmentFiles();
         if (raw == null || raw.length == 0) {
@@ -164,36 +239,30 @@ public final class MsgToEmlConverter {
                 String nestedEml;
                 try {
                     var stringWriter = new StringWriter();
-                    convert(embedded, depth + 1, stringWriter, console);
+                    convert(embedded, depth + 1, stringWriter, log);
                     nestedEml = stringWriter.toString();
                 } catch (Exception failure) {
-                    if (console != null) {
-                        console.info(
-                                ConversionConsoleService.Tab.MSG,
-                                "Failed to convert embedded message: " + failure.getMessage());
-                    }
+                    log.error("Failed to convert embedded message: " + failure.getMessage());
                     nestedEml = "Subject: Error converting nested message\r\n\r\n" + failure.getMessage();
                 }
                 var subject = safeString(safeSubject(embedded));
                 var filename = EmlSerializer.sanitizeFilename(subject.isBlank() ? "embedded" : subject) + ".eml";
-                if (console != null)
-                    console.info(ConversionConsoleService.Tab.MSG, "Found embedded message attachment: " + filename);
+                log.info("Found embedded message attachment: " + filename);
                 serializer.addEmbeddedMessage(filename, nestedEml);
             } else {
-                var bytes = attachmentBytes(chunks);
+                var bytes = attachmentBytes(chunks, log);
                 var filename = pickFilename(chunks);
                 var mime = pickMimeType(chunks);
                 var contentId = pickContentId(chunks);
                 boolean isInline = contentId != null;
 
-                if (console != null)
-                    console.info(ConversionConsoleService.Tab.MSG, "Found attachment: " + filename + " (" + mime + ")");
+                log.info("Found attachment: " + filename + " (" + mime + ")");
                 serializer.addAttachment(filename, mime, bytes, contentId, isInline);
             }
         }
     }
 
-    private static byte[] attachmentBytes(AttachmentChunks chunks) {
+    private static byte[] attachmentBytes(AttachmentChunks chunks, ConversionLog log) {
         var dataChunk = chunks.getAttachData();
         if (dataChunk != null && dataChunk.getValue() != null) {
             return dataChunk.getValue();
@@ -205,9 +274,12 @@ public final class MsgToEmlConverter {
                 var out = new ByteArrayOutputStream();
                 fs.writeFilesystem(out);
                 return out.toByteArray();
-            } catch (Exception ignored) {
+            } catch (Exception failure) {
+                log.error("Could not extract OLE attachment data, emitting it empty: " + failure.getMessage());
+                return new byte[0];
             }
         }
+        log.error("Attachment carries no data, emitting it empty");
         return new byte[0];
     }
 

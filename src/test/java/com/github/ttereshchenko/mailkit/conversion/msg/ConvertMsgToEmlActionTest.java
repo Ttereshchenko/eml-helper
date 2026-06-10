@@ -1,5 +1,6 @@
 package com.github.ttereshchenko.mailkit.conversion.msg;
 
+import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext;
@@ -104,7 +105,7 @@ public class ConvertMsgToEmlActionTest extends BasePlatformTestCase {
                 .toBytes();
 
         var out = new java.io.ByteArrayOutputStream();
-        MsgToEmlConverter.convert(new java.io.ByteArrayInputStream(bytes), out, null);
+        MsgToEmlConverter.convert(new java.io.ByteArrayInputStream(bytes), out, ConversionLog.NOOP);
         var eml = out.toString(StandardCharsets.UTF_8);
 
         assertTrue("Non-ASCII recipient email should be preserved, not crash: " + eml, eml.contains(nonAsciiEmail));

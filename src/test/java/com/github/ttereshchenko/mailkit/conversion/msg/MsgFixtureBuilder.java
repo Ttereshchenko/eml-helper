@@ -34,6 +34,8 @@ final class MsgFixtureBuilder {
     private static final int TAG_SENDER_NAME = (0x0C1A << 16) | TYPE_UNICODE;
     private static final int TAG_SENDER_EMAIL_ADDRESS = (0x0C1F << 16) | TYPE_UNICODE;
     private static final int TAG_INTERNET_MESSAGE_ID = (0x1035 << 16) | TYPE_UNICODE;
+    private static final int TAG_INTERNET_REFERENCES = (0x1039 << 16) | TYPE_UNICODE;
+    private static final int TAG_IN_REPLY_TO_ID = (0x1042 << 16) | TYPE_UNICODE;
     private static final int TAG_MESSAGE_CLASS = (0x001A << 16) | TYPE_UNICODE;
     private static final int TAG_TRANSPORT_HEADERS = (0x007D << 16) | TYPE_UNICODE;
     private static final int TAG_MESSAGE_DELIVERY_TIME = (0x0E06 << 16) | TYPE_SYSTIME;
@@ -103,6 +105,14 @@ final class MsgFixtureBuilder {
 
     MsgFixtureBuilder messageId(String value) {
         return setUnicode(TAG_INTERNET_MESSAGE_ID, value);
+    }
+
+    MsgFixtureBuilder inReplyTo(String value) {
+        return setUnicode(TAG_IN_REPLY_TO_ID, value);
+    }
+
+    MsgFixtureBuilder references(String value) {
+        return setUnicode(TAG_INTERNET_REFERENCES, value);
     }
 
     MsgFixtureBuilder messageClass(String value) {

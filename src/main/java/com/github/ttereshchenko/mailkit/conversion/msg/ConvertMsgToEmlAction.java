@@ -1,6 +1,7 @@
 package com.github.ttereshchenko.mailkit.conversion.msg;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionConsoleService;
+import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
@@ -24,6 +25,12 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Project-view context action that converts the selected Outlook {@code .msg} file into a sibling
+ * {@code .eml} file via {@link MsgToEmlConverter}, reporting progress to the MailKit tool-window
+ * console and opening the result in the editor. Runs in a background task; on physical filesystems
+ * the result is written to a temp file and atomically moved into place.
+ */
 public final class ConvertMsgToEmlAction extends AnAction {
 
     private static final String NOTIFICATION_GROUP_ID = "MailKit";
@@ -61,6 +68,7 @@ public final class ConvertMsgToEmlAction extends AnAction {
         console.clear(ConversionConsoleService.Tab.MSG);
         console.activateToolWindow(ConversionConsoleService.Tab.MSG);
         console.info(ConversionConsoleService.Tab.MSG, "Starting conversion of " + source.getName() + "...");
+        ConversionLog log = console.asLog(ConversionConsoleService.Tab.MSG);
 
         ProgressManager.getInstance().run(new Task.Backgroundable(project, "Converting MSG to EML", true) {
             @Override
@@ -70,9 +78,11 @@ public final class ConvertMsgToEmlAction extends AnAction {
 
                 try {
                     boolean useNio = false;
+                    Path sourcePath = null;
                     Path targetPath = null;
                     try {
-                        targetPath = source.toNioPath().getParent().resolve(targetName);
+                        sourcePath = source.toNioPath();
+                        targetPath = sourcePath.getParent().resolve(targetName);
                         useNio = true;
                     } catch (UnsupportedOperationException exception) {
                         // TempFileSystem in tests doesn't support NIO Path
@@ -84,12 +94,14 @@ public final class ConvertMsgToEmlAction extends AnAction {
                         var tempPath = Files.createTempFile(
                                 targetPath.getParent(), source.getNameWithoutExtension(), ".eml.part");
                         try {
-                            try (var stream = source.getInputStream();
-                                    var out = Files.newOutputStream(tempPath)) {
-                                MsgToEmlConverter.convert(stream, out, console);
+                            // File-backed overload: reads OLE blocks on demand instead of buffering
+                            // the whole .msg in heap (matters for messages with huge attachments).
+                            try (var out = Files.newOutputStream(tempPath)) {
+                                MsgToEmlConverter.convert(sourcePath, out, log);
                             }
                             indicator.checkCanceled();
                             Files.move(tempPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                            console.info(ConversionConsoleService.Tab.MSG, "Converted successfully.");
                         } catch (Exception failure) {
                             try {
                                 Files.deleteIfExists(tempPath);
@@ -109,7 +121,7 @@ public final class ConvertMsgToEmlAction extends AnAction {
                     } else {
                         var out = new ByteArrayOutputStream();
                         try (var stream = source.getInputStream()) {
-                            MsgToEmlConverter.convert(stream, out, console);
+                            MsgToEmlConverter.convert(stream, out, log);
                         }
 
                         indicator.checkCanceled();
