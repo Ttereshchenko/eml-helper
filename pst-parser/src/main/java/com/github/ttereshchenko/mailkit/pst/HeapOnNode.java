@@ -5,36 +5,40 @@ import java.nio.ByteOrder;
 
 /**
  * Represents a Heap-on-Node (HN) which provides a memory allocation structure
- * within a PST Node's data block.
+ * within a PST Node's data block ([MS-PST] §2.3.1).
  */
 class HeapOnNode {
 
     /** Unicode block payload (8192 - 16-byte trailer); used when the format is unknown. */
-    private static final int DEFAULT_BLOCK_PAYLOAD_SIZE = 8176;
+    static final int DEFAULT_BLOCK_PAYLOAD_SIZE = 8176;
 
     private final byte[] data;
     private final int hidUserRoot;
     private final int blockPayloadSize;
 
-    public HeapOnNode(byte[] data) {
+    HeapOnNode(byte[] data) throws PstException {
         this(data, DEFAULT_BLOCK_PAYLOAD_SIZE);
     }
 
     /**
      * @param blockPayloadSize the size of one NDB block payload in {@code data}, i.e. the stride
      *     between consecutive HN blocks in a multi-block node (see {@link NodeDatabase#heapBlockSize}).
+     * @throws PstException if the buffer is too small or does not carry the HN signature
      */
-    public HeapOnNode(byte[] data, int blockPayloadSize) {
+    HeapOnNode(byte[] data, int blockPayloadSize) throws PstException {
+        if (data == null || data.length < 8) {
+            throw new PstException("Heap-on-Node data too small: " + (data == null ? -1 : data.length) + " bytes");
+        }
         this.data = data;
         this.blockPayloadSize = blockPayloadSize;
-        var buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
 
-        int bSig = Byte.toUnsignedInt(buf.get(2));
-        if (bSig != 0xEC) {
-            throw new IllegalArgumentException("Invalid Heap-on-Node signature: " + bSig);
+        int signature = Byte.toUnsignedInt(buffer.get(2));
+        if (signature != 0xEC) {
+            throw new PstException("Invalid Heap-on-Node signature: " + signature);
         }
 
-        this.hidUserRoot = buf.getInt(4);
+        this.hidUserRoot = buffer.getInt(4);
     }
 
     public int userRootHid() {
@@ -55,28 +59,29 @@ class HeapOnNode {
             return new byte[0];
         }
 
-        var buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
-        int ibHnpm = Short.toUnsignedInt(buf.getShort(pageOffset));
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        int ibHnpm = Short.toUnsignedInt(buffer.getShort(pageOffset));
 
         int pageMapOffset = pageOffset + ibHnpm;
-        if (pageMapOffset + 4 > data.length) return new byte[0];
+        if (pageMapOffset + 4 > data.length) {
+            return new byte[0];
+        }
 
-        buf.position(pageMapOffset);
-        int cAlloc = Short.toUnsignedInt(buf.getShort());
-        int cFree = Short.toUnsignedInt(buf.getShort());
+        buffer.position(pageMapOffset);
+        int allocationCount = Short.toUnsignedInt(buffer.getShort());
 
-        if (hidIndex == 0 || hidIndex > cAlloc) {
+        if (hidIndex == 0 || hidIndex > allocationCount) {
             return new byte[0];
         }
 
         // cAlloc is read from the (untrusted) HNPAGEMAP; the rgibAlloc array holds cAlloc+1 offsets, so
         // require the whole array to fit before indexing into it ([MS-PST] §2.3.1.5).
-        if (pageMapOffset + 4 + (cAlloc + 1) * 2 > data.length) {
+        if (pageMapOffset + 4 + (allocationCount + 1) * 2 > data.length) {
             return new byte[0];
         }
 
-        int offsetInPage = Short.toUnsignedInt(buf.getShort(pageMapOffset + 4 + (hidIndex - 1) * 2));
-        int nextOffsetInPage = Short.toUnsignedInt(buf.getShort(pageMapOffset + 4 + hidIndex * 2));
+        int offsetInPage = Short.toUnsignedInt(buffer.getShort(pageMapOffset + 4 + (hidIndex - 1) * 2));
+        int nextOffsetInPage = Short.toUnsignedInt(buffer.getShort(pageMapOffset + 4 + hidIndex * 2));
 
         int size = nextOffsetInPage - offsetInPage;
         int absOffset = pageOffset + offsetInPage;
@@ -85,7 +90,7 @@ class HeapOnNode {
             return new byte[0];
         }
 
-        byte[] item = new byte[size];
+        var item = new byte[size];
         System.arraycopy(data, absOffset, item, 0, size);
         return item;
     }

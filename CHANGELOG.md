@@ -23,6 +23,10 @@
 
 ### Fixed
 
+- PST/OST folders holding more than ~80 messages no longer risk losing or garbling the messages past that point during conversion: the converter mis-addressed the folder's internal message table once it grew beyond one storage block.
+- Embedded message attachments (an email attached inside another email) are now actually extracted into nested `.eml` attachments during PST/OST conversion; previously they were silently skipped because the embedded item was looked up by the wrong identifier.
+- Opening a corrupted PST/OST archive whose encryption marker is damaged now fails immediately with a clear error instead of exporting unreadable garbage messages.
+- Converting a very large PST/OST archive no longer loads the archive's entire internal index into memory up front — conversion starts faster and uses far less memory on multi-gigabyte archives, and large attachments can be read as a stream.
 - ANSI-format PST archives (Outlook 97–2002) now convert correctly: message subjects, bodies, senders, and recipients were previously read as empty (or failed outright) because the converter mis-read the archive's internal block layout, so no messages were exported.
 - Posted notes (`IPM.Post`, items posted directly into a folder) are now exported during PST/OST conversion instead of being skipped as an unsupported message class.
 - Sending via SMTP now reports a failed TLS handshake (untrusted certificate, hostname mismatch) as a TLS error instead of a generic I/O error, so the failure reason is clear in the send result.

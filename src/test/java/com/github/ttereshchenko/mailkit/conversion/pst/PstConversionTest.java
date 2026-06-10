@@ -16,42 +16,9 @@ import org.junit.jupiter.api.Test;
 
 class PstConversionTest {
 
-    @Test
-    void testPasswordedPst() throws Exception {
-        Path path = Paths.get("src/test/resources/samples/pst/passworded.pst");
-        try (var pstFile = new PstFile(path)) {
-            var rootFolder = new Folder(pstFile, 0x122);
-            assertNotNull(rootFolder);
-            assertDoesNotThrow(rootFolder::getSubFolders);
-        }
-    }
-
-    @Test
-    void testAnsiFormat() throws Exception {
-        Path path = Paths.get("src/test/resources/samples/pst/dummy_ansi.pst");
-        try (var pstFile = new PstFile(path)) {
-            assertEquals(PstFile.Format.ANSI, pstFile.format());
-            var rootFolder = new Folder(pstFile, 0x122);
-            assertNotNull(rootFolder);
-            assertDoesNotThrow(rootFolder::getSubFolders);
-            java.util.List<Integer> messages = assertDoesNotThrow(rootFolder::getMessages);
-            if (messages.isEmpty()) {
-                java.util.List<Folder> sub = rootFolder.getSubFolders();
-                if (!sub.isEmpty()) {
-                    messages = sub.get(0).getMessages();
-                }
-            }
-            if (!messages.isEmpty()) {
-                Message msg = new Message(pstFile, messages.get(0));
-                assertDoesNotThrow(msg::getSubject);
-                assertDoesNotThrow(msg::getBody);
-                assertDoesNotThrow(msg::getAttachments);
-                assertDoesNotThrow(msg::getRecipients);
-                org.junit.jupiter.api.Assertions.assertNotNull(msg.getSubject());
-                org.junit.jupiter.api.Assertions.assertNotNull(msg.getBody());
-            }
-        }
-    }
+    // The pure open/walk/read assertions for passworded.pst, dummy_ansi.pst and example-2013.ost
+    // moved to the pst-parser subproject's own suite (PstFileTest) so the standalone library carries
+    // its format coverage; this class keeps only conversion-specific tests.
 
     // ansi-test.pst is the genuine ANSI-format sample (test_ansi.pst from the pstsdk/Fairport test
     // corpus); the previous file at this path was a saved GitHub 404 HTML page, so conversion of a
@@ -90,47 +57,6 @@ class PstConversionTest {
         } finally {
             deleteRecursively(tempDir);
         }
-    }
-
-    @Test
-    void testOst2013() throws Exception {
-        Path path = Paths.get("src/test/resources/samples/pst/example-2013.ost");
-        try (var pstFile = new PstFile(path)) {
-            assertEquals(PstFile.Format.UNICODE_2013, pstFile.format());
-            var rootFolder = new Folder(pstFile, 0x122);
-            assertNotNull(rootFolder);
-            assertDoesNotThrow(rootFolder::getSubFolders);
-
-            int totalMessages = countMessages(rootFolder);
-            assertEquals(
-                    3,
-                    totalMessages,
-                    "Expected exactly 3 messages to be extracted from the 2013 OST (ZLIB decompression)");
-
-            // Assert content on the first message we find
-            var msg = findFirstMessage(pstFile, rootFolder);
-            assertNotNull(msg);
-            var subject = msg.getSubject();
-            assertNotNull(subject);
-        }
-    }
-
-    private Message findFirstMessage(PstFile pstFile, Folder folder) throws Exception {
-        if (!folder.getMessages().isEmpty())
-            return new Message(pstFile, folder.getMessages().get(0));
-        for (Folder sub : folder.getSubFolders()) {
-            Message msg = findFirstMessage(pstFile, sub);
-            if (msg != null) return msg;
-        }
-        return null;
-    }
-
-    private int countMessages(Folder folder) throws Exception {
-        int count = folder.getMessages().size();
-        for (Folder sub : folder.getSubFolders()) {
-            count += countMessages(sub);
-        }
-        return count;
     }
 
     @Test

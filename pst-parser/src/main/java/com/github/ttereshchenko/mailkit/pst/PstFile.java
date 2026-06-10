@@ -13,26 +13,43 @@ import java.util.UUID;
 /**
  * Entry point for reading an Outlook PST/OST personal-folders file ([MS-PST]).
  *
- * <p>Opening a {@code PstFile} takes ownership of a read-only {@link java.nio.channels.FileChannel},
- * validates the header eagerly (magic number, format version, encryption type) and loads the Node
- * Database (NBT/BBT). Navigate the store by constructing a {@link Folder} from a node id — the root
- * folder is {@code 0x122} — and reading {@link Message}s from it.
+ * <p>Opening a {@code PstFile} takes ownership of a read-only {@link java.nio.channels.FileChannel}
+ * and validates the header eagerly (magic number, format version, encryption type, b-tree roots).
+ * Node and block lookups then descend the on-disk b-trees lazily, so opening a large store does not
+ * materialize its index. Navigate the store by constructing a {@link Folder} from a node id — the
+ * root folder is {@code 0x122} — and reading {@link Message}s from it.
  *
  * <p>This is an {@link AutoCloseable} resource: always use it in a try-with-resources block so the
  * underlying channel is released.
  *
- * <p><strong>Thread-safety:</strong> instances are <em>not</em> thread-safe. The store-wide
- * named-property map backing {@link #namedPropertyId} is built and cached lazily without
- * synchronization, so a single {@code PstFile} must be confined to one thread.
+ * <p><strong>Outlook "password protection"</strong> is only a CRC of the password stored in the
+ * message store ({@link #isPasswordProtected()}); the content is not actually encrypted with it, so
+ * password-protected stores are read normally.
+ *
+ * <p><strong>Thread-safety:</strong> a {@code PstFile} is safe for concurrent use by multiple
+ * threads — its lazily built caches are synchronized and the underlying channel uses positional
+ * reads. {@link Folder}, {@link Message} and {@link Attachment} instances are <em>not</em>
+ * thread-safe; confine each instance to a single thread.
  */
 public final class PstFile implements AutoCloseable {
 
     private static final int MAGIC_NUMBER = 0x4E444221; // "!BDN"
     private static final int HEADER_VERSION_OFFSET = 10;
+    private static final int NID_MESSAGE_STORE = 0x21;
 
+    /** Default cap on the expanded size of a single node's data tree (64 MiB). */
+    public static final long DEFAULT_MAX_NODE_SIZE = 64L * 1024 * 1024;
+
+    /** The lowest accepted {@code maxNodeSize}: one full NDB block. */
+    public static final long MIN_MAX_NODE_SIZE = 64L * 1024;
+
+    /** The store's wire format, derived from the header version ([MS-PST] §2.2.2.6). */
     public enum Format {
+        /** Legacy 32-bit format (Outlook ≤ 2002), 512-byte pages, 2 GB limit. */
         ANSI,
+        /** 64-bit format (Outlook 2003+), 512-byte pages. */
         UNICODE,
+        /** 64-bit format with 4 KiB pages and optional per-block compression (Outlook 2013+ OST). */
         UNICODE_2013;
 
         static Format fromVersion(short version) throws PstException {
@@ -43,16 +60,20 @@ public final class PstFile implements AutoCloseable {
         }
     }
 
+    /** The store's block obfuscation scheme ({@code bCryptMethod}, [MS-PST] §2.2.2.6). */
     public enum EncryptionType {
         NONE,
         COMPRESSIBLE,
         HIGH;
 
-        static EncryptionType fromType(byte type) {
+        static EncryptionType fromType(byte type) throws PstException {
             return switch (type) {
+                case 0x00 -> NONE;
                 case 0x01 -> COMPRESSIBLE;
                 case 0x02 -> HIGH;
-                default -> NONE;
+                // A value outside the spec means a corrupted header; decoding blocks with the
+                // wrong scheme would silently produce garbage, so fail at open instead.
+                default -> throw new PstException("Unrecognized encryption type: " + type);
             };
         }
     }
@@ -61,20 +82,40 @@ public final class PstFile implements AutoCloseable {
     private final Format format;
     private final EncryptionType encryptionType;
     private final NodeDatabase nodeDatabase;
-    private final long maxNodeSize;
     // The store-wide named-property map (NBT node 0x61) is expensive to parse and identical for every
-    // message, so build it lazily once per file rather than per appointment. A single conversion runs
-    // single-threaded on one background task, so plain lazy init is sufficient.
+    // message, so build it lazily once per file; the lock makes the lazy init safe across threads.
     private NameToIdMap nameToIdMap;
 
+    /**
+     * Opens the PST/OST file at the given path with the {@linkplain #DEFAULT_MAX_NODE_SIZE default}
+     * node-size cap.
+     *
+     * @throws PstException if the file is not a recognizable PST/OST store
+     * @throws IOException if the file cannot be read
+     */
     public PstFile(Path path) throws IOException, PstException {
-        this(path, 64L * 1024 * 1024);
+        this(path, DEFAULT_MAX_NODE_SIZE);
     }
 
+    /**
+     * Opens the PST/OST file at the given path.
+     *
+     * @param maxNodeSize cap, in bytes, on the expanded data of a single node (and therefore on a
+     *     single attachment payload, message body or decompressed block). Reads of nodes that expand
+     *     beyond the cap fail with a {@link PstException}; raise it to extract attachments larger
+     *     than the {@linkplain #DEFAULT_MAX_NODE_SIZE default}. Must be at least
+     *     {@link #MIN_MAX_NODE_SIZE}.
+     * @throws IllegalArgumentException if {@code maxNodeSize} is below {@link #MIN_MAX_NODE_SIZE}
+     * @throws PstException if the file is not a recognizable PST/OST store
+     * @throws IOException if the file cannot be read
+     */
     public PstFile(Path path, long maxNodeSize) throws IOException, PstException {
         Objects.requireNonNull(path, "path");
+        if (maxNodeSize < MIN_MAX_NODE_SIZE) {
+            throw new IllegalArgumentException(
+                    "maxNodeSize must be at least " + MIN_MAX_NODE_SIZE + " bytes, got " + maxNodeSize);
+        }
         this.channel = FileChannel.open(path, StandardOpenOption.READ);
-        this.maxNodeSize = maxNodeSize;
 
         try {
             var magicBuffer = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
@@ -102,15 +143,15 @@ public final class PstFile implements AutoCloseable {
                 readFully(channel, brefBuffer, 224);
                 long nbtOffset = brefBuffer.getLong(0);
                 long bbtOffset = brefBuffer.getLong(16);
-                this.nodeDatabase = new NodeDatabase(
-                        channel, this.format, this.encryptionType, bbtOffset, nbtOffset, this.maxNodeSize);
+                this.nodeDatabase =
+                        new NodeDatabase(channel, this.format, this.encryptionType, bbtOffset, nbtOffset, maxNodeSize);
             } else {
                 var brefBuffer = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
                 readFully(channel, brefBuffer, 188);
                 long nbtOffset = Integer.toUnsignedLong(brefBuffer.getInt(0));
                 long bbtOffset = Integer.toUnsignedLong(brefBuffer.getInt(8));
-                this.nodeDatabase = new NodeDatabase(
-                        channel, this.format, this.encryptionType, bbtOffset, nbtOffset, this.maxNodeSize);
+                this.nodeDatabase =
+                        new NodeDatabase(channel, this.format, this.encryptionType, bbtOffset, nbtOffset, maxNodeSize);
             }
         } catch (Exception failure) {
             this.channel.close();
@@ -123,7 +164,7 @@ public final class PstFile implements AutoCloseable {
     }
 
     /** The store-wide named-property map, parsed once and cached for the life of this file. */
-    NameToIdMap nameToIdMap() {
+    synchronized NameToIdMap nameToIdMap() {
         if (nameToIdMap == null) {
             nameToIdMap = new NameToIdMap(nodeDatabase);
         }
@@ -131,22 +172,25 @@ public final class PstFile implements AutoCloseable {
     }
 
     /**
-     * The node with the given node id, or {@code null} if the store has no such node (or failed to
-     * load its node database). Low-level access for callers that must resolve nodes the high-level
-     * {@link Folder}/{@link Message} API does not surface, such as the root folder node or
-     * orphan-recovery scans.
+     * The node with the given node id, or {@code null} if the store has no such node. Low-level
+     * access for callers that must resolve nodes the high-level {@link Folder}/{@link Message} API
+     * does not surface, such as the root folder node or orphan-recovery scans.
+     *
+     * @throws IOException if the node b-tree cannot be read or is malformed
      */
-    public NodeEntry getNode(int nodeId) {
-        return nodeDatabase == null ? null : nodeDatabase.getNode(nodeId);
+    public NodeEntry getNode(int nodeId) throws IOException {
+        return nodeDatabase.getNode(nodeId);
     }
 
     /**
-     * An unmodifiable view of every node in the store's node b-tree (NBT), keyed by node id; empty if
-     * the store failed to load its node database. Intended for full-store scans, e.g. recovering
-     * messages that no folder references.
+     * An unmodifiable snapshot of every node in the store's node b-tree (NBT), keyed by node id.
+     * Built by a full b-tree walk on first use and cached; intended for full-store scans, e.g.
+     * recovering messages that no folder references.
+     *
+     * @throws IOException if the node b-tree cannot be walked
      */
-    public Map<Integer, NodeEntry> allNodes() {
-        return nodeDatabase == null ? Map.of() : nodeDatabase.getAllNodes();
+    public Map<Integer, NodeEntry> allNodes() throws IOException {
+        return nodeDatabase.getAllNodes();
     }
 
     /**
@@ -156,7 +200,7 @@ public final class PstFile implements AutoCloseable {
      * @throws IOException if the underlying store cannot be read
      */
     public NodeEntry readSubnodeEntry(long subnodeBid, int targetNodeId) throws IOException {
-        return nodeDatabase == null ? null : nodeDatabase.readSubnodeEntry(subnodeBid, targetNodeId);
+        return nodeDatabase.readSubnodeEntry(subnodeBid, targetNodeId);
     }
 
     /**
@@ -167,10 +211,29 @@ public final class PstFile implements AutoCloseable {
         return nameToIdMap().getId(propertySetGuid, propertyId);
     }
 
+    /**
+     * Whether the store carries an Outlook password (PidTagPstPassword). The "password" is only a
+     * CRC kept in the message store object — the content is not encrypted with it — so this library
+     * reads protected stores normally; the flag is surfaced for callers that want to warn.
+     *
+     * @throws IOException if the message store object cannot be read
+     */
+    public boolean isPasswordProtected() throws IOException {
+        var storeNode = nodeDatabase.getNode(NID_MESSAGE_STORE);
+        if (storeNode == null) {
+            return false;
+        }
+        var propertyContext =
+                new PropertyContext(nodeDatabase.readNodeData(storeNode.dataBid()), nodeDatabase, storeNode);
+        return propertyContext.getProperty(MapiProperties.PR_PST_PASSWORD) instanceof Integer crc && crc != 0;
+    }
+
+    /** The store's wire format, derived from the header version. */
     public Format format() {
         return format;
     }
 
+    /** The store's block obfuscation scheme. */
     public EncryptionType encryptionType() {
         return encryptionType;
     }

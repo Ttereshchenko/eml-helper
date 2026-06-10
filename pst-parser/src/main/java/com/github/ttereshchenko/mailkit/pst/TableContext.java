@@ -1,43 +1,43 @@
 package com.github.ttereshchenko.mailkit.pst;
 
-// TODO: re-visit log
-// import com.intellij.openapi.diagnostic.Logger;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Parses Table Context (TC) structures stored within a Node's data block.
+ * Parses Table Context (TC) structures stored within a Node's data block ([MS-PST] §2.3.4).
  * A TC provides rows of properties (columns), used for Folder Hierarchy and Message tables.
  */
 class TableContext {
 
-    // TODO: re-visit log
-    // private static final Logger LOG = Logger.getInstance(TableContext.class);
+    private static final System.Logger LOG = System.getLogger(TableContext.class.getName());
+
+    private static final int MAX_BTH_LEVELS = 8;
 
     private final HeapOnNode heap;
     private final List<ColumnDescriptor> columns = new ArrayList<>();
     private final List<Map<Integer, Object>> rows = new ArrayList<>();
-    private int tciBm;
-    private int tci1b;
+    private int rowWidth;
+    private int existenceBitmapOffset;
     private int hnidRows;
     private int hidRowIndex;
     private final NodeDatabase nodeDatabase;
     private final NodeEntry node;
     private final Charset charset;
 
-    public TableContext(byte[] nodeData, NodeDatabase nodeDatabase, NodeEntry node) {
+    TableContext(byte[] nodeData, NodeDatabase nodeDatabase, NodeEntry node) throws PstException {
         this(nodeData, nodeDatabase, node, null);
     }
 
-    public TableContext(byte[] nodeData, NodeDatabase nodeDatabase, NodeEntry node, Charset charset) {
+    TableContext(byte[] nodeData, NodeDatabase nodeDatabase, NodeEntry node, Charset charset) throws PstException {
         this.nodeDatabase = nodeDatabase;
         this.node = node;
         this.charset = charset;
@@ -54,210 +54,239 @@ class TableContext {
 
     private void parseTcInfo() {
         byte[] tcInfo = heap.getItem(heap.userRootHid());
-        if (tcInfo.length < 4) return;
-
-        var buf = ByteBuffer.wrap(tcInfo).order(ByteOrder.LITTLE_ENDIAN);
-        int bType = Byte.toUnsignedInt(buf.get());
-        if (bType != 0x7C) return; // Must be TC
-
-        int cCols = Byte.toUnsignedInt(buf.get());
-
-        // The fixed TCINFO header is 22 bytes, followed by a cCols-long TCOLDESC array of 8 bytes each
-        // ([MS-PST] §2.3.4.1). A truncated buffer would throw IndexOutOfBounds on the reads below.
-        if (tcInfo.length < 22 + cCols * 8) {
+        if (tcInfo.length < 4) {
             return;
         }
 
-        int rgib2 = Short.toUnsignedInt(buf.getShort(6)); // Offset to CEB
-        int rgib3 = Short.toUnsignedInt(buf.getShort(8)); // Total row size
-        this.hnidRows = buf.getInt(14); // hnidRows
+        var buffer = ByteBuffer.wrap(tcInfo).order(ByteOrder.LITTLE_ENDIAN);
+        int headerType = Byte.toUnsignedInt(buffer.get());
+        if (headerType != 0x7C) { // Must be TC
+            return;
+        }
 
-        this.tci1b = rgib2;
-        this.tciBm = rgib3;
-        this.hidRowIndex = buf.getInt(10);
+        int columnCount = Byte.toUnsignedInt(buffer.get());
 
-        buf.position(22); // TCOLDESC array starts at 22
-        for (int i = 0; i < cCols; i++) {
-            int valType = Short.toUnsignedInt(buf.getShort());
-            int tagId = Short.toUnsignedInt(buf.getShort());
-            int offset = Short.toUnsignedInt(buf.getShort());
-            int size = Byte.toUnsignedInt(buf.get());
-            int iBit = Byte.toUnsignedInt(buf.get());
+        // The fixed TCINFO header is 22 bytes, followed by a cCols-long TCOLDESC array of 8 bytes each
+        // ([MS-PST] §2.3.4.1). A truncated buffer would throw IndexOutOfBounds on the reads below.
+        if (tcInfo.length < 22 + columnCount * 8) {
+            return;
+        }
 
-            int propertyTag = (tagId << 16) | valType;
-            columns.add(new ColumnDescriptor(propertyTag, valType, offset, size, iBit));
+        this.existenceBitmapOffset = Short.toUnsignedInt(buffer.getShort(6)); // rgib[TCI_1b]: offset to CEB
+        this.rowWidth = Short.toUnsignedInt(buffer.getShort(8)); // rgib[TCI_bm]: total row size
+        this.hidRowIndex = buffer.getInt(10);
+        this.hnidRows = buffer.getInt(14);
+
+        buffer.position(22); // TCOLDESC array starts at 22
+        for (int i = 0; i < columnCount; i++) {
+            int valueType = Short.toUnsignedInt(buffer.getShort());
+            int tagId = Short.toUnsignedInt(buffer.getShort());
+            int offset = Short.toUnsignedInt(buffer.getShort());
+            int size = Byte.toUnsignedInt(buffer.get());
+            int existenceBit = Byte.toUnsignedInt(buffer.get());
+
+            int propertyTag = (tagId << 16) | valueType;
+            columns.add(new ColumnDescriptor(propertyTag, valueType, offset, size, existenceBit));
         }
     }
 
-    private void parseRows() {
-        if (columns.isEmpty()) return;
+    private void parseRows() throws PstException {
+        if (columns.isEmpty() || rowWidth <= 0) {
+            return;
+        }
 
-        if (hidRowIndex == 0) return;
+        if (hidRowIndex == 0) {
+            return;
+        }
         byte[] bthHeader = heap.getItem(hidRowIndex);
-        if (bthHeader.length < 8) return;
-
-        var buf = ByteBuffer.wrap(bthHeader).order(ByteOrder.LITTLE_ENDIAN);
-        int bType = Byte.toUnsignedInt(buf.get(0));
-        if (bType != 0xB5) return;
-
-        int cbKey = Byte.toUnsignedInt(buf.get(1));
-        int cbEnt = Byte.toUnsignedInt(buf.get(2));
-        int bIdxLevels = Byte.toUnsignedInt(buf.get(3));
-        int hidRoot = buf.getInt(4);
-
-        parseBTreeNode(hidRoot, cbKey, cbEnt, bIdxLevels);
-    }
-
-    private void parseBTreeNode(int hidRoot, int cbKey, int cbEnt, int level) {
-        parseBTreeNode(hidRoot, cbKey, cbEnt, level, new java.util.HashSet<>());
-    }
-
-    private void parseBTreeNode(int hidRoot, int cbKey, int cbEnt, int level, java.util.Set<Integer> visited) {
-        if (!visited.add(hidRoot)) {
-            throw new IllegalArgumentException("Cyclic B-Tree reference: " + hidRoot);
+        if (bthHeader.length < 8) {
+            return;
         }
-        if (level > 8) {
-            throw new IllegalArgumentException("BTH recursion limit exceeded");
+
+        var buffer = ByteBuffer.wrap(bthHeader).order(ByteOrder.LITTLE_ENDIAN);
+        int headerType = Byte.toUnsignedInt(buffer.get(0));
+        if (headerType != 0xB5) {
+            return;
+        }
+
+        int keySize = Byte.toUnsignedInt(buffer.get(1));
+        int entrySize = Byte.toUnsignedInt(buffer.get(2));
+        int indexLevels = Byte.toUnsignedInt(buffer.get(3));
+        int hidRoot = buffer.getInt(4);
+
+        parseBTreeNode(hidRoot, keySize, entrySize, indexLevels, new HashSet<>());
+    }
+
+    private void parseBTreeNode(int hidRoot, int keySize, int entrySize, int level, Set<Integer> visited)
+            throws PstException {
+        if (!visited.add(hidRoot)) {
+            throw new PstException("Cyclic B-Tree-on-Heap reference: " + hidRoot);
+        }
+        if (level > MAX_BTH_LEVELS) {
+            throw new PstException("BTH recursion limit exceeded");
         }
         if (level == 0) {
-            parseLeafNode(hidRoot, cbKey, cbEnt);
+            parseLeafNode(hidRoot, keySize, entrySize);
             return;
         }
 
         byte[] branchData = heap.getItem(hidRoot);
-        var buf = ByteBuffer.wrap(branchData).order(ByteOrder.LITTLE_ENDIAN);
-        int entrySize = cbKey + 4;
-        int numEntries = branchData.length / entrySize;
+        var buffer = ByteBuffer.wrap(branchData).order(ByteOrder.LITTLE_ENDIAN);
+        int branchEntrySize = keySize + 4;
+        int entryCount = branchData.length / branchEntrySize;
 
-        for (int i = 0; i < numEntries; i++) {
-            buf.position(i * entrySize + cbKey);
-            int childHid = buf.getInt();
-            parseBTreeNode(childHid, cbKey, cbEnt, level - 1, visited);
+        for (int i = 0; i < entryCount; i++) {
+            buffer.position(i * branchEntrySize + keySize);
+            int childHid = buffer.getInt();
+            parseBTreeNode(childHid, keySize, entrySize, level - 1, visited);
         }
     }
 
-    private void parseLeafNode(int hidRoot, int cbKey, int cbEnt) {
+    private void parseLeafNode(int hidRoot, int keySize, int entrySize) {
         byte[] leafData = heap.getItem(hidRoot);
         if (leafData.length == 0) {
             return;
         }
         // cbKey/cbEnt come from the (untrusted) BTH header; a zero sum would divide-by-zero here.
-        if (cbKey + cbEnt == 0) {
+        if (keySize + entrySize == 0) {
             return;
         }
-        var buf = ByteBuffer.wrap(leafData).order(ByteOrder.LITTLE_ENDIAN);
+        var buffer = ByteBuffer.wrap(leafData).order(ByteOrder.LITTLE_ENDIAN);
 
-        int numEntries = leafData.length / (cbKey + cbEnt);
+        int entryCount = leafData.length / (keySize + entrySize);
 
         byte[] rowMatrix = null;
-        if ((hnidRows & 0x1F) != 0) {
-            if (nodeDatabase != null && node != null && node.subBid() != 0) {
-                try {
-                    rowMatrix = nodeDatabase.readSubnodeData(node.subBid(), hnidRows);
-                } catch (IOException exception) {
-                    // TODO: re-visit log
-                    // LOG.warn("Failed to read table row-matrix subnode", exception);
-                }
+        if ((hnidRows & 0x1F) != 0 && nodeDatabase != null && node != null && node.subBid() != 0) {
+            try {
+                rowMatrix = nodeDatabase.readSubnodeData(node.subBid(), hnidRows);
+            } catch (IOException exception) {
+                LOG.log(System.Logger.Level.WARNING, "Failed to read table row-matrix subnode", exception);
             }
         }
         if (rowMatrix == null) {
             rowMatrix = heap.getItem(hnidRows);
         }
 
-        for (int i = 0; i < numEntries; i++) {
+        // Rows are not permitted to span blocks ([MS-PST] §2.3.4.4): a multi-block row matrix packs
+        // floor(blockPayload / rowWidth) rows per block payload with dead bytes at each payload tail,
+        // so row i lives in payload i / rowsPerBlock — not at the contiguous offset i * rowWidth.
+        // (For an in-heap or single-block matrix the two addressing schemes coincide, because such a
+        // matrix is always smaller than one payload.)
+        int blockPayload = nodeDatabase != null ? nodeDatabase.heapBlockSize() : HeapOnNode.DEFAULT_BLOCK_PAYLOAD_SIZE;
+        int rowsPerBlock = blockPayload / rowWidth;
+        if (rowsPerBlock == 0) {
+            return; // a row wider than a block payload violates the spec
+        }
+
+        for (int i = 0; i < entryCount; i++) {
             // TCROWID = dwRowID (cbKey bytes) + dwRowIndex (cbEnt bytes; 4 for Unicode, 2 for ANSI).
-            buf.position(i * (cbKey + cbEnt));
-            int rowId = readUnsigned(buf, cbKey);
-            int rowIndex = readUnsigned(buf, cbEnt);
+            buffer.position(i * (keySize + entrySize));
+            int rowId = readUnsigned(buffer, keySize);
+            int rowIndex = readUnsigned(buffer, entrySize);
 
-            byte[] rowData = new byte[tciBm];
-            boolean rowLoaded = false;
-
-            long startOffset = (long) rowIndex * tciBm;
-            if (startOffset >= 0 && startOffset + tciBm <= rowMatrix.length) {
-                System.arraycopy(rowMatrix, (int) startOffset, rowData, 0, tciBm);
-                rowLoaded = true;
-            }
-
-            if (rowLoaded) {
-                Map<Integer, Object> rowProps = parseRowData(rowId, rowData);
-                rows.add(rowProps);
+            long startOffset =
+                    (long) (rowIndex / rowsPerBlock) * blockPayload + (long) (rowIndex % rowsPerBlock) * rowWidth;
+            if (startOffset >= 0 && startOffset + rowWidth <= rowMatrix.length) {
+                var rowData = new byte[rowWidth];
+                System.arraycopy(rowMatrix, (int) startOffset, rowData, 0, rowWidth);
+                rows.add(parseRowData(rowId, rowData));
             }
         }
     }
 
     private Map<Integer, Object> parseRowData(int rowId, byte[] rowData) {
-        Map<Integer, Object> props = new HashMap<>();
-        var buf = ByteBuffer.wrap(rowData).order(ByteOrder.LITTLE_ENDIAN);
+        Map<Integer, Object> rowProperties = new HashMap<>();
+        var buffer = ByteBuffer.wrap(rowData).order(ByteOrder.LITTLE_ENDIAN);
 
-        // CEB (Cell Existence Bitmap) is at tci_1b
-        int cebLength = (int) Math.ceil(columns.size() / 8.0);
-        byte[] ceb = new byte[cebLength];
-        if (tci1b + cebLength <= rowData.length) {
-            System.arraycopy(rowData, tci1b, ceb, 0, cebLength);
+        // CEB (Cell Existence Bitmap) is at rgib[TCI_1b]
+        int bitmapLength = (int) Math.ceil(columns.size() / 8.0);
+        var existenceBitmap = new byte[bitmapLength];
+        if (existenceBitmapOffset + bitmapLength <= rowData.length) {
+            System.arraycopy(rowData, existenceBitmapOffset, existenceBitmap, 0, bitmapLength);
         }
 
-        for (var col : columns) {
-            int byteIndex = col.iBit() / 8;
-            int bitIndex = col.iBit() % 8;
-            if (byteIndex < ceb.length && (ceb[byteIndex] & (1 << (7 - bitIndex))) == 0) {
+        for (var column : columns) {
+            int byteIndex = column.existenceBit() / 8;
+            int bitIndex = column.existenceBit() % 8;
+            if (byteIndex < existenceBitmap.length && (existenceBitmap[byteIndex] & (1 << (7 - bitIndex))) == 0) {
                 continue; // CEB bit is 0, column does not exist for this row
             }
 
-            if (col.offset() + col.size() <= rowData.length) {
-                buf.position(col.offset());
+            if (column.offset() + column.size() > rowData.length) {
+                continue;
+            }
+            buffer.position(column.offset());
 
-                if (col.size() == 4) {
-                    int val = buf.getInt();
-                    if (col.valType() == 0x001F) { // String
-                        if (val != 0) {
-                            byte[] strData = resolveData(val);
-                            if (strData.length > 0) {
-                                props.put(col.tagId(), new String(strData, StandardCharsets.UTF_16LE).trim());
-                            }
-                        }
-                    } else if (col.valType() == 0x001E) { // String8 (ANSI)
-                        if (val != 0) {
-                            byte[] strData = resolveData(val);
-                            if (strData.length > 0) {
-                                Charset charsetToUse =
-                                        this.charset != null ? this.charset : StandardCharsets.ISO_8859_1;
-                                props.put(col.tagId(), new String(strData, charsetToUse).trim());
-                            }
-                        }
-                    } else if (col.valType() == 0x0102) { // Binary
-                        if (val != 0) {
-                            byte[] binData = resolveData(val);
-                            if (binData.length > 0) {
-                                props.put(col.tagId(), binData);
-                            }
-                        }
-                    } else if (col.valType() == 0x0003) { // Int32
-                        props.put(col.tagId(), val);
+            switch (column.size()) {
+                case 4 -> parseFourByteColumn(column, buffer.getInt(), rowProperties);
+                case 8 -> {
+                    long value = buffer.getLong();
+                    switch (column.valueType()) {
+                        case 0x0040 -> rowProperties.put(column.tagId(), PropertyContext.fileTimeToInstant(value));
+                        case 0x0005 -> rowProperties.put(column.tagId(), Double.longBitsToDouble(value));
+                        default -> rowProperties.put(column.tagId(), value);
                     }
-                } else if (col.size() == 8) {
-                    long val = buf.getLong();
-                    if (col.valType() == 0x0040) { // PT_SYSTIME
-                        long epochDiff = 11644473600000L;
-                        props.put(col.tagId(), new Date(val / 10000 - epochDiff));
-                    } else {
-                        props.put(col.tagId(), val);
-                    }
-                } else if (col.size() == 2) {
-                    props.put(col.tagId(), Short.toUnsignedInt(buf.getShort()));
-                } else if (col.size() == 1) {
-                    props.put(col.tagId(), Byte.toUnsignedInt(buf.get()));
                 }
+                case 2 -> rowProperties.put(column.tagId(), Short.toUnsignedInt(buffer.getShort()));
+                case 1 -> {
+                    int value = Byte.toUnsignedInt(buffer.get());
+                    rowProperties.put(column.tagId(), column.valueType() == 0x000B ? (Object) (value != 0) : value);
+                }
+                default ->
+                    LOG.log(
+                            System.Logger.Level.DEBUG,
+                            () -> "Unhandled column width " + column.size() + " for tag 0x"
+                                    + Integer.toHexString(column.tagId()));
             }
         }
-        return props;
+        return rowProperties;
     }
 
-    private static int readUnsigned(ByteBuffer buf, int size) {
+    private void parseFourByteColumn(ColumnDescriptor column, int value, Map<Integer, Object> rowProperties) {
+        switch (column.valueType()) {
+            case 0x001F -> { // PT_UNICODE
+                byte[] data = value != 0 ? resolveData(value) : null;
+                if (data != null && data.length > 0) {
+                    rowProperties.put(column.tagId(), new String(data, StandardCharsets.UTF_16LE).trim());
+                }
+            }
+            case 0x001E -> { // PT_STRING8
+                byte[] data = value != 0 ? resolveData(value) : null;
+                if (data != null && data.length > 0) {
+                    var effectiveCharset = charset != null ? charset : StandardCharsets.ISO_8859_1;
+                    rowProperties.put(column.tagId(), new String(data, effectiveCharset).trim());
+                }
+            }
+            case 0x0102 -> { // PT_BINARY
+                byte[] data = value != 0 ? resolveData(value) : null;
+                if (data != null && data.length > 0) {
+                    rowProperties.put(column.tagId(), data);
+                }
+            }
+            case 0x0003 -> rowProperties.put(column.tagId(), value); // PT_LONG
+            case 0x0004 -> rowProperties.put(column.tagId(), Float.intBitsToFloat(value)); // PT_FLOAT
+            case 0x1003, 0x1014, 0x1040, 0x101E, 0x101F, 0x1102 -> { // multi-valued
+                byte[] data = value != 0 ? resolveData(value) : null;
+                if (data != null && data.length > 0) {
+                    var effectiveCharset = charset != null ? charset : StandardCharsets.ISO_8859_1;
+                    rowProperties.put(
+                            column.tagId(),
+                            PropertyContext.parseMultiValue(column.valueType(), data, effectiveCharset));
+                }
+            }
+            default ->
+                LOG.log(
+                        System.Logger.Level.DEBUG,
+                        () -> "Unhandled 4-byte column type 0x" + Integer.toHexString(column.valueType())
+                                + " for tag 0x" + Integer.toHexString(column.tagId()));
+        }
+    }
+
+    private static int readUnsigned(ByteBuffer buffer, int size) {
         return switch (size) {
-            case 1 -> Byte.toUnsignedInt(buf.get());
-            case 2 -> Short.toUnsignedInt(buf.getShort());
-            default -> buf.getInt();
+            case 1 -> Byte.toUnsignedInt(buffer.get());
+            case 2 -> Short.toUnsignedInt(buffer.getShort());
+            default -> buffer.getInt();
         };
     }
 
@@ -266,20 +295,20 @@ class TableContext {
     }
 
     private byte[] resolveData(int hnid) {
-        if ((hnid & 0x1F) != 0) {
-            if (nodeDatabase != null && node != null && node.subBid() != 0) {
-                try {
-                    byte[] data = nodeDatabase.readSubnodeData(node.subBid(), hnid);
-                    if (data != null) return data;
-                } catch (IOException ignored) {
-                    // fall through to the in-heap item
+        if ((hnid & 0x1F) != 0 && nodeDatabase != null && node != null && node.subBid() != 0) {
+            try {
+                byte[] data = nodeDatabase.readSubnodeData(node.subBid(), hnid);
+                if (data != null) {
+                    return data;
                 }
+            } catch (IOException ignored) {
+                // fall through to the in-heap item
             }
         }
         return heap.getItem(hnid);
     }
 
-    private record ColumnDescriptor(int propertyTag, int valType, int offset, int size, int iBit) {
+    private record ColumnDescriptor(int propertyTag, int valueType, int offset, int size, int existenceBit) {
         public int tagId() {
             return propertyTag >> 16;
         }

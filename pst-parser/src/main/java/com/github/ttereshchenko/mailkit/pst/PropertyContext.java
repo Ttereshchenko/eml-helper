@@ -1,34 +1,47 @@
 package com.github.ttereshchenko.mailkit.pst;
 
-// TODO: re-visit log
-// import com.intellij.openapi.diagnostic.Logger;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Parses Property Context (PC) structures stored within a Node's data block.
- * A PC is essentially a BTree-on-Heap (BTH) that maps 16-bit property IDs (tags) to property values.
+ * Parses Property Context (PC) structures stored within a Node's data block ([MS-PST] §2.3.3).
+ * A PC is a BTree-on-Heap (BTH) that maps 16-bit property IDs to property values.
+ *
+ * <p>Binary properties whose data lives in a subnode are <em>not</em> materialized during parsing;
+ * they are resolved on first access ({@link #getProperty}) or streamed without materialization via
+ * {@link #openBinaryStream}, so walking a store does not pull every attachment payload into memory.
  */
 class PropertyContext {
 
-    // TODO: re-visit log
-    // private static final Logger LOG = Logger.getInstance(PropertyContext.class);
+    private static final System.Logger LOG = System.getLogger(PropertyContext.class.getName());
+
+    /** 100-nanosecond intervals between 1601-01-01 (FILETIME epoch) and 1970-01-01 (Unix epoch). */
+    private static final long FILETIME_EPOCH_DIFF = 116_444_736_000_000_000L;
+
+    private static final int MAX_BTH_LEVELS = 8;
 
     private final Map<Integer, Object> properties = new HashMap<>();
     private final Set<Integer> string8Tags = new HashSet<>();
+    /** Subnode-resident binary properties deferred until first access: tag → subnode NID. */
+    private final Map<Integer, Integer> pendingSubnodeBinaries = new HashMap<>();
+
     private final NodeDatabase nodeDatabase;
     private final NodeEntry node;
 
-    public PropertyContext(byte[] nodeData, NodeDatabase nodeDatabase, NodeEntry node) {
+    PropertyContext(byte[] nodeData, NodeDatabase nodeDatabase, NodeEntry node) throws PstException {
         this.nodeDatabase = nodeDatabase;
         this.node = node;
         if (nodeData == null || nodeData.length < 16) {
@@ -40,133 +53,221 @@ class PropertyContext {
         parseBTreeOnHeap(heap);
     }
 
-    private void parseBTreeOnHeap(HeapOnNode heap) {
+    private void parseBTreeOnHeap(HeapOnNode heap) throws PstException {
         byte[] bthHeader = heap.getItem(heap.userRootHid());
-        if (bthHeader.length < 8) return;
+        if (bthHeader.length < 8) {
+            return;
+        }
 
-        var buf = ByteBuffer.wrap(bthHeader).order(ByteOrder.LITTLE_ENDIAN);
-        int bType = Byte.toUnsignedInt(buf.get(0));
-        if (bType != 0xB5) return; // Must be BTH
+        var buffer = ByteBuffer.wrap(bthHeader).order(ByteOrder.LITTLE_ENDIAN);
+        int headerType = Byte.toUnsignedInt(buffer.get(0));
+        if (headerType != 0xB5) { // Must be BTH
+            return;
+        }
 
-        int cbKey = Byte.toUnsignedInt(buf.get(1));
-        int cbEnt = Byte.toUnsignedInt(buf.get(2));
-        int bIdxLevels = Byte.toUnsignedInt(buf.get(3));
-        int hidRoot = buf.getInt(4);
+        int keySize = Byte.toUnsignedInt(buffer.get(1));
+        int entrySize = Byte.toUnsignedInt(buffer.get(2));
+        int indexLevels = Byte.toUnsignedInt(buffer.get(3));
+        int hidRoot = buffer.getInt(4);
 
-        parseBTreeNode(heap, hidRoot, cbKey, cbEnt, bIdxLevels);
-    }
-
-    private void parseBTreeNode(HeapOnNode heap, int hidRoot, int cbKey, int cbEnt, int level) {
-        parseBTreeNode(heap, hidRoot, cbKey, cbEnt, level, new java.util.HashSet<>());
+        parseBTreeNode(heap, hidRoot, keySize, entrySize, indexLevels, new HashSet<>());
     }
 
     private void parseBTreeNode(
-            HeapOnNode heap, int hidRoot, int cbKey, int cbEnt, int level, java.util.Set<Integer> visited) {
+            HeapOnNode heap, int hidRoot, int keySize, int entrySize, int level, Set<Integer> visited)
+            throws PstException {
         if (!visited.add(hidRoot)) {
-            throw new IllegalArgumentException("Cyclic B-Tree reference: " + hidRoot);
+            throw new PstException("Cyclic B-Tree-on-Heap reference: " + hidRoot);
         }
-        if (level > 8) {
-            throw new IllegalArgumentException("BTH recursion limit exceeded");
+        if (level > MAX_BTH_LEVELS) {
+            throw new PstException("BTH recursion limit exceeded");
         }
         if (level == 0) {
-            parseLeafNode(heap, hidRoot, cbKey, cbEnt);
+            parseLeafNode(heap, hidRoot, keySize, entrySize);
             return;
         }
 
         byte[] branchData = heap.getItem(hidRoot);
-        var buf = ByteBuffer.wrap(branchData).order(ByteOrder.LITTLE_ENDIAN);
+        var buffer = ByteBuffer.wrap(branchData).order(ByteOrder.LITTLE_ENDIAN);
 
-        int entrySize = cbKey + 4;
-        int numEntries = branchData.length / entrySize;
+        int branchEntrySize = keySize + 4;
+        int entryCount = branchData.length / branchEntrySize;
 
-        for (int i = 0; i < numEntries; i++) {
-            buf.position(i * entrySize + cbKey);
-            int childHid = buf.getInt();
-            parseBTreeNode(heap, childHid, cbKey, cbEnt, level - 1, visited);
+        for (int i = 0; i < entryCount; i++) {
+            buffer.position(i * branchEntrySize + keySize);
+            int childHid = buffer.getInt();
+            parseBTreeNode(heap, childHid, keySize, entrySize, level - 1, visited);
         }
     }
 
-    private void parseLeafNode(HeapOnNode heap, int hidRoot, int cbKey, int cbEnt) {
+    private void parseLeafNode(HeapOnNode heap, int hidRoot, int keySize, int entrySize) {
         byte[] leafData = heap.getItem(hidRoot);
         // A PC's BTH key is always 2 bytes and each record is 4 or 6 ([MS-PST] §2.3.3.3 / §2.3.4.3);
         // reject any other shape — including the cbKey+cbEnt==0 divide-by-zero — instead of letting the
         // fixed-width reads below drift past the buffer into a BufferUnderflowException.
-        if (cbKey != 2 || (cbEnt != 4 && cbEnt != 6)) {
+        if (keySize != 2 || (entrySize != 4 && entrySize != 6)) {
             return;
         }
-        var buf = ByteBuffer.wrap(leafData).order(ByteOrder.LITTLE_ENDIAN);
+        var buffer = ByteBuffer.wrap(leafData).order(ByteOrder.LITTLE_ENDIAN);
 
-        int stride = cbKey + cbEnt;
-        int numEntries = leafData.length / stride;
-        for (int i = 0; i < numEntries; i++) {
+        int stride = keySize + entrySize;
+        int entryCount = leafData.length / stride;
+        for (int i = 0; i < entryCount; i++) {
             // Seek to each record by its stride so a malformed entry cannot shift every later read.
-            buf.position(i * stride);
-            int tag = Short.toUnsignedInt(buf.getShort()); // cbKey is 2
+            buffer.position(i * stride);
+            int tag = Short.toUnsignedInt(buffer.getShort()); // cbKey is 2
 
-            if (cbEnt == 6) {
-                int valType = Short.toUnsignedInt(buf.getShort());
-                int val = buf.getInt();
-
-                if (valType == 0x001F || valType == 0x001E || valType == 0x0102) { // String or Binary
-                    byte[] data = null;
-                    if ((val & 0x1F) != 0) { // Subnode NID
-                        if (nodeDatabase != null && node != null && node.subBid() != 0) {
-                            try {
-                                data = nodeDatabase.readSubnodeData(node.subBid(), val);
-                            } catch (IOException exception) {
-                                // TODO: re-visit log
-                                // LOG.warn("Failed to read external property data for tag 0x" +
-                                // Integer.toHexString(tag), exception);
-                            }
-                        }
-                    }
-                    if (data == null) {
-                        data = heap.getItem(val);
-                    }
-
-                    if (data != null) {
-                        if (data.length == 0) {
-                            if (valType == 0x001F || valType == 0x001E) {
-                                properties.put(tag, "");
-                                if (valType == 0x001E) {
-                                    string8Tags.add(tag);
-                                }
-                            } else {
-                                properties.put(tag, data);
-                            }
-                        } else if (valType == 0x001F) {
-                            properties.put(tag, new String(data, StandardCharsets.UTF_16LE).trim());
-                        } else if (valType == 0x001E) {
-                            properties.put(tag, new String(data, StandardCharsets.ISO_8859_1).trim());
-                            string8Tags.add(tag);
-                        } else {
-                            properties.put(tag, data);
-                        }
-                    }
-                } else if (valType == 0x0003) { // Integer 32
-                    properties.put(tag, val);
-                } else if (valType == 0x000D) { // PT_OBJECT
-                    properties.put(tag, val);
-                } else if (valType == 0x000B) { // Boolean
-                    properties.put(tag, val != 0);
-                } else if (valType == 0x0040) { // PT_SYSTIME
-                    byte[] data = heap.getItem(val);
-                    if (data != null && data.length >= 8) {
-                        long fileTime = ByteBuffer.wrap(data)
-                                .order(ByteOrder.LITTLE_ENDIAN)
-                                .getLong();
-                        long epochDiff = 11644473600000L;
-                        properties.put(tag, new Date(fileTime / 10000 - epochDiff));
-                    }
-                }
-            } else if (cbEnt == 4) {
-                properties.put(tag, buf.getInt());
+            if (entrySize == 6) {
+                int valueType = Short.toUnsignedInt(buffer.getShort());
+                int value = buffer.getInt();
+                parseRecord(heap, tag, valueType, value);
+            } else {
+                properties.put(tag, buffer.getInt());
             }
         }
     }
 
+    private void parseRecord(HeapOnNode heap, int tag, int valueType, int value) {
+        switch (valueType) {
+            case 0x001F, 0x001E -> { // PT_UNICODE / PT_STRING8
+                byte[] data = resolveVariableData(heap, value);
+                if (data == null) {
+                    return;
+                }
+                if (valueType == 0x001F) {
+                    properties.put(tag, new String(data, StandardCharsets.UTF_16LE).trim());
+                } else {
+                    properties.put(tag, new String(data, StandardCharsets.ISO_8859_1).trim());
+                    string8Tags.add(tag);
+                }
+            }
+            case 0x0102 -> { // PT_BINARY
+                if ((value & 0x1F) != 0 && nodeDatabase != null && node != null && node.subBid() != 0) {
+                    // Subnode-resident binary (attachment payloads live here); defer until accessed.
+                    pendingSubnodeBinaries.put(tag, value);
+                    return;
+                }
+                byte[] data = heap.getItem(value);
+                if (data != null) {
+                    properties.put(tag, data);
+                }
+            }
+            case 0x0003 -> properties.put(tag, value); // PT_LONG
+            case 0x0002 -> properties.put(tag, (int) (short) value); // PT_SHORT
+            case 0x0004 -> properties.put(tag, Float.intBitsToFloat(value)); // PT_FLOAT
+            case 0x000B -> properties.put(tag, value != 0); // PT_BOOLEAN
+            case 0x000D -> { // PT_OBJECT — the HNID points to a {Nid, ulSize} heap struct ([MS-PST] §2.3.3.5)
+                byte[] data = heap.getItem(value);
+                if (data.length >= 4) {
+                    // Surface the subnode NID (e.g. of an embedded message), not the raw HNID.
+                    properties.put(
+                            tag,
+                            ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getInt());
+                } else {
+                    properties.put(tag, value);
+                }
+            }
+            case 0x0014, 0x0005 -> { // PT_LONGLONG / PT_DOUBLE — 8-byte heap item
+                byte[] data = heap.getItem(value);
+                if (data != null && data.length >= 8) {
+                    long bits =
+                            ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getLong();
+                    properties.put(tag, valueType == 0x0014 ? bits : Double.longBitsToDouble(bits));
+                }
+            }
+            case 0x0040 -> { // PT_SYSTIME
+                byte[] data = heap.getItem(value);
+                if (data != null && data.length >= 8) {
+                    long fileTime =
+                            ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getLong();
+                    properties.put(tag, fileTimeToInstant(fileTime));
+                }
+            }
+            case 0x0048 -> { // PT_CLSID — 16-byte heap item, surfaced raw
+                byte[] data = heap.getItem(value);
+                if (data != null && data.length >= 16) {
+                    properties.put(tag, data);
+                }
+            }
+            case 0x1003, 0x1014, 0x1040, 0x101E, 0x101F, 0x1102 -> { // multi-valued
+                byte[] data = resolveVariableData(heap, value);
+                if (data != null) {
+                    properties.put(tag, parseMultiValue(valueType, data, StandardCharsets.ISO_8859_1));
+                    if (valueType == 0x101E) {
+                        string8Tags.add(tag);
+                    }
+                }
+            }
+            default ->
+                LOG.log(
+                        System.Logger.Level.DEBUG,
+                        () -> "Unhandled property type 0x" + Integer.toHexString(valueType) + " for tag 0x"
+                                + Integer.toHexString(tag));
+        }
+    }
+
+    /** Variable-length data addressed by an HNID: a subnode NID (low 5 bits set) or an in-heap HID. */
+    private byte[] resolveVariableData(HeapOnNode heap, int hnid) {
+        if ((hnid & 0x1F) != 0 && nodeDatabase != null && node != null && node.subBid() != 0) {
+            try {
+                byte[] data = nodeDatabase.readSubnodeData(node.subBid(), hnid);
+                if (data != null) {
+                    return data;
+                }
+            } catch (IOException exception) {
+                LOG.log(
+                        System.Logger.Level.WARNING,
+                        () -> "Failed to read subnode property data for HNID 0x" + Integer.toHexString(hnid),
+                        exception);
+            }
+        }
+        return heap.getItem(hnid);
+    }
+
+    /**
+     * The parsed value for the property id, or {@code null} if absent. Subnode-resident binary
+     * properties are materialized (and cached) on first access.
+     */
     public Object getProperty(int propertyId) {
-        return properties.get(propertyId);
+        var value = properties.get(propertyId);
+        if (value != null) {
+            return value;
+        }
+        var subnodeNid = pendingSubnodeBinaries.get(propertyId);
+        if (subnodeNid == null) {
+            return null;
+        }
+        try {
+            byte[] data = nodeDatabase.readSubnodeData(node.subBid(), subnodeNid);
+            if (data != null) {
+                properties.put(propertyId, data);
+                pendingSubnodeBinaries.remove(propertyId);
+                return data;
+            }
+        } catch (IOException exception) {
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    () -> "Failed to read subnode binary property 0x" + Integer.toHexString(propertyId),
+                    exception);
+        }
+        return null;
+    }
+
+    /**
+     * Opens a stream over a binary property's content. Subnode-resident data is streamed block by
+     * block without being materialized; heap-resident data is wrapped as-is. Returns {@code null}
+     * if the property is absent or not binary.
+     */
+    InputStream openBinaryStream(int propertyId) throws IOException {
+        var subnodeNid = pendingSubnodeBinaries.get(propertyId);
+        if (subnodeNid != null && nodeDatabase != null && node != null && node.subBid() != 0) {
+            var entry = nodeDatabase.readSubnodeEntry(node.subBid(), subnodeNid);
+            if (entry == null) {
+                return null;
+            }
+            return nodeDatabase.openNodeDataStream(entry.dataBid());
+        }
+        return getProperty(propertyId) instanceof byte[] bytes ? new ByteArrayInputStream(bytes) : null;
     }
 
     public void decodeString8(Charset charset) {
@@ -174,24 +275,115 @@ class PropertyContext {
             return;
         }
         for (Integer tag : string8Tags) {
-            Object obj = properties.get(tag);
-            if (obj instanceof String) {
-                byte[] raw = ((String) obj).getBytes(StandardCharsets.ISO_8859_1);
-                properties.put(tag, new String(raw, charset).trim());
+            Object value = properties.get(tag);
+            if (value instanceof String text) {
+                properties.put(tag, redecode(text, charset));
+            } else if (value instanceof List<?> list) {
+                var redecoded = new ArrayList<>(list.size());
+                for (Object element : list) {
+                    redecoded.add(element instanceof String text ? redecode(text, charset) : element);
+                }
+                properties.put(tag, Collections.unmodifiableList(redecoded));
             }
         }
     }
 
-    public String getString(int propertyId) {
-        var val = properties.get(propertyId);
-        return val instanceof String ? (String) val : null;
+    private static String redecode(String latin1Text, Charset charset) {
+        byte[] raw = latin1Text.getBytes(StandardCharsets.ISO_8859_1);
+        return new String(raw, charset).trim();
     }
 
+    public String getString(int propertyId) {
+        return getProperty(propertyId) instanceof String value ? value : null;
+    }
+
+    /**
+     * All parsed properties, keyed by 16-bit property id. Deferred subnode binaries are resolved
+     * first, so prefer {@link #getProperty} when only specific tags are needed.
+     */
     public Map<Integer, Object> getProperties() {
+        for (Integer tag : List.copyOf(pendingSubnodeBinaries.keySet())) {
+            getProperty(tag);
+        }
         return Collections.unmodifiableMap(properties);
     }
 
     public NodeEntry getNode() {
         return node;
+    }
+
+    /** Converts a Windows FILETIME (100ns intervals since 1601-01-01 UTC) to an {@link Instant}. */
+    static Instant fileTimeToInstant(long fileTime) {
+        long hundredNanos = fileTime - FILETIME_EPOCH_DIFF;
+        return Instant.ofEpochSecond(
+                Math.floorDiv(hundredNanos, 10_000_000L), Math.floorMod(hundredNanos, 10_000_000L) * 100);
+    }
+
+    /**
+     * Parses a multi-valued property blob ([MS-PST] §2.3.3.4): fixed-width types are packed values;
+     * variable-width types are a count, an offset table and the concatenated payloads. Unknown
+     * shapes are returned raw.
+     */
+    static Object parseMultiValue(int valueType, byte[] data, Charset string8Charset) {
+        return switch (valueType) {
+            case 0x1003 -> fixedMultiValue(data, 4, buffer -> buffer.getInt());
+            case 0x1014 -> fixedMultiValue(data, 8, buffer -> buffer.getLong());
+            case 0x1040 -> fixedMultiValue(data, 8, buffer -> fileTimeToInstant(buffer.getLong()));
+            case 0x101F -> {
+                var values = new ArrayList<String>();
+                for (byte[] segment : splitVariableMultiValue(data)) {
+                    values.add(new String(segment, StandardCharsets.UTF_16LE).trim());
+                }
+                yield Collections.unmodifiableList(values);
+            }
+            case 0x101E -> {
+                var values = new ArrayList<String>();
+                for (byte[] segment : splitVariableMultiValue(data)) {
+                    values.add(new String(segment, string8Charset).trim());
+                }
+                yield Collections.unmodifiableList(values);
+            }
+            case 0x1102 -> Collections.unmodifiableList(splitVariableMultiValue(data));
+            default -> data;
+        };
+    }
+
+    private interface FixedValueReader {
+        Object read(ByteBuffer buffer);
+    }
+
+    private static List<Object> fixedMultiValue(byte[] data, int width, FixedValueReader reader) {
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        var values = new ArrayList<>();
+        for (int offset = 0; offset + width <= data.length; offset += width) {
+            buffer.position(offset);
+            values.add(reader.read(buffer));
+        }
+        return Collections.unmodifiableList(values);
+    }
+
+    private static List<byte[]> splitVariableMultiValue(byte[] data) {
+        if (data.length < 4) {
+            return List.of();
+        }
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        int count = buffer.getInt(0);
+        // The count and offsets come from untrusted data; require the offset table to fit and each
+        // segment to lie inside the blob, skipping (not aborting on) individual bad segments.
+        if (count <= 0 || 4 + (long) count * 4 > data.length) {
+            return List.of();
+        }
+        var segments = new ArrayList<byte[]>(count);
+        for (int i = 0; i < count; i++) {
+            long start = Integer.toUnsignedLong(buffer.getInt(4 + i * 4));
+            long end = (i + 1 < count) ? Integer.toUnsignedLong(buffer.getInt(4 + (i + 1) * 4)) : data.length;
+            if (start > end || end > data.length) {
+                continue;
+            }
+            var segment = new byte[(int) (end - start)];
+            System.arraycopy(data, (int) start, segment, 0, segment.length);
+            segments.add(segment);
+        }
+        return segments;
     }
 }

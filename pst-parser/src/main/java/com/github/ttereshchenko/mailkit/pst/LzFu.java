@@ -1,36 +1,53 @@
 package com.github.ttereshchenko.mailkit.pst;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 
+/**
+ * Decompresses LZFu-compressed RTF bodies (PR_RTF_COMPRESSED, [MS-OXRTFCP]).
+ */
 final class LzFu {
 
-    public static final String LZFU_HEADER =
+    private static final System.Logger LOG = System.getLogger(LzFu.class.getName());
+
+    /** Sanity cap on the declared uncompressed size; output grows incrementally up to this. */
+    private static final int MAX_UNCOMPRESSED_SIZE = 100 * 1024 * 1024;
+
+    /** RTF is byte-oriented; windows-1252 maps all 256 byte values, so the decode is lossless. */
+    private static final Charset RTF_CHARSET = Charset.forName("windows-1252");
+
+    static final String LZFU_HEADER =
             "{\\rtf1\\ansi\\mac\\deff0\\deftab720{\\fonttbl;}{\\f0\\fnil \\froman \\fswiss \\fmodern \\fscript \\fdecor MS Sans SerifSymbolArialTimes New RomanCourier{\\colortbl\\red0\\green0\\blue0\r\n\\par \\pard\\plain\\f0\\fs20\\b\\i\\u\\tab\\tx";
 
     private LzFu() {
         // Utility class
     }
 
-    public static String decode(byte[] data) throws PstException {
+    static String decode(byte[] data) {
         if (data == null || data.length < 16) {
             return "";
         }
 
-        var buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
-        int compressedSize = buf.getInt();
-        int uncompressedSize = buf.getInt();
-        int compressionSig = buf.getInt();
-        int compressedCrc = buf.getInt();
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        buffer.getInt(); // compressed size (unused; the input array bounds the read loop)
+        int uncompressedSize = buffer.getInt();
+        int compressionSignature = buffer.getInt();
+        buffer.getInt(); // CRC (not validated)
 
-        if (compressionSig == 0x75465A4C) { // LZFu
-            if (uncompressedSize < 0 || uncompressedSize > 100 * 1024 * 1024) {
-                return ""; // or throw exception, but this is safer for now.
+        if (compressionSignature == 0x75465A4C) { // LZFu
+            if (uncompressedSize < 0 || uncompressedSize > MAX_UNCOMPRESSED_SIZE) {
+                LOG.log(
+                        System.Logger.Level.WARNING,
+                        () -> "Rejecting LZFu body with implausible uncompressed size " + uncompressedSize);
+                return "";
             }
-            byte[] output = new byte[uncompressedSize];
-            int outputPosition = 0;
-            byte[] lzBuffer = new byte[4096];
+            // Grow the output incrementally instead of trusting the 4 untrusted header bytes with an
+            // up-front allocation; the loop stops at uncompressedSize regardless.
+            var output = new ByteArrayOutputStream(Math.min(uncompressedSize, 64 * 1024));
+            var lzBuffer = new byte[4096];
 
             byte[] headerBytes = LZFU_HEADER.getBytes(StandardCharsets.US_ASCII);
             System.arraycopy(headerBytes, 0, lzBuffer, 0, headerBytes.length);
@@ -38,42 +55,53 @@ final class LzFu {
             int bufferPosition = headerBytes.length;
             int currentDataPosition = 16;
 
-            while (currentDataPosition < data.length - 2 && outputPosition < output.length) {
+            while (currentDataPosition < data.length - 2 && output.size() < uncompressedSize) {
                 int flags = data[currentDataPosition++] & 0xFF;
-                for (int x = 0; x < 8 && outputPosition < output.length; x++) {
-                    boolean isRef = ((flags & 1) == 1);
+                for (int x = 0; x < 8 && output.size() < uncompressedSize; x++) {
+                    boolean isReference = ((flags & 1) == 1);
                     flags >>= 1;
-                    if (isRef) {
-                        if (currentDataPosition + 1 >= data.length) break; // truncated reference token
-                        int refOffsetOrig = data[currentDataPosition++] & 0xFF;
-                        int refSizeOrig = data[currentDataPosition++] & 0xFF;
-                        int refOffset = (refOffsetOrig << 4) | (refSizeOrig >>> 4);
-                        int refSize = (refSizeOrig & 0xF) + 2;
+                    if (isReference) {
+                        if (currentDataPosition + 1 >= data.length) {
+                            break; // truncated reference token
+                        }
+                        int referenceHigh = data[currentDataPosition++] & 0xFF;
+                        int referenceLow = data[currentDataPosition++] & 0xFF;
+                        int referenceOffset = (referenceHigh << 4) | (referenceLow >>> 4);
+                        int referenceSize = (referenceLow & 0xF) + 2;
 
-                        int index = refOffset;
-                        for (int y = 0; y < refSize && outputPosition < output.length; y++) {
-                            output[outputPosition++] = lzBuffer[index];
+                        int index = referenceOffset;
+                        for (int y = 0; y < referenceSize && output.size() < uncompressedSize; y++) {
+                            output.write(lzBuffer[index]);
                             lzBuffer[bufferPosition] = lzBuffer[index];
                             bufferPosition = (bufferPosition + 1) % 4096;
                             index = (index + 1) % 4096;
                         }
                     } else {
-                        if (currentDataPosition >= data.length) break; // truncated literal token
+                        if (currentDataPosition >= data.length) {
+                            break; // truncated literal token
+                        }
                         lzBuffer[bufferPosition] = data[currentDataPosition];
                         bufferPosition = (bufferPosition + 1) % 4096;
-                        output[outputPosition++] = data[currentDataPosition++];
+                        output.write(data[currentDataPosition++]);
                     }
                 }
             }
-            if (outputPosition != uncompressedSize) {
-                // Warning/Log? We will just return what we decompressed
+            if (output.size() != uncompressedSize) {
+                int decompressed = output.size();
+                LOG.log(
+                        System.Logger.Level.DEBUG,
+                        () -> "LZFu body truncated: decompressed " + decompressed + " of " + uncompressedSize
+                                + " declared bytes");
             }
-            return new String(output, 0, outputPosition, StandardCharsets.UTF_8).trim();
+            return output.toString(RTF_CHARSET).trim();
 
-        } else if (compressionSig == 0x414C454D) { // MELA (uncompressed)
-            return new String(data, 16, data.length - 16, StandardCharsets.UTF_8).trim();
+        } else if (compressionSignature == 0x414C454D) { // MELA (uncompressed)
+            return new String(data, 16, data.length - 16, RTF_CHARSET).trim();
         }
 
+        LOG.log(
+                System.Logger.Level.WARNING,
+                () -> "Unknown RTF compression signature 0x" + Integer.toHexString(compressionSignature));
         return "";
     }
 }

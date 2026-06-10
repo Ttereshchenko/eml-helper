@@ -17,7 +17,9 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -204,7 +206,8 @@ public final class PstToEmlConverter {
             ConversionLog log,
             Set<Integer> visitedFolders,
             Set<Integer> knownMessages,
-            Map<Path, Integer> nameCounters) {
+            Map<Path, Integer> nameCounters)
+            throws IOException {
         var candidates = findUnreferencedMessages(pstFile.allNodes(), knownMessages, visitedFolders);
         Path dumpsterDir = null;
         Path orphanDir = null;
@@ -526,7 +529,7 @@ public final class PstToEmlConverter {
 
         var date = message.getMessageDate();
         if (date != null) {
-            serializer.setDate(date);
+            serializer.setDate(Date.from(date));
         }
 
         String messageId = message.getMessageId();
@@ -567,14 +570,13 @@ public final class PstToEmlConverter {
             Integer endId = pstFile.namedPropertyId(psetidAppointment, 0x820E);
             Integer locId = pstFile.namedPropertyId(psetidAppointment, 0x8208);
 
-            java.util.Date start =
-                    startId != null && message.getProperty(startId) instanceof java.util.Date d ? d : null;
-            java.util.Date end = endId != null && message.getProperty(endId) instanceof java.util.Date d ? d : null;
+            Instant start = startId != null && message.getProperty(startId) instanceof Instant instant ? instant : null;
+            Instant end = endId != null && message.getProperty(endId) instanceof Instant instant ? instant : null;
             String location = locId != null ? message.getStringProperty(locId) : null;
 
             String ical = com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator.generate(
-                    start,
-                    end,
+                    start != null ? Date.from(start) : null,
+                    end != null ? Date.from(end) : null,
                     location,
                     subject,
                     message.getSenderName(),
