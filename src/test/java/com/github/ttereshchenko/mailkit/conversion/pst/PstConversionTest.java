@@ -53,6 +53,45 @@ class PstConversionTest {
         }
     }
 
+    // ansi-test.pst is the genuine ANSI-format sample (test_ansi.pst from the pstsdk/Fairport test
+    // corpus); the previous file at this path was a saved GitHub 404 HTML page, so conversion of a
+    // real ANSI PST was never exercised end-to-end.
+    @Test
+    void testAnsiPstConversion() throws Exception {
+        Path path = Paths.get("src/test/resources/samples/pst/ansi-test.pst");
+        Path tempDir = java.nio.file.Files.createTempDirectory("pst_ansi_convert");
+        try (var pstFile = new PstFile(path)) {
+            assertEquals(PstFile.Format.ANSI, pstFile.format());
+            var indicator = new ProgressIndicatorBase();
+            var options = new PstToEmlConverter.Options(
+                    PstToEmlConverter.DuplicateHandling.OVERWRITE,
+                    50,
+                    false,
+                    true,
+                    Message.AddressPreference.PREFER_SMTP,
+                    false,
+                    false,
+                    64L * 1024 * 1024);
+            var stats = PstToEmlConverter.convert(pstFile, tempDir, options, indicator, ConversionLog.NOOP);
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    stats.converted() > 0, "ANSI PST conversion should export messages");
+
+            java.util.List<Path> emls;
+            try (var stream = java.nio.file.Files.walk(tempDir)) {
+                emls = stream.filter(entry -> entry.toString().endsWith(".eml")).toList();
+            }
+            org.junit.jupiter.api.Assertions.assertFalse(emls.isEmpty(), "Expected EML files from the ANSI PST");
+            for (Path eml : emls) {
+                String content = java.nio.file.Files.readString(eml);
+                org.junit.jupiter.api.Assertions.assertTrue(
+                        content.startsWith("From:") || content.contains("\nFrom:") || content.startsWith("Date:"),
+                        "Exported EML should carry headers: " + eml);
+            }
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
     @Test
     void testOst2013() throws Exception {
         Path path = Paths.get("src/test/resources/samples/pst/example-2013.ost");

@@ -194,12 +194,16 @@ final class NodeDatabase {
             throw new PstException("Invalid subnode block type: " + bType);
         }
 
+        // The 4-byte dwPadding after the SL/SI block header exists only in the Unicode format
+        // (MS-PST 2.2.2.8.3.3): ANSI entries start right after the 4-byte header.
+        int entriesStart = (format != PstFile.Format.ANSI) ? 8 : 4;
+
         if (cLevel > 0) {
             // SIBLOCK (branch)
             int entrySize = (format != PstFile.Format.ANSI) ? 16 : 8;
             long selectedChildBid = -1;
             for (int i = 0; i < cEnt; i++) {
-                int offset = 8 + (i * entrySize);
+                int offset = entriesStart + (i * entrySize);
                 long rawNid = (format != PstFile.Format.ANSI)
                         ? buffer.getLong(offset)
                         : Integer.toUnsignedLong(buffer.getInt(offset));
@@ -222,7 +226,7 @@ final class NodeDatabase {
         // SLBLOCK (leaf)
         int entrySize = (format != PstFile.Format.ANSI) ? 24 : 12;
         for (int i = 0; i < cEnt; i++) {
-            int offset = 8 + (i * entrySize);
+            int offset = entriesStart + (i * entrySize);
             long rawNid = (format != PstFile.Format.ANSI)
                     ? buffer.getLong(offset)
                     : Integer.toUnsignedLong(buffer.getInt(offset));
