@@ -29,6 +29,12 @@ final class MsgFixtureBuilder {
     private static final int TYPE_SYSTIME = 0x0040;
 
     private static final int TAG_SUBJECT = (0x0037 << 16) | TYPE_UNICODE;
+    private static final int TAG_SENDER_ADDRTYPE = (0x0C1E << 16) | TYPE_UNICODE;
+    private static final int TAG_SENDER_SMTP_ADDRESS = (0x5D01 << 16) | TYPE_UNICODE;
+    private static final int TAG_DISPLAY_TO = (0x0E04 << 16) | TYPE_UNICODE;
+    private static final int TAG_SPAM_CONFIDENCE_LEVEL = (0x4076 << 16) | TYPE_LONG;
+    private static final int TAG_RTF_COMPRESSED = (0x1009 << 16) | TYPE_BINARY;
+    private static final int TAG_RECIPIENT_ADDRTYPE = (0x3002 << 16) | TYPE_UNICODE;
     private static final int TAG_BODY = (0x1000 << 16) | TYPE_UNICODE;
     private static final int TAG_BODY_HTML_UNICODE = (0x1013 << 16) | TYPE_UNICODE;
     private static final int TAG_SENDER_NAME = (0x0C1A << 16) | TYPE_UNICODE;
@@ -93,6 +99,70 @@ final class MsgFixtureBuilder {
         return this;
     }
 
+    /** A recipient that carries no PR_SMTP_ADDRESS chunk — only the raw email-address chunk and address type. */
+    MsgFixtureBuilder recipientToWithoutSmtp(String name, String email, String addrType) {
+        var recipient = new MsgFixtureBuilder();
+        if (name != null) {
+            recipient.setUnicode(TAG_RECIPIENT_DISPLAY_NAME, name);
+        }
+        if (email != null) {
+            recipient.setUnicode(TAG_RECIPIENT_EMAIL_ADDRESS, email);
+        }
+        if (addrType != null) {
+            recipient.setUnicode(TAG_RECIPIENT_ADDRTYPE, addrType);
+        }
+        recipient.fixedProperties.add(new FixedProperty(TAG_RECIPIENT_TYPE, longBytes(RECIPIENT_TYPE_TO)));
+        recipientsTo.add(recipient);
+        return this;
+    }
+
+    /** PidTagSenderAddressType (PR_SENDER_ADDRTYPE), e.g. {@code "EX"} for an Exchange X.500 sender. */
+    MsgFixtureBuilder senderAddrType(String value) {
+        return setUnicode(TAG_SENDER_ADDRTYPE, value);
+    }
+
+    /** PidTagSenderSmtpAddress (0x5D01) — the SMTP form Exchange stores beside an X.500 sender DN. */
+    MsgFixtureBuilder senderSmtpAddress(String value) {
+        return setUnicode(TAG_SENDER_SMTP_ADDRESS, value);
+    }
+
+    /** PidTagDisplayTo (PR_DISPLAY_TO) — the semicolon-joined display string used as a recipient fallback. */
+    MsgFixtureBuilder displayTo(String value) {
+        return setUnicode(TAG_DISPLAY_TO, value);
+    }
+
+    /** PidTagContentFilterSpamConfidenceLevel (0x4076). */
+    MsgFixtureBuilder spamConfidenceLevel(int value) {
+        fixedProperties.add(new FixedProperty(TAG_SPAM_CONFIDENCE_LEVEL, longBytes(value)));
+        return this;
+    }
+
+    /** PR_RTF_COMPRESSED carrying the given RTF wrapped in a valid uncompressed ("MELA") LZFu envelope. */
+    MsgFixtureBuilder rtfBody(String rtf) {
+        return setBinary(TAG_RTF_COMPRESSED, wrapUncompressedRtf(rtf.getBytes(StandardCharsets.US_ASCII)));
+    }
+
+    /** PR_RTF_COMPRESSED whose LZFu envelope has a bogus compression signature — POI fails decompression. */
+    MsgFixtureBuilder corruptRtfBody() {
+        var envelope = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN);
+        envelope.putInt(16);
+        envelope.putInt(4);
+        envelope.putInt(0x0BAD0BAD); // neither "LZFu" nor "MELA"
+        envelope.putInt(0);
+        envelope.putInt(0x52545B7B);
+        return setBinary(TAG_RTF_COMPRESSED, envelope.array());
+    }
+
+    private static byte[] wrapUncompressedRtf(byte[] rtfBytes) {
+        var envelope = ByteBuffer.allocate(16 + rtfBytes.length).order(ByteOrder.LITTLE_ENDIAN);
+        envelope.putInt(rtfBytes.length + 12); // COMPSIZE: bytes that follow this field
+        envelope.putInt(rtfBytes.length); // RAWSIZE
+        envelope.put((byte) 'M').put((byte) 'E').put((byte) 'L').put((byte) 'A'); // uncompressed magic
+        envelope.putInt(0); // CRC is ignored for uncompressed payloads
+        envelope.put(rtfBytes);
+        return envelope.array();
+    }
+
     MsgFixtureBuilder recipientCc(String name, String email) {
         recipientsCc.add(buildRecipient(name, email, RECIPIENT_TYPE_CC));
         return this;
@@ -150,6 +220,12 @@ final class MsgFixtureBuilder {
     private MsgFixtureBuilder setUnicode(int tag, String value) {
         varProperties.removeIf(prop -> prop.tag == tag);
         varProperties.add(new VarProperty(tag, encodeUtf16(value)));
+        return this;
+    }
+
+    private MsgFixtureBuilder setBinary(int tag, byte[] data) {
+        varProperties.removeIf(prop -> prop.tag == tag);
+        varProperties.add(new VarProperty(tag, data));
         return this;
     }
 

@@ -116,4 +116,53 @@ class RtfStripperTest {
         // The old plain-text fallback drops the {\*\htmltag ...} markup entirely; de-encapsulation keeps it.
         assertFalse(RtfStripper.strip(rtf).contains("<body>"), "strip() loses HTML structure");
     }
+
+    // R12: \pard resets paragraph formatting and produces no break — it used to be mapped to "\n",
+    // adding a spurious blank line after every real \par in Outlook-generated RTF.
+    @Test
+    void pardDoesNotProduceALineBreak() {
+        var output = RtfStripper.strip("{\\rtf1 first\\par\\pard second}");
+        assertEquals("first\nsecond", output);
+    }
+
+    // R8: the de-encapsulation used to hardcode a '?' fallback after a uN escape; a literal
+    // (non-'?') fallback char leaked into the output as a duplicate of the decoded code point.
+    @Test
+    void deEncapsulationSkipsLiteralUnicodeFallbackChar() {
+        var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1\\uc1 \\u1055P after}");
+        assertEquals("П after", html);
+    }
+
+    // R8: a uc0 directive declares that no fallback follows — the next character is real content and must stay.
+    @Test
+    void deEncapsulationHonorsUcZero() {
+        var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1\\uc0 \\u1055 X}");
+        assertEquals("ПX", html);
+    }
+
+    // R8: \'hh escapes inside a {\*\htmltag ...} run used to be appended verbatim ("a\'3db") instead
+    // of decoded.
+    @Test
+    void htmlTagContentDecodesHexEscapes() {
+        var html = RtfStripper.deEncapsulateHtml(
+                "{\\rtf1\\ansi\\ansicpg1252\\fromhtml1 {\\*\\htmltag84 <a href=\"a\\'3db\">}x{\\*\\htmltag92 </a>}}");
+        assertEquals("<a href=\"a=b\">x</a>", html);
+    }
+
+    // R8: an escaped brace inside a tag attribute used to terminate the htmltag group early,
+    // truncating the markup mid-attribute.
+    @Test
+    void htmlTagContentHonorsEscapedBraces() {
+        var html = RtfStripper.deEncapsulateHtml(
+                "{\\rtf1\\fromhtml1 {\\*\\htmltag84 <span title=\"\\{x\\}\">}y{\\*\\htmltag92 </span>}}");
+        assertEquals("<span title=\"{x}\">y</span>", html);
+    }
+
+    // R8: surrogate pairs arrive as two negative uN values; the signed-16-bit normalization must
+    // reassemble them into one supplementary code point.
+    @Test
+    void deEncapsulationDecodesNegativeSurrogatePairs() {
+        var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1\\uc1 \\u-10179?\\u-8704?}");
+        assertEquals("😀", html);
+    }
 }

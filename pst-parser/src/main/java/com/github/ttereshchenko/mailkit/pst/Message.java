@@ -789,10 +789,23 @@ public class Message {
     // referenced from this standalone library); change both together.
     private static String imceaEncapsulate(String addrType, String address) {
         if (address == null || address.isBlank()) return address;
-        if (addrType == null || addrType.equalsIgnoreCase("SMTP") || address.contains("@")) return address;
+        // Only a value that actually parses as local@domain may pass through unencapsulated: an
+        // Exchange X.500 DN such as /O=ORG/CN=USER@HOST contains "@" yet is not an addr-spec, and
+        // emitting it raw produces an unparseable From/To header.
+        if (looksLikeSmtpAddress(address)) return address;
+        var resolvedType = addrType;
+        if (resolvedType == null || resolvedType.isBlank()) {
+            if (!address.startsWith("/")) {
+                return address;
+            }
+            // An X.500 DN with no recorded address type is still an Exchange address; encapsulate it
+            // the way Exchange itself would (IMCEAEX-...).
+            resolvedType = "EX";
+        }
+        if (resolvedType.equalsIgnoreCase("SMTP")) return address;
 
         StringBuilder builder = new StringBuilder("IMCEA");
-        builder.append(addrType.toUpperCase(Locale.ROOT)).append("-");
+        builder.append(resolvedType.toUpperCase(Locale.ROOT)).append("-");
 
         for (int i = 0; i < address.length(); i++) {
             char chr = address.charAt(i);
@@ -808,5 +821,25 @@ public class Message {
         // deployment would use its own accepted domain, which a PST does not record.
         builder.append("@invalid");
         return builder.toString();
+    }
+
+    /**
+     * True when the value plausibly parses as an SMTP addr-spec: a single {@code @} separating
+     * non-empty halves, with no whitespace/control characters, X.500 DN separators, or angle
+     * brackets. Kept deliberately loose otherwise — the goal is to reject values that would render
+     * an address header unparseable, not to validate RFC 5321 syntax.
+     */
+    private static boolean looksLikeSmtpAddress(String address) {
+        var atIndex = address.indexOf('@');
+        if (atIndex <= 0 || atIndex != address.lastIndexOf('@') || atIndex == address.length() - 1) {
+            return false;
+        }
+        for (var index = 0; index < address.length(); index++) {
+            var character = address.charAt(index);
+            if (character <= ' ' || character == '/' || character == '<' || character == '>') {
+                return false;
+            }
+        }
+        return true;
     }
 }

@@ -175,18 +175,13 @@ final class RtfStripper {
         return rtfText != null && rtfText.contains("\\fromhtml");
     }
 
-    /**
-     * De-encapsulates HTML wrapped in RTF (MS-OXRTFEX): honors {@code \\htmlrtf}/{@code \\htmlrtf0}
-     * toggling, extracts <code>{\*\htmltag ...}</code> runs, and decodes {@code \\'hh} / {@code \\uN}
-     * escapes. Mirrors the PST converter's de-encapsulation so HTML-encapsulated MSG bodies are
-     * recovered as text/html instead of leaking literal tags into a stripped-to-plain fallback.
-     */
     static String deEncapsulateHtml(String rtfText) {
         Objects.requireNonNull(rtfText, "rtfText");
         var charset = resolveCharset(rtfText);
         var html = new StringBuilder(rtfText.length());
         var index = 0;
         var inHtmlRtf = false;
+        var unicodeSkip = 1;
         while (index < rtfText.length()) {
             if (rtfText.startsWith("\\htmlrtf0", index)) {
                 inHtmlRtf = false;
@@ -201,18 +196,8 @@ final class RtfStripper {
             }
 
             if (rtfText.startsWith("{\\*\\htmltag", index)) {
-                var end = rtfText.indexOf('}', index);
-                if (end != -1) {
-                    var tag = rtfText.substring(index + 11, end).trim();
-                    tag = tag.replaceFirst("^\\d+\\s*", "");
-                    if (!tag.equals("\\par") && !tag.matches("\\d+")) {
-                        html.append(tag);
-                    } else if (tag.equals("\\par")) {
-                        html.append("\r\n");
-                    }
-                    index = end + 1;
-                    continue;
-                }
+                index = appendHtmlTag(rtfText, index, charset, html);
+                continue;
             }
             if (inHtmlRtf) {
                 index++;
@@ -235,6 +220,22 @@ final class RtfStripper {
                     index += 4;
                     continue;
                 }
+                // \\ucN sets how many fallback characters trail each \\uN escape; it must be matched
+                // before the \\uN branch because the two control words share the "\\u" prefix.
+                if (rtfText.startsWith("\\uc", index)
+                        && index + 3 < rtfText.length()
+                        && Character.isDigit(rtfText.charAt(index + 3))) {
+                    var end = index + 3;
+                    while (end < rtfText.length() && Character.isDigit(rtfText.charAt(end))) end++;
+                    try {
+                        unicodeSkip = Math.max(0, Integer.parseInt(rtfText.substring(index + 3, end)));
+                    } catch (NumberFormatException ignored) {
+                        // keep the current skip count
+                    }
+                    index = end;
+                    if (index < rtfText.length() && rtfText.charAt(index) == ' ') index++;
+                    continue;
+                }
                 if (index + 2 < rtfText.length()
                         && rtfText.charAt(index + 1) == 'u'
                         && (Character.isDigit(rtfText.charAt(index + 2)) || rtfText.charAt(index + 2) == '-')) {
@@ -242,18 +243,23 @@ final class RtfStripper {
                     if (rtfText.charAt(endNum) == '-') endNum++;
                     while (endNum < rtfText.length() && Character.isDigit(rtfText.charAt(endNum))) endNum++;
                     try {
-                        short codePoint = Short.parseShort(rtfText.substring(index + 2, endNum));
-                        html.append((char) codePoint);
+                        var codePoint = Integer.parseInt(rtfText.substring(index + 2, endNum));
+                        if (codePoint < 0) {
+                            // \\uN carries a signed 16-bit value; normalize like strip() does.
+                            codePoint += 0x10000;
+                        }
+                        if (Character.isValidCodePoint(codePoint)) {
+                            html.appendCodePoint(codePoint);
+                        }
                     } catch (NumberFormatException ignored) {
                         // malformed \\uN escape — skip this code point
                     }
                     index = endNum;
-                    // skip the substitute character that follows the Unicode escape
+                    // A control word's numeric argument may be followed by a single delimiting space.
                     if (index < rtfText.length() && rtfText.charAt(index) == ' ') index++;
-                    else if (index + 3 < rtfText.length()
-                            && rtfText.charAt(index) == '\\'
-                            && rtfText.charAt(index + 1) == '\'') index += 4;
-                    else if (index < rtfText.length() && rtfText.charAt(index) == '?') index++;
+                    // Skip the \\uc-many ANSI fallback characters; honoring the declared count keeps a
+                    // literal (non-'?') fallback from leaking into the output as a duplicate.
+                    index = skipUnicodeFallback(rtfText, index, unicodeSkip);
                     continue;
                 }
                 var nextSpace = rtfText.indexOf(' ', index);
@@ -275,6 +281,105 @@ final class RtfStripper {
             index++;
         }
         return html.toString().trim();
+    }
+
+    /**
+     * Appends the content of one <code>{\*\htmltag…}</code> destination, decoding the RTF escapes it
+     * may contain ({@code \'hh}, {@code \\ \{ \}}, {@code \\uN}, {@code \par}/{@code \line}/{@code
+     * \tab}) and honoring escaped braces when locating the closing brace — a literal {@code \}}
+     * inside an attribute value must not terminate the group. Returns the index just past the
+     * closing brace, or {@code startIndex + 1} when the group never closes so the caller resumes
+     * ordinary scanning.
+     */
+    private static int appendHtmlTag(String rtfText, int startIndex, Charset charset, StringBuilder html) {
+        var cursor = startIndex + "{\\*\\htmltag".length();
+        // Skip the numeric destination argument (the tag kind) and its delimiter space.
+        while (cursor < rtfText.length() && Character.isDigit(rtfText.charAt(cursor))) cursor++;
+        if (cursor < rtfText.length() && rtfText.charAt(cursor) == ' ') cursor++;
+        var tag = new StringBuilder();
+        while (cursor < rtfText.length()) {
+            var character = rtfText.charAt(cursor);
+            if (character == '}') {
+                html.append(tag);
+                return cursor + 1;
+            }
+            if (character == '{') {
+                cursor++;
+                continue;
+            }
+            if (character != '\\') {
+                if (character != '\r' && character != '\n') {
+                    tag.append(character);
+                }
+                cursor++;
+                continue;
+            }
+            if (cursor + 1 >= rtfText.length()) {
+                cursor++;
+                continue;
+            }
+            var next = rtfText.charAt(cursor + 1);
+            if (next == '\\' || next == '{' || next == '}') {
+                tag.append(next);
+                cursor += 2;
+                continue;
+            }
+            if (next == '\'' && cursor + 3 < rtfText.length()) {
+                try {
+                    var value = Integer.parseInt(rtfText.substring(cursor + 2, cursor + 4), 16);
+                    tag.append(new String(new byte[] {(byte) value}, charset));
+                } catch (NumberFormatException ignored) {
+                    // malformed \'hh escape — drop it
+                }
+                cursor += 4;
+                continue;
+            }
+            if (Character.isLetter(next)) {
+                var wordStart = cursor + 1;
+                var wordEnd = wordStart;
+                while (wordEnd < rtfText.length() && Character.isLetter(rtfText.charAt(wordEnd))) {
+                    wordEnd++;
+                }
+                var name = rtfText.substring(wordStart, wordEnd);
+                var paramStart = wordEnd;
+                if (wordEnd < rtfText.length()
+                        && (rtfText.charAt(wordEnd) == '-' || Character.isDigit(rtfText.charAt(wordEnd)))) {
+                    if (rtfText.charAt(wordEnd) == '-') {
+                        wordEnd++;
+                    }
+                    while (wordEnd < rtfText.length() && Character.isDigit(rtfText.charAt(wordEnd))) {
+                        wordEnd++;
+                    }
+                }
+                cursor = wordEnd;
+                if (cursor < rtfText.length() && rtfText.charAt(cursor) == ' ') cursor++;
+                switch (name) {
+                    case "par", "line" -> tag.append("\r\n");
+                    case "tab" -> tag.append('\t');
+                    case "u" -> {
+                        try {
+                            var codePoint = Integer.parseInt(rtfText.substring(paramStart, wordEnd));
+                            if (codePoint < 0) {
+                                codePoint += 0x10000;
+                            }
+                            if (Character.isValidCodePoint(codePoint)) {
+                                tag.appendCodePoint(codePoint);
+                            }
+                        } catch (NumberFormatException ignored) {
+                            // malformed \\uN escape — skip it
+                        }
+                        cursor = skipUnicodeFallback(rtfText, cursor, 1);
+                    }
+                    default -> {
+                        // other control words carry no literal content inside an htmltag
+                    }
+                }
+                continue;
+            }
+            cursor += 2;
+        }
+        // Unterminated group: emit nothing and let the caller resume after the opening brace.
+        return startIndex + 1;
     }
 
     private static Charset resolveCharset(String rtf) {
@@ -343,7 +448,8 @@ final class RtfStripper {
 
     private static String controlReplacement(String name, boolean hadParam) {
         return switch (name) {
-            case "par", "line", "pard" -> "\n";
+            // \pard is deliberately absent: it resets paragraph *formatting* and produces no break.
+            case "par", "line" -> "\n";
             case "tab" -> "\t";
             case "lquote", "rquote" -> "'";
             case "ldblquote", "rdblquote" -> "\"";

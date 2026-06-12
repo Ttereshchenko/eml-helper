@@ -1,11 +1,15 @@
 package com.github.ttereshchenko.mailkit.conversion.msg;
 
+import com.github.ttereshchenko.mailkit.conversion.ConversionException;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.WriteAction;
+import com.intellij.openapi.progress.ProcessCanceledException;
+import com.intellij.openapi.ui.TestDialog;
+import com.intellij.openapi.ui.TestDialogManager;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.TestActionEvent;
@@ -109,6 +113,76 @@ public class ConvertMsgToEmlActionTest extends BasePlatformTestCase {
         var eml = out.toString(StandardCharsets.UTF_8);
 
         assertTrue("Non-ASCII recipient email should be preserved, not crash: " + eml, eml.contains(nonAsciiEmail));
+    }
+
+    public void testExistingTargetPreservedWhenOverwriteDeclined() throws Exception {
+        // R6: converting a.msg used to clobber a pre-existing (possibly hand-edited) a.eml without
+        // asking; the conversion must now stop when the user declines the overwrite prompt.
+        var msgBytes =
+                MsgFixtureBuilder.topLevel().subject("decline").textBody("body").toBytes();
+        var msgFile = createFileInProject("decline.msg", msgBytes);
+        var existing = createFileInProject("decline.eml", "hand-edited content".getBytes(StandardCharsets.US_ASCII));
+
+        var previousDialog = TestDialogManager.setTestDialog(TestDialog.NO);
+        try {
+            ConvertMsgToEmlAction.runConversion(getProject(), msgFile);
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            ApplicationManager.getApplication().invokeAndWait(() -> {});
+        } finally {
+            TestDialogManager.setTestDialog(previousDialog);
+        }
+
+        var content = new String(existing.contentsToByteArray(), StandardCharsets.US_ASCII);
+        assertEquals("Declining the overwrite must leave the existing file untouched", "hand-edited content", content);
+    }
+
+    public void testExistingTargetReplacedWhenOverwriteConfirmed() throws Exception {
+        var msgBytes = MsgFixtureBuilder.topLevel()
+                .subject("confirm-marker")
+                .textBody("body")
+                .toBytes();
+        var msgFile = createFileInProject("confirm.msg", msgBytes);
+        var existing = createFileInProject("confirm.eml", "stale".getBytes(StandardCharsets.US_ASCII));
+
+        var previousDialog = TestDialogManager.setTestDialog(TestDialog.OK);
+        try {
+            ConvertMsgToEmlAction.runConversion(getProject(), msgFile);
+            var deadline = System.currentTimeMillis() + 5000;
+            while (System.currentTimeMillis() < deadline) {
+                PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+                ApplicationManager.getApplication().invokeAndWait(() -> {});
+                if (new String(existing.contentsToByteArray(), StandardCharsets.US_ASCII).contains("confirm-marker")) {
+                    break;
+                }
+                Thread.sleep(50);
+            }
+        } finally {
+            TestDialogManager.setTestDialog(previousDialog);
+        }
+
+        var content = new String(existing.contentsToByteArray(), StandardCharsets.US_ASCII);
+        assertTrue(
+                "Confirming the overwrite must replace the stale file: " + content,
+                content.contains("Subject: confirm-marker"));
+
+        ApplicationManager.getApplication().invokeAndWait(() -> {
+            com.intellij
+                    .openapi
+                    .fileEditor
+                    .FileEditorManager
+                    .getInstance(getProject())
+                    .closeFile(existing);
+        });
+    }
+
+    public void testFindCancellationUnwrapsWrappedCancellation() {
+        // R12: the converter wraps every RuntimeException — including the progress indicator's
+        // ProcessCanceledException thrown from a log checkpoint — in ConversionException; the action
+        // must recognize buried cancellations instead of reporting them as conversion failures.
+        var canceled = new ProcessCanceledException();
+        var wrapped = new ConversionException("Failed to convert MSG to EML: canceled", new RuntimeException(canceled));
+        assertSame(canceled, ConvertMsgToEmlAction.findCancellation(wrapped));
+        assertNull(ConvertMsgToEmlAction.findCancellation(new RuntimeException("plain failure")));
     }
 
     private AnActionEvent makeEvent(VirtualFile file) {

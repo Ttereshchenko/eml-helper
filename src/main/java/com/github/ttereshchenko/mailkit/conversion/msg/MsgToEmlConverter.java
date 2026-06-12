@@ -10,10 +10,13 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 import org.apache.poi.hsmf.MAPIMessage;
 import org.apache.poi.hsmf.datatypes.AttachmentChunks;
 import org.apache.poi.hsmf.datatypes.Chunks;
@@ -21,7 +24,6 @@ import org.apache.poi.hsmf.datatypes.MAPIProperty;
 import org.apache.poi.hsmf.datatypes.PropertyValue;
 import org.apache.poi.hsmf.datatypes.RecipientChunks;
 import org.apache.poi.hsmf.datatypes.StringChunk;
-import org.apache.poi.hsmf.datatypes.Types;
 import org.apache.poi.hsmf.exceptions.ChunkNotFoundException;
 import org.apache.poi.poifs.filesystem.EntryUtils;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
@@ -31,8 +33,10 @@ import org.apache.poi.poifs.filesystem.POIFSFileSystem;
  * into a standards-compliant EML document written through {@link EmlSerializer}.
  *
  * <p>Both modern Unicode and legacy ANSI MSG files are supported; for ANSI files the string codepage
- * is detected from the message's codepage properties/headers before any text is read. Plain-text,
- * HTML, and RTF bodies (including MS-OXRTFEX HTML-encapsulated RTF) are exported, attachments —
+ * is detected from the message's codepage properties/headers before any text is read. Plain-text and
+ * HTML bodies are exported as alternatives; an RTF body is de-encapsulated back to HTML when it is an
+ * MS-OXRTFEX wrapper and otherwise preserved as a {@code body.rtf} attachment (with a stripped
+ * plain-text fallback when no other body exists). Attachments —
  * including recursively nested {@code .msg} messages (capped at depth 10) and OLE objects — are
  * preserved, and transport headers missing from the source are synthesized from MAPI properties.
  *
@@ -44,6 +48,15 @@ public final class MsgToEmlConverter {
 
     // Kept in step with PstToEmlConverter.MAX_EMBEDDED_DEPTH so both pipelines truncate alike.
     private static final int MAX_EMBEDDED_DEPTH = 10;
+
+    // Bounds the synthesized To/Cc/Bcc headers on a pathological message; the overflow is logged and
+    // truncated rather than failing the conversion of an otherwise valid message.
+    private static final int MAX_RECIPIENTS = 2048;
+
+    // A genuine (non-HTML-encapsulated) RTF body is preserved as a body.rtf attachment in this
+    // charset — the LzFu decode POI performs is a lossless windows-1252 round-trip. Mirrors the PST
+    // converter's body.rtf export.
+    private static final Charset RTF_CHARSET = Charset.forName("windows-1252");
 
     private MsgToEmlConverter() {}
 
@@ -132,8 +145,8 @@ public final class MsgToEmlConverter {
         }
 
         var details = message.getRecipientDetailsChunks();
-        if (details != null && details.length > 2048) {
-            throw new IOException("Recipient limit exceeded (max 2048)");
+        if (details != null && details.length > MAX_RECIPIENTS) {
+            log.error("Message has " + details.length + " recipients; exporting only the first " + MAX_RECIPIENTS);
         }
 
         var serializer = new EmlSerializer();
@@ -165,16 +178,15 @@ public final class MsgToEmlConverter {
             serializer.addCustomHeader("References", references.trim());
         }
 
-        var sclProp = MAPIProperty.createCustom(0x4076, Types.LONG, "SPAM_CONFIDENCE_LEVEL");
-        var sclChunks = message.getMainChunks().getProperties().get(sclProp);
-        if (sclChunks != null && !sclChunks.isEmpty()) {
-            var val = sclChunks.get(0).getValue();
-            if (val instanceof Number n) {
-                serializer.setScl(n.intValue());
-            }
+        // PidTagContentFilterSpamConfidenceLevel. POI has no constant for it, and a
+        // MAPIProperty.createCustom lookup key can never match a map entry (MAPIProperty does not
+        // override equals/hashCode), so the property table is scanned by numeric id instead.
+        var spamConfidenceLevel = readMainLong(message, 0x4076);
+        if (spamConfidenceLevel != null) {
+            serializer.setScl(spamConfidenceLevel);
         }
 
-        populateBodies(message, serializer);
+        populateBodies(message, serializer, log);
         // An appointment's subject/body/date are exported as a normal email above. We deliberately do
         // NOT synthesize an invite.ics here: POI/HSMF exposes no reliable named-property API to read the
         // appointment's start/end/location (PidLidAppointmentStartWhole etc.), so the only invite we
@@ -186,44 +198,69 @@ public final class MsgToEmlConverter {
         serializer.writeTo(writer);
     }
 
-    private static void populateBodies(MAPIMessage message, EmlSerializer serializer) {
-        boolean hasPlain = false;
-        boolean hasHtml = false;
-        try {
-            var text = message.getTextBody();
-            if (text != null && !text.isEmpty()) {
-                serializer.addBody(text, "text/plain; charset=UTF-8");
-                hasPlain = true;
-            }
-        } catch (ChunkNotFoundException ignored) {
+    private static void populateBodies(MAPIMessage message, EmlSerializer serializer, ConversionLog log) {
+        var hasPlain = false;
+        var text = readBody(message::getTextBody, "plain text", log);
+        if (text != null && !text.isEmpty()) {
+            serializer.addBody(text, "text/plain; charset=UTF-8");
+            hasPlain = true;
         }
-        try {
-            var html = message.getHtmlBody();
-            if (html != null && !html.isEmpty()) {
-                serializer.addBody(html, "text/html; charset=UTF-8");
-                hasHtml = true;
-            }
-        } catch (ChunkNotFoundException ignored) {
+        var hasHtml = false;
+        var html = readBody(message::getHtmlBody, "HTML", log);
+        if (html != null && !html.isEmpty()) {
+            serializer.addBody(html, "text/html; charset=UTF-8");
+            hasHtml = true;
         }
-        try {
-            var rtfText = message.getRtfBody();
-            if (rtfText != null && !rtfText.isEmpty()) {
-                serializer.addBody(rtfText, "text/rtf; charset=UTF-8");
-                if (RtfStripper.isHtmlEncapsulated(rtfText)) {
-                    if (!hasHtml) {
-                        var recovered = RtfStripper.deEncapsulateHtml(rtfText);
-                        if (!recovered.isBlank()) {
-                            serializer.addBody(recovered, "text/html; charset=UTF-8");
-                        }
-                    }
-                } else if (!hasPlain) {
-                    var stripped = RtfStripper.strip(rtfText);
-                    if (!stripped.isEmpty()) {
-                        serializer.addBody(stripped, "text/plain; charset=UTF-8");
-                    }
-                }
+        var rtfText = readBody(message::getRtfBody, "RTF", log);
+        if (rtfText == null || rtfText.isEmpty()) {
+            return;
+        }
+        if (RtfStripper.isHtmlEncapsulated(rtfText)) {
+            // HTML-encapsulated RTF (MS-OXRTFEX) is just a transport encoding of the HTML body: when
+            // the real HTML is present the RTF adds nothing and is dropped; otherwise the HTML is
+            // recovered from it. Only if recovery comes back empty is the raw RTF preserved (as a
+            // body.rtf attachment) so the body text is not lost entirely.
+            if (hasHtml) {
+                return;
             }
+            var recovered = RtfStripper.deEncapsulateHtml(rtfText);
+            if (!recovered.isBlank()) {
+                serializer.addBody(recovered, "text/html; charset=UTF-8");
+            } else {
+                serializer.addAttachment("body.rtf", "application/rtf", rtfText.getBytes(RTF_CHARSET), null, false);
+            }
+            return;
+        }
+        // A genuine RTF body is not renderable by mail clients as a multipart/alternative sibling;
+        // mirror the PST converter: strip it to a plain-text body fallback when no plain text exists,
+        // and preserve the original rich text as a body.rtf attachment.
+        if (!hasPlain) {
+            var stripped = RtfStripper.strip(rtfText);
+            if (!stripped.isEmpty()) {
+                serializer.addBody(stripped, "text/plain; charset=UTF-8");
+            }
+        }
+        serializer.addAttachment("body.rtf", "application/rtf", rtfText.getBytes(RTF_CHARSET), null, false);
+    }
+
+    /** Supplies one body flavour from POI; the checked miss exception keeps the lambda references terse. */
+    @FunctionalInterface
+    private interface BodySupplier {
+        String get() throws ChunkNotFoundException;
+    }
+
+    private static String readBody(BodySupplier supplier, String kind, ConversionLog log) {
+        try {
+            return supplier.get();
         } catch (ChunkNotFoundException ignored) {
+            return null;
+        } catch (RuntimeException failure) {
+            // POI surfaces a corrupt body stream as an unchecked exception (a truncated compressed
+            // RTF stream becomes IllegalStateException, a bad codepage an IllegalArgumentException);
+            // degrade to "no such body" so one broken part does not fail the whole conversion.
+            log.error("Could not extract the " + kind + " body, skipping it: "
+                    + (failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage()));
+            return null;
         }
     }
 
@@ -233,6 +270,7 @@ public final class MsgToEmlConverter {
         if (raw == null || raw.length == 0) {
             return;
         }
+        var usedEmbeddedNames = new HashSet<String>();
         for (var chunks : raw) {
             if (chunks.isEmbeddedMessage()) {
                 var embedded = chunks.getEmbeddedMessage();
@@ -246,7 +284,7 @@ public final class MsgToEmlConverter {
                     nestedEml = "Subject: Error converting nested message\r\n\r\n" + failure.getMessage();
                 }
                 var subject = safeString(safeSubject(embedded));
-                var filename = EmlSerializer.sanitizeFilename(subject.isBlank() ? "embedded" : subject) + ".eml";
+                var filename = uniqueEmbeddedName(subject.isBlank() ? "embedded" : subject, usedEmbeddedNames);
                 log.info("Found embedded message attachment: " + filename);
                 serializer.addEmbeddedMessage(filename, nestedEml);
             } else {
@@ -260,6 +298,17 @@ public final class MsgToEmlConverter {
                 serializer.addAttachment(filename, mime, bytes, contentId, isInline);
             }
         }
+    }
+
+    /** Builds {@code <subject>.eml}, appending {@code " (2)"}, {@code " (3)"}… when an earlier sibling took the name. */
+    private static String uniqueEmbeddedName(String subject, Set<String> usedNames) {
+        var base = EmlSerializer.sanitizeFilename(subject);
+        var filename = base + ".eml";
+        var counter = 2;
+        while (!usedNames.add(filename)) {
+            filename = base + " (" + counter++ + ").eml";
+        }
+        return filename;
     }
 
     private static byte[] attachmentBytes(AttachmentChunks chunks, ConversionLog log) {
@@ -334,25 +383,25 @@ public final class MsgToEmlConverter {
     }
 
     private static String resolveSenderEmail(MAPIMessage message) {
-        var senderSmtpAddress = MAPIProperty.createCustom(0x5D01, Types.ASCII_STRING, "SENDER_SMTP_ADDRESS");
-        var sentRepresentingSmtpAddress =
-                MAPIProperty.createCustom(0x5D02, Types.ASCII_STRING, "SENT_REPRESENTING_SMTP_ADDRESS");
-
-        var email = readMainString(message, senderSmtpAddress);
+        // PidTagSenderSmtpAddress (0x5D01) / PidTagSentRepresentingSmtpAddress (0x5D02). POI has no
+        // constants for these, and a MAPIProperty.createCustom lookup key can never match a map entry
+        // (MAPIProperty does not override equals/hashCode), so the chunk map is scanned by numeric
+        // property id instead.
+        var email = readMainStringById(message, 0x5D01);
         if (email == null || email.isBlank()) {
-            email = readMainString(message, sentRepresentingSmtpAddress);
+            email = readMainStringById(message, 0x5D02);
         }
         if (email == null || email.isBlank()) {
             email = readMainString(message, MAPIProperty.SENDER_EMAIL_ADDRESS);
             if (email != null && !email.isBlank()) {
-                String addrType = readMainString(message, MAPIProperty.SENDER_ADDRTYPE);
+                var addrType = readMainString(message, MAPIProperty.SENDER_ADDRTYPE);
                 email = EmlSerializer.imceaEncapsulate(addrType, email);
             }
         }
         if (email == null || email.isBlank()) {
             email = readMainString(message, MAPIProperty.SENT_REPRESENTING_EMAIL_ADDRESS);
             if (email != null && !email.isBlank()) {
-                String addrType = readMainString(message, MAPIProperty.SENT_REPRESENTING_ADDRTYPE);
+                var addrType = readMainString(message, MAPIProperty.SENT_REPRESENTING_ADDRTYPE);
                 email = EmlSerializer.imceaEncapsulate(addrType, email);
             }
         }
@@ -363,18 +412,19 @@ public final class MsgToEmlConverter {
         var details = message.getRecipientDetailsChunks();
         if (details != null && details.length > 0) {
             boolean found = false;
-            for (var chunks : details) {
+            var limit = Math.min(details.length, MAX_RECIPIENTS);
+            for (var index = 0; index < limit; index++) {
+                var chunks = details[index];
                 var type = readRecipientType(chunks);
                 if (type != null && type == wantedType) {
                     String address = chunks.getRecipientEmailAddress();
 
-                    var smtpAddressProp = MAPIProperty.createCustom(0x39FE, Types.ASCII_STRING, "SMTP_ADDRESS");
-                    var chunkList = chunks.getProperties().get(smtpAddressProp);
-                    String smtpAddress = null;
-                    if (chunkList != null && !chunkList.isEmpty()) {
-                        var val = chunkList.get(0).getValue();
-                        if (val instanceof String s) smtpAddress = s;
-                    }
+                    // PR_SMTP_ADDRESS, exposed by POI as its own chunk. (A map lookup with a
+                    // MAPIProperty.createCustom key can never match — no equals/hashCode — and
+                    // getRecipientEmailAddress already prefers this chunk; reading it explicitly
+                    // keeps the SMTP-vs-encapsulation decision below visible.)
+                    var smtpChunk = chunks.getRecipientSMTPChunk();
+                    var smtpAddress = smtpChunk == null ? null : smtpChunk.getValue();
 
                     if (smtpAddress != null && !smtpAddress.isBlank()) {
                         address = smtpAddress;
@@ -404,8 +454,16 @@ public final class MsgToEmlConverter {
                 // the structured recipient table above is unavailable.
                 for (String part : fallback.split("\\s*;\\s*")) {
                     part = part.trim();
-                    if (!part.isEmpty()) {
-                        serializer.addRecipient(wantedType, part, part);
+                    if (part.isEmpty()) {
+                        continue;
+                    }
+                    if (EmlSerializer.looksLikeSmtpAddress(part)) {
+                        serializer.addRecipient(wantedType, null, part);
+                    } else {
+                        // A bare display name: leave the address empty so the serializer emits its
+                        // explicit undisclosed@invalid placeholder instead of an unparseable
+                        // "Name" <Name> angle-addr.
+                        serializer.addRecipient(wantedType, part, null);
                     }
                 }
             }
@@ -471,6 +529,52 @@ public final class MsgToEmlConverter {
         for (var chunk : list) {
             if (chunk instanceof StringChunk stringChunk) {
                 return stringChunk.getValue();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The first string chunk stored under the given numeric property id, or {@code null}. Used for
+     * properties POI has no {@link MAPIProperty} constant for: the chunk map's keys are POI-internal
+     * instances, and {@code MAPIProperty} has no value-based {@code equals}/{@code hashCode}, so a
+     * {@code createCustom} lookup key silently never matches — scanning by id is the only reliable
+     * route.
+     */
+    private static String readMainStringById(MAPIMessage message, int propertyId) {
+        var mainChunks = message.getMainChunks();
+        if (mainChunks == null) {
+            return null;
+        }
+        for (var entry : mainChunks.getAll().entrySet()) {
+            if (entry.getKey().id != propertyId) {
+                continue;
+            }
+            for (var chunk : entry.getValue()) {
+                if (chunk instanceof StringChunk stringChunk) {
+                    return stringChunk.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The first numeric value of the given fixed-size property id, or {@code null}. Same
+     * scan-by-id rationale as {@link #readMainStringById}.
+     */
+    private static Integer readMainLong(MAPIMessage message, int propertyId) {
+        var mainChunks = message.getMainChunks();
+        if (mainChunks == null) {
+            return null;
+        }
+        for (var entry : mainChunks.getProperties().entrySet()) {
+            if (entry.getKey().id != propertyId) {
+                continue;
+            }
+            var values = entry.getValue();
+            if (values != null && !values.isEmpty() && values.get(0).getValue() instanceof Number number) {
+                return number.intValue();
             }
         }
         return null;

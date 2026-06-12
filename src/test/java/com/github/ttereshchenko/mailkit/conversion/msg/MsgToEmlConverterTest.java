@@ -349,6 +349,222 @@ class MsgToEmlConverterTest {
         assertTrue(errors.stream().anyMatch(message -> message.contains("no data")), errors::toString);
     }
 
+    @Test
+    void sclExportedEvenWhenTransportHeadersCarryMessageId() throws Exception {
+        // R1: the SCL property used to be read with a MAPIProperty.createCustom lookup key, which can
+        // never match a POI property map entry (MAPIProperty has no equals/hashCode) — the header was
+        // never emitted. R2: even with a value, emission was nested inside Message-ID synthesis and
+        // was dropped whenever the transport headers already declared a Message-ID.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .textBody("body")
+                .spamConfidenceLevel(5)
+                .transportHeaders("Message-ID: <keep@example.com>\r\nFrom: orig@example.com\r\n")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("X-MS-Exchange-Organization-SCL: 5"), eml);
+        assertTrue(eml.contains("Message-ID: <keep@example.com>"), eml);
+    }
+
+    @Test
+    void senderSmtpAddressPreferredOverExchangeDn() throws Exception {
+        // R1: PidTagSenderSmtpAddress (0x5D01) was read with a createCustom key that never matches,
+        // so the SMTP form Exchange stores beside the X.500 DN was ignored.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .textBody("body")
+                .sender("Kevin", "/O=ORG/OU=ADMIN GROUP/CN=RECIPIENTS/CN=KEVIN")
+                .senderAddrType("EX")
+                .senderSmtpAddress("kevin@example.com")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("From: \"Kevin\" <kevin@example.com>"), eml);
+        assertFalse(eml.contains("/O=ORG"), eml);
+    }
+
+    @Test
+    void exchangeDnSenderWithoutSmtpFormIsEncapsulated() throws Exception {
+        // R3: an X.500 DN containing "@" inside a CN segment used to bypass IMCEA encapsulation
+        // (the heuristic was a bare contains("@")) and leak raw into the From angle brackets.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .textBody("body")
+                .sender("Kevin Roast", "/O=HOSTED/OU=FIRST ADMIN GROUP/CN=RECIPIENTS/CN=KEVIN.ROAST@BEN")
+                .senderAddrType("EX")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("IMCEAEX-"), eml);
+        assertTrue(eml.contains("@invalid>"), eml);
+        assertFalse(eml.contains("</O="), eml);
+    }
+
+    @Test
+    void exchangeRecipientWithoutSmtpChunkIsEncapsulated() throws Exception {
+        // R3, recipient side: same DN-with-@ leak through the recipient table's address-type fallback.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .textBody("body")
+                .recipientToWithoutSmtp("Jane", "/O=ORG/OU=AD GROUP/CN=RECIPIENTS/CN=JANE.DOE@HQ", "EX")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("IMCEAEX-"), eml);
+        assertFalse(eml.contains("</O="), eml);
+    }
+
+    @Test
+    void corruptRtfBodyDegradesInsteadOfFailingConversion() throws Exception {
+        // R4: POI surfaces a truncated/garbled compressed-RTF stream as an unchecked exception;
+        // before the fix it escaped populateBodies and failed the whole conversion even though the
+        // plain-text body was perfectly readable.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .textBody("still here")
+                .corruptRtfBody()
+                .toBytes();
+
+        var errors = new ArrayList<String>();
+        var log = new ConversionLog() {
+            @Override
+            public void info(String message) {}
+
+            @Override
+            public void error(String message) {
+                errors.add(message);
+            }
+        };
+        var out = new java.io.ByteArrayOutputStream();
+        MsgToEmlConverter.convert(new ByteArrayInputStream(bytes), out, log);
+        var eml = out.toString(java.nio.charset.StandardCharsets.US_ASCII);
+
+        assertTrue(eml.contains("still here"), eml);
+        assertTrue(errors.stream().anyMatch(message -> message.contains("RTF")), errors::toString);
+    }
+
+    @Test
+    void genuineRtfBodyShipsAsBodyRtfAttachmentWithPlainFallback() throws Exception {
+        // R9: a genuine RTF body used to be emitted as an unrenderable text/rtf alternative that
+        // dominated the message size; it now mirrors the PST converter (body.rtf attachment plus a
+        // stripped plain-text body when no other body exists).
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .rtfBody("{\\rtf1 Hello \\b world\\b0 .}")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("filename=\"body.rtf\""), eml);
+        assertTrue(eml.contains("Content-Type: application/rtf"), eml);
+        assertTrue(eml.contains("Hello world."), eml);
+        assertFalse(eml.contains("text/rtf"), eml);
+    }
+
+    @Test
+    void htmlEncapsulatedRtfIsDroppedWhenHtmlBodyPresent() throws Exception {
+        // R9: HTML-encapsulated RTF is just a transport encoding of the HTML body that sits beside
+        // it; re-emitting it doubled the message size for no renderable gain.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .htmlBody("<p>real</p>")
+                .rtfBody("{\\rtf1\\ansi\\fromhtml1 {\\*\\htmltag84 <b>}x{\\*\\htmltag92 </b>}}")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("<p>real</p>"), eml);
+        assertFalse(eml.contains("text/rtf"), eml);
+        assertFalse(eml.contains("application/rtf"), eml);
+    }
+
+    @Test
+    void htmlEncapsulatedRtfRecoversHtmlWhenNoHtmlBody() throws Exception {
+        // R8/R9: hex escapes inside htmltag runs are decoded (the "=" below) and the uc-1 ANSI
+        // fallback "?" after the decoded Cyrillic code point is skipped instead of duplicated.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .rtfBody(
+                        "{\\rtf1\\ansi\\fromhtml1\\uc1 {\\*\\htmltag84 <a href=\"a\\'3db\">}\\u1055?{\\*\\htmltag92 </a>}}")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Content-Type: text/html; charset=UTF-8"), eml);
+        // quoted-printable form of <a href="a=b">П</a>
+        assertTrue(eml.contains("<a href=3D\"a=3Db\">=D0=9F</a>"), eml);
+        assertFalse(eml.contains("text/rtf"), eml);
+    }
+
+    @Test
+    void displayToFallbackUsesPlaceholderForBareNames() throws Exception {
+        // R7: with no structured recipient table, bare display names were emitted as both the name
+        // and the angle-addr ("John Doe" <John Doe>) — an unparseable To header.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .textBody("body")
+                .displayTo("John Doe; jane@example.com")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("\"John Doe\" <undisclosed@invalid>"), eml);
+        assertTrue(eml.contains("<jane@example.com>"), eml);
+        assertFalse(eml.contains("<John Doe>"), eml);
+    }
+
+    @Test
+    void embeddedMessagesWithEqualSubjectsGetDistinctFilenames() throws Exception {
+        // R12: two embedded messages with the same subject used to produce identically named
+        // message/rfc822 attachments.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("outer")
+                .textBody("body")
+                .embeddedAttachment(
+                        "a", MsgFixtureBuilder.topLevel().subject("Dup").textBody("one"))
+                .embeddedAttachment(
+                        "b", MsgFixtureBuilder.topLevel().subject("Dup").textBody("two"))
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("filename=\"Dup.eml\""), eml);
+        assertTrue(eml.contains("filename=\"Dup (2).eml\""), eml);
+    }
+
+    @Test
+    void recipientOverflowIsTruncatedNotFatal() throws Exception {
+        // R12: more than 2048 recipients used to abort the whole conversion; the cap now truncates
+        // with a logged warning instead.
+        var builder = MsgFixtureBuilder.topLevel().subject("big").textBody("body");
+        for (var index = 0; index < 2050; index++) {
+            builder.recipientTo("R" + index, "r" + index + "@example.com");
+        }
+
+        var errors = new ArrayList<String>();
+        var log = new ConversionLog() {
+            @Override
+            public void info(String message) {}
+
+            @Override
+            public void error(String message) {
+                errors.add(message);
+            }
+        };
+        var out = new java.io.ByteArrayOutputStream();
+        MsgToEmlConverter.convert(new ByteArrayInputStream(builder.toBytes()), out, log);
+        var eml = out.toString(java.nio.charset.StandardCharsets.US_ASCII);
+
+        var exported = eml.split("@example\\.com", -1).length - 1;
+        assertEquals(2048, exported, eml.substring(0, Math.min(eml.length(), 500)));
+        assertTrue(errors.stream().anyMatch(message -> message.contains("2050")), errors::toString);
+    }
+
     private String convertString(byte[] input) throws Exception {
         var out = new java.io.ByteArrayOutputStream();
         MsgToEmlConverter.convert(new ByteArrayInputStream(input), out, ConversionLog.NOOP);
