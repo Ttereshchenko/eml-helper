@@ -58,6 +58,37 @@ public final class MapiProperties {
     public static final int PR_IMPORTANCE = 0x0017;
 
     /**
+     * The sender-assigned sensitivity ({@code 0} = normal, {@code 1} = personal, {@code 2} =
+     * private, {@code 3} = company-confidential).
+     * EML alternative: The "Sensitivity:" header.
+     */
+    public static final int PR_SENSITIVITY = 0x0036;
+
+    /**
+     * The normalized subject shared by all messages of a conversation thread.
+     * EML alternative: The "Thread-Topic:" header.
+     */
+    public static final int PR_CONVERSATION_TOPIC_W = 0x0070;
+
+    /**
+     * The binary conversation index tracking the message's position in its thread.
+     * EML alternative: The "Thread-Index:" header (base64-encoded).
+     */
+    public static final int PR_CONVERSATION_INDEX = 0x0071;
+
+    /**
+     * The reply recipients as a FLATENTRYLIST of ENTRYIDs ([MS-OXCDATA] §2.3.3).
+     * EML alternative: The "Reply-To:" header.
+     */
+    public static final int PR_REPLY_RECIPIENT_ENTRIES = 0x004F;
+
+    /**
+     * The reply recipients' display names, semicolon-separated.
+     * EML alternative: The display-name portions of the "Reply-To:" header.
+     */
+    public static final int PR_REPLY_RECIPIENT_NAMES_W = 0x0050;
+
+    /**
      * The plain text body of the message.
      * EML alternative: The text/plain part of the message body.
      */
@@ -246,6 +277,19 @@ public final class MapiProperties {
      * EML alternative: The "Content-Disposition:" header.
      */
     public static final int PR_ATTACH_DISPOSITION = 0x3716;
+
+    /**
+     * The Content-Location URI of the attachment (MHTML web archives).
+     * EML alternative: The "Content-Location:" header.
+     */
+    public static final int PR_ATTACH_CONTENT_LOCATION_W = 0x3713;
+
+    /**
+     * The approximate size in bytes of the attachment object, content plus property overhead
+     * (PidTagAttachSize). Used to tell a too-large attachment apart from one with no stored content.
+     * EML alternative: none.
+     */
+    public static final int PR_ATTACH_SIZE = 0x0E20;
 
     /**
      * Attachment flags ({@code ATT_INVISIBLE_IN_HTML} = 0x1, {@code ATT_INVISIBLE_IN_RTF} = 0x2,

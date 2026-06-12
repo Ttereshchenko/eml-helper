@@ -403,6 +403,24 @@ class EmlSerializerTest {
         assertEquals("line1\r\nline2\r\n", EmlSerializer.quotedPrintableEncode("line1\nline2"));
     }
 
+    // Review nit regression: re-encoding a trailing space as =20 on a full 75-char line used to
+    // produce a 77-char line, one over the RFC 2045 §6.7 limit; it must soft-wrap first.
+    @Test
+    void quotedPrintableKeepsTrailingSpaceEncodingWithinLineLimit() {
+        var fullLine = "a".repeat(74) + " ";
+        var encoded = EmlSerializer.quotedPrintableEncode(fullLine + "\r\nnext");
+        for (var line : encoded.split("\r\n", -1)) {
+            assertTrue(line.length() <= 76, "QP line exceeds 76 chars (" + line.length() + "): " + line);
+        }
+        assertEquals("a".repeat(74) + "=\r\n=20\r\nnext\r\n", encoded, "soft break, then the encoded space");
+
+        // At 74 chars the =20 still fits inline (74 - 1 + 3 = 76): no soft break wanted.
+        assertEquals(
+                "a".repeat(73) + "=20\r\n",
+                EmlSerializer.quotedPrintableEncode("a".repeat(73) + " "),
+                "the boundary case must stay on one line");
+    }
+
     // F19: a stored Message-ID without angle brackets gains them (RFC 5322 §3.6.4).
     @Test
     void messageIdGainsAngleBracketsWhenMissing() throws Exception {

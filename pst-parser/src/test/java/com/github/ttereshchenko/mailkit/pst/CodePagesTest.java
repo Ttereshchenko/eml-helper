@@ -98,4 +98,30 @@ class CodePagesTest {
         assertEquals(text, new String(bytes, CodePages.charsetFor(51936)));
         assertEquals(8, bytes.length, "GB2312 encodes CJK as two-byte sequences");
     }
+
+    // Review finding #3: these ids have a JDK charset but used to degrade to windows-1252 because
+    // no case (and no "windows-N"/"cpN" alias) matched them.
+    @Test
+    void mapsJdkSupportedEbcdicUtf32AndCjkVariantPages() {
+        assertEquals(Charset.forName("IBM037"), CodePages.charsetFor(37));
+        assertEquals(Charset.forName("UTF-32LE"), CodePages.charsetFor(12000));
+        assertEquals(Charset.forName("UTF-32BE"), CodePages.charsetFor(12001));
+        assertEquals(Charset.forName("IBM273"), CodePages.charsetFor(20273));
+        assertEquals(Charset.forName("IBM420"), CodePages.charsetFor(20420));
+        assertEquals(Charset.forName("IBM424"), CodePages.charsetFor(20424));
+        assertEquals(Charset.forName("IBM-Thai"), CodePages.charsetFor(20838));
+        assertEquals(Charset.forName("x-IBM970"), CodePages.charsetFor(20949));
+        assertEquals(Charset.forName("x-IBM1025"), CodePages.charsetFor(21025));
+        assertEquals(Charset.forName("x-ISO-2022-CN-CNS"), CodePages.charsetFor(50229));
+        assertEquals(Charset.forName("x-EUC-TW"), CodePages.charsetFor(51950));
+    }
+
+    // The EBCDIC id band must not swallow the non-EBCDIC 20xxx pages that sit between its members.
+    @Test
+    void ebcdicBandDoesNotShadowNonEbcdicTwentyThousandPages() {
+        assertEquals(Charset.forName("KOI8-R"), CodePages.charsetFor(20866));
+        assertEquals(Charset.forName("EUC-JP"), CodePages.charsetFor(20932));
+        assertEquals(Charset.forName("GB2312"), CodePages.charsetFor(20936));
+        assertEquals(StandardCharsets.US_ASCII, CodePages.charsetFor(20127));
+    }
 }

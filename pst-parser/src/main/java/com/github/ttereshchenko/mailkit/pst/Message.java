@@ -2,9 +2,13 @@ package com.github.ttereshchenko.mailkit.pst;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -36,6 +40,44 @@ public class Message {
 
     /** The {@code \ansicpgN} control word naming the code page of an RTF body's {@code \'hh} escapes. */
     private static final Pattern RTF_ANSI_CODE_PAGE = Pattern.compile("\\\\ansicpg(\\d{1,9})");
+
+    // EntryID provider UIDs ([MS-OXCDATA] §2.2.5): one-off recipients and address-book objects.
+    private static final byte[] ONE_OFF_PROVIDER_UID = {
+        (byte) 0x81,
+        0x2B,
+        0x1F,
+        (byte) 0xA4,
+        (byte) 0xBE,
+        (byte) 0xA3,
+        0x10,
+        0x19,
+        (byte) 0x9D,
+        0x6E,
+        0x00,
+        (byte) 0xDD,
+        0x01,
+        0x0F,
+        0x54,
+        0x02
+    };
+    private static final byte[] ADDRESS_BOOK_PROVIDER_UID = {
+        (byte) 0xDC,
+        (byte) 0xA7,
+        0x40,
+        (byte) 0xC8,
+        (byte) 0xC0,
+        0x42,
+        0x10,
+        0x1A,
+        (byte) 0xB4,
+        (byte) 0xB9,
+        0x08,
+        0x00,
+        0x2B,
+        0x2F,
+        (byte) 0xE1,
+        (byte) 0x82
+    };
 
     private final PstFile pstFile;
     private final int nid;
@@ -172,26 +214,42 @@ public class Message {
     /**
      * The HTML body, or an empty string if the message has none. The returned markup is
      * <em>normalized</em> for re-serialization, not the raw stored bytes: PR_HTML byte content is
-     * decoded with the message's code page and any {@code <meta charset=...>} is rewritten to UTF-8,
-     * and when only an RTF body exists its encapsulated HTML (\fromhtml) is extracted. Use
-     * {@link #getProperty} with {@link MapiProperties#PR_HTML} for the raw bytes.
+     * decoded with the message's code page, any {@code <meta charset=...>} (in the string-typed
+     * PR_BODY_HTML variant too) is rewritten to UTF-8, and when only an RTF body exists its
+     * encapsulated HTML (\fromhtml) is extracted. Use {@link #getProperty} with
+     * {@link MapiProperties#PR_HTML} for the raw bytes.
      */
     public String getHtmlBody() {
         if (propertyContext == null) return "";
-        Object value = propertyContext.getProperty(MapiProperties.PR_HTML);
-        if (value instanceof String text) return text;
-        if (value instanceof byte[] bytes) {
-            Charset charset = getInternetCharset();
-            String decoded = new String(bytes, charset).trim();
-            decoded = decoded.replaceAll("(?i)(<meta[^>]*charset=[\"']?)[^\"'>]+([\"']?[^>]*>)", "$1utf-8$2");
-            return decoded;
-        }
+        String stored = normalizeStoredHtml(propertyContext.getProperty(MapiProperties.PR_HTML), getInternetCharset());
+        if (stored != null) return stored;
 
         String rtf = getRawRtfBody();
         if (rtf.contains("\\fromhtml")) {
             return extractHtmlFromRtf(rtf, getInternetCharset().name());
         }
         return "";
+    }
+
+    /**
+     * Normalizes a stored PR_HTML value for re-serialization as UTF-8: byte content is decoded with
+     * the message's internet code page, and any {@code <meta ... charset=...>} declaration — in the
+     * string-typed PR_BODY_HTML variant as well — is rewritten to UTF-8 so it cannot contradict the
+     * re-encoded output. Returns {@code null} when the value is neither a string nor bytes.
+     * Package-private for testing.
+     */
+    static String normalizeStoredHtml(Object value, Charset internetCharset) {
+        if (value instanceof String text) {
+            return rewriteMetaCharsetToUtf8(text);
+        }
+        if (value instanceof byte[] bytes) {
+            return rewriteMetaCharsetToUtf8(new String(bytes, internetCharset).trim());
+        }
+        return null;
+    }
+
+    private static String rewriteMetaCharsetToUtf8(String html) {
+        return html.replaceAll("(?i)(<meta[^>]*charset=[\"']?)[^\"'>]+([\"']?[^>]*>)", "$1utf-8$2");
     }
 
     /**
@@ -541,7 +599,12 @@ public class Message {
         return html.toString();
     }
 
-    private String getRawRtfBody() {
+    /**
+     * The decompressed PR_RTF_COMPRESSED text exactly as stored (no encapsulation filtering), or an
+     * empty string. The LzFu decode reads the bytes as windows-1252, which round-trips all 256 byte
+     * values — encoding the result back as windows-1252 recovers the original RTF bytes.
+     */
+    public String getRawRtfBody() {
         if (cachedRawRtf != null) {
             return cachedRawRtf;
         }
@@ -562,15 +625,25 @@ public class Message {
     }
 
     /**
-     * The RTF body, or an empty string if the message has none (or its RTF only encapsulates HTML,
-     * which {@link #getHtmlBody()} surfaces instead).
+     * The RTF body, or an empty string if the message has none (or its RTF only encapsulates
+     * another format — see {@link #isEncapsulationRtf}).
      */
     public String getRtfBody() {
         String rtf = getRawRtfBody();
-        if (rtf.contains("\\fromhtml")) {
-            return ""; // It's encapsulated HTML, not intended to be shown as RTF
+        if (isEncapsulationRtf(rtf)) {
+            return ""; // Encapsulated HTML/plain text, not intended to be shown as RTF
         }
         return rtf;
+    }
+
+    /**
+     * Whether the RTF merely encapsulates another body format ([MS-OXRTFEX] §2.1.3.1): {@code
+     * \fromhtml} wraps the HTML body (surfaced by {@link #getHtmlBody()}) and {@code \fromtext}
+     * wraps the plain-text body (already stored in PR_BODY), so neither is a genuine RTF body.
+     * Package-private for testing.
+     */
+    static boolean isEncapsulationRtf(String rtf) {
+        return rtf.contains("\\fromhtml") || rtf.contains("\\fromtext");
     }
 
     /** The raw PR_RTF_COMPRESSED bytes, or {@code null} if absent. */
@@ -903,6 +976,131 @@ public class Message {
             }
         }
         return "";
+    }
+
+    /**
+     * The reply recipients (PR_REPLY_RECIPIENT_ENTRIES, with PR_REPLY_RECIPIENT_NAMES as the
+     * display-name fallback), or an empty list when the message names none or the entry list is
+     * unparseable. Addresses honour this message's {@link AddressPreference} like every other
+     * recipient. The {@link Recipient#type} of each entry is {@code 1} (To) — RFC 5322's Reply-To
+     * has no type distinction.
+     */
+    public List<Recipient> getReplyTo() {
+        if (propertyContext == null) return List.of();
+        byte[] entries = propertyContext.getProperty(MapiProperties.PR_REPLY_RECIPIENT_ENTRIES) instanceof byte[] value
+                ? value
+                : null;
+        String names = propertyContext.getProperty(MapiProperties.PR_REPLY_RECIPIENT_NAMES_W) instanceof String value
+                ? value
+                : "";
+        return parseReplyRecipients(entries, names, getString8Charset(), addressPreference);
+    }
+
+    /**
+     * Parses a PR_REPLY_RECIPIENT_ENTRIES FLATENTRYLIST ([MS-OXCDATA] §2.3.3): cEntries and cbEntries
+     * (4 bytes each), then per entry a 4-byte size and the ENTRYID bytes, padded to 4-byte alignment.
+     * One-off and address-book ENTRYIDs are resolved to addresses; other providers and malformed
+     * entries are skipped. Package-private for testing.
+     */
+    static List<Recipient> parseReplyRecipients(
+            byte[] flatEntryList, String displayNames, Charset string8Charset, AddressPreference addressPreference) {
+        if (flatEntryList == null || flatEntryList.length < 8) {
+            return List.of();
+        }
+        var names = displayNames == null || displayNames.isBlank() ? new String[0] : displayNames.split(";");
+        var buffer = ByteBuffer.wrap(flatEntryList).order(ByteOrder.LITTLE_ENDIAN);
+        long count = Integer.toUnsignedLong(buffer.getInt(0));
+        var recipients = new ArrayList<Recipient>();
+        int offset = 8; // past cEntries + cbEntries
+        for (int index = 0; index < count && offset + 4 <= flatEntryList.length; index++) {
+            long entrySize = Integer.toUnsignedLong(buffer.getInt(offset));
+            long entryEnd = offset + 4 + entrySize;
+            if (entrySize == 0 || entryEnd > flatEntryList.length) {
+                break; // malformed entry: stop rather than read past the blob
+            }
+            var entryId = Arrays.copyOfRange(flatEntryList, offset + 4, (int) entryEnd);
+            String fallbackName = index < names.length ? names[index].trim() : "";
+            var recipient = parseEntryIdRecipient(entryId, fallbackName, string8Charset, addressPreference);
+            if (recipient != null) {
+                recipients.add(recipient);
+            }
+            offset = (int) (entryEnd + ((4 - (entryEnd & 3)) & 3)); // next FLATENTRY is 4-byte aligned
+        }
+        return recipients;
+    }
+
+    private static Recipient parseEntryIdRecipient(
+            byte[] entryId, String fallbackName, Charset string8Charset, AddressPreference addressPreference) {
+        if (entryId.length < 20) {
+            return null;
+        }
+        var providerUid = Arrays.copyOfRange(entryId, 4, 20);
+        if (Arrays.equals(providerUid, ONE_OFF_PROVIDER_UID)) {
+            return parseOneOffRecipient(entryId, fallbackName, string8Charset, addressPreference);
+        }
+        if (Arrays.equals(providerUid, ADDRESS_BOOK_PROVIDER_UID)) {
+            // [MS-OXCDATA] §2.2.5.2: version (4) + type (4) + X500 DN (null-terminated, ASCII).
+            if (entryId.length <= 28) {
+                return null;
+            }
+            String legacyDn = readNulTerminated(entryId, 28, StandardCharsets.US_ASCII);
+            if (legacyDn.isBlank()) {
+                return null;
+            }
+            String email = addressPreference == AddressPreference.PREFER_LEGACY_DN
+                    ? legacyDn
+                    : imceaEncapsulate("EX", legacyDn);
+            return new Recipient(1, fallbackName, email);
+        }
+        return null; // unknown provider — nothing address-like to extract
+    }
+
+    private static Recipient parseOneOffRecipient(
+            byte[] entryId, String fallbackName, Charset string8Charset, AddressPreference addressPreference) {
+        // [MS-OXCDATA] §2.2.5.1: version (2) + flags (2, bit 0x8000 = Unicode strings), then the
+        // display name, address type and email address, each null-terminated.
+        if (entryId.length < 24) {
+            return null;
+        }
+        int flags = Short.toUnsignedInt(
+                ByteBuffer.wrap(entryId).order(ByteOrder.LITTLE_ENDIAN).getShort(22));
+        boolean unicode = (flags & 0x8000) != 0;
+        var strings =
+                readNulTerminatedStrings(entryId, 24, unicode ? StandardCharsets.UTF_16LE : string8Charset, unicode, 3);
+        if (strings.size() < 3 || strings.get(2).isBlank()) {
+            return null;
+        }
+        String name = strings.get(0);
+        String addressType = strings.get(1);
+        String email = strings.get(2);
+        if (addressPreference != AddressPreference.PREFER_LEGACY_DN) {
+            email = imceaEncapsulate(addressType, email);
+        }
+        return new Recipient(1, !name.isBlank() ? name : fallbackName, email);
+    }
+
+    private static String readNulTerminated(byte[] data, int offset, Charset charset) {
+        int end = offset;
+        while (end < data.length && data[end] != 0) {
+            end++;
+        }
+        return new String(data, offset, end - offset, charset);
+    }
+
+    private static List<String> readNulTerminatedStrings(
+            byte[] data, int offset, Charset charset, boolean unicode, int maxCount) {
+        int step = unicode ? 2 : 1;
+        var values = new ArrayList<String>(maxCount);
+        int position = offset;
+        while (values.size() < maxCount && position + step <= data.length) {
+            int end = position;
+            while (end + step <= data.length && !(unicode ? data[end] == 0 && data[end + 1] == 0 : data[end] == 0)) {
+                end += step;
+            }
+            values.add(new String(data, position, end - position, charset));
+            position = end + step;
+        }
+        return values;
     }
 
     PropertyContext getPropertyContext() {

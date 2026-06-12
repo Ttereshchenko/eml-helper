@@ -1,0 +1,40 @@
+From: "Alice Example" <alice@example.com>
+To: "Bob Example" <bob@example.com>
+Subject: RE: Quarterly budget
+Date: Tue, 11 Feb 2025 10:15:00 +0000
+Message-ID: <fidelity-sample@mailkit.example>
+X-MailKit-Synthesized-Headers: From, To, Subject, Date, Message-ID
+Sensitivity: Private
+Thread-Topic: Quarterly budget
+Thread-Index: AQIDBAU=
+Reply-To: "Replies Mailbox" <replies@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MAILKIT_a8d4429b315e4b0f8f2fc3ec85842f1c"
+
+--MAILKIT_a8d4429b315e4b0f8f2fc3ec85842f1c
+Content-Type: multipart/alternative; boundary="MAILKIT_ALT_1cd3aa8c4f634fe3979686a1a6fa14ab"
+
+--MAILKIT_ALT_1cd3aa8c4f634fe3979686a1a6fa14ab
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Please find the budget attached.
+--MAILKIT_ALT_1cd3aa8c4f634fe3979686a1a6fa14ab
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><head>
+<meta charset=3D"utf-8">
+</head><body>
+<p>Please find the budget attached.</p>
+<img src=3D"http://example.com/logo.png">
+</body></html>
+--MAILKIT_ALT_1cd3aa8c4f634fe3979686a1a6fa14ab--
+--MAILKIT_a8d4429b315e4b0f8f2fc3ec85842f1c
+Content-Type: image/png; name="logo.png"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="logo.png"
+Content-Location: http://example.com/logo.png
+
+iVBORw0KGgo=
+--MAILKIT_a8d4429b315e4b0f8f2fc3ec85842f1c--

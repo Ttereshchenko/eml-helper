@@ -386,15 +386,7 @@ public final class EmlSerializer {
                     index++;
                 }
 
-                // If line ends with space or tab, we must encode it
-                if (lineLen > 0) {
-                    char lastChar = builder.charAt(builder.length() - 1);
-                    if (lastChar == ' ' || lastChar == '\t') {
-                        builder.setLength(builder.length() - 1);
-                        builder.append(String.format("=%02X", (int) lastChar));
-                    }
-                }
-
+                escapeTrailingWhitespace(builder, lineLen);
                 builder.append("\r\n");
                 lineLen = 0;
                 continue;
@@ -416,14 +408,30 @@ public final class EmlSerializer {
             }
         }
         if (lineLen > 0) {
-            char lastChar = builder.charAt(builder.length() - 1);
-            if (lastChar == ' ' || lastChar == '\t') {
-                builder.setLength(builder.length() - 1);
-                builder.append(String.format("=%02X", (int) lastChar));
-            }
+            escapeTrailingWhitespace(builder, lineLen);
             builder.append("\r\n");
         }
         return builder.toString();
+    }
+
+    /**
+     * A line must not end in raw space/tab (RFC 2045 §6.7 rule 3): re-encode a trailing one as
+     * {@code =20}/{@code =09}. Replacing one char with three can push a full line past the 76-char
+     * limit, so soft-wrap first when the remainder would not fit.
+     */
+    private static void escapeTrailingWhitespace(StringBuilder builder, int lineLen) {
+        if (lineLen <= 0) {
+            return;
+        }
+        char lastChar = builder.charAt(builder.length() - 1);
+        if (lastChar != ' ' && lastChar != '\t') {
+            return;
+        }
+        builder.setLength(builder.length() - 1);
+        if (lineLen > 74) {
+            builder.append("=\r\n");
+        }
+        builder.append(String.format("=%02X", (int) lastChar));
     }
 
     public static String formatAddress(String name, String email) {

@@ -46,6 +46,7 @@ final class CodePages {
             return firstSupported("ISO-8859-" + (codePageId - 28590));
         }
         return switch (codePageId) {
+            case 37 -> firstSupported("IBM037"); // EBCDIC US-Canada ("cp37" is not a JDK alias)
             case 437 -> firstSupported("IBM437");
             case 708 -> firstSupported("ISO-8859-6"); // ASMO 708 is ISO-8859-6 Arabic
             case 850 -> firstSupported("IBM850");
@@ -61,6 +62,8 @@ final class CodePages {
             case 950 -> firstSupported("x-windows-950", "Big5");
             case 1200 -> StandardCharsets.UTF_16LE;
             case 1201 -> StandardCharsets.UTF_16BE;
+            case 12000 -> firstSupported("UTF-32LE");
+            case 12001 -> firstSupported("UTF-32BE");
             case 1361 -> firstSupported("x-Johab");
             case 10000 -> firstSupported("x-MacRoman");
             case 10004 -> firstSupported("x-MacArabic");
@@ -75,16 +78,43 @@ final class CodePages {
             case 10081 -> firstSupported("x-MacTurkish");
             case 10082 -> firstSupported("x-MacCroatian");
             case 20127 -> StandardCharsets.US_ASCII;
+            // EBCDIC national pages map to the JDK's IBM charsets by stripping the 20000 offset
+            // (20273 -> IBM273 ... 20924 -> cp924). Practically absent from real mail stores;
+            // mapped for completeness. 20866/20932/20936 are NOT EBCDIC and keep their cases below.
+            case 20273,
+                    20277,
+                    20278,
+                    20280,
+                    20284,
+                    20285,
+                    20290,
+                    20297,
+                    20420,
+                    20423,
+                    20424,
+                    20833,
+                    20838,
+                    20871,
+                    20880,
+                    20905,
+                    20924 -> {
+                int ibmId = codePageId - 20000;
+                yield firstSupported("IBM" + ibmId, "x-IBM" + ibmId, "cp" + ibmId);
+            }
             case 20866 -> firstSupported("KOI8-R");
             case 20932 -> firstSupported("EUC-JP"); // JIS X 0208-1990 & 0212-1990
             case 20936, 51936 -> firstSupported("GB2312", "EUC-CN"); // Simplified Chinese (GB2312-80 / EUC-CN)
+            case 20949 -> firstSupported("x-IBM970", "EUC-KR"); // Korean Wansung
+            case 21025 -> firstSupported("x-IBM1025"); // EBCDIC Cyrillic
             case 21866 -> firstSupported("KOI8-U");
             case 38598 -> firstSupported("ISO-8859-8"); // ISO-8859-8-I (logical Hebrew); same bytes
             case 50220, 50221, 50222 -> firstSupported("ISO-2022-JP");
             case 50225 -> firstSupported("ISO-2022-KR");
             case 50227 -> firstSupported("ISO-2022-CN", "x-ISO-2022-CN-GB");
+            case 50229 -> firstSupported("x-ISO-2022-CN-CNS", "ISO-2022-CN"); // Traditional Chinese ISO-2022
             case 51932 -> firstSupported("EUC-JP");
             case 51949 -> firstSupported("EUC-KR");
+            case 51950 -> firstSupported("x-EUC-TW"); // Traditional Chinese EUC (CNS 11643)
             case 54936 -> firstSupported("GB18030");
             case 57002 -> firstSupported("x-ISCII91"); // ISCII Devanagari
             case 65001 -> StandardCharsets.UTF_8;
