@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -136,6 +137,65 @@ class PstFileTest {
             }
             assertTrue(sawEmbedded, "Expected the embedded-message attachment");
         }
+    }
+
+    /**
+     * C3: none of the bundled fixtures records a store-wide code page on the message store object,
+     * so the accessor must report that as {@code null} (repeatedly — the result is cached) instead
+     * of failing; the charset chain then ends at windows-1252.
+     */
+    @Test
+    void storeCodePageIsNullWhenTheStoreRecordsNone() throws Exception {
+        try (var pst = new PstFile(fixture("dist-list.pst"))) {
+            assertNull(pst.storeCodePage(), "dist-list.pst's store object carries no code page");
+            assertNull(pst.storeCodePage(), "the cached second read must agree");
+        }
+    }
+
+    /**
+     * The {@link Message#readEmbeddedMessage} seam resolves submessage.pst's embedded message
+     * (fixture from the pstsdk test corpus, Apache-2.0) — including the PR_DISPLAY_NAME that names
+     * the exported .eml when no filename properties exist.
+     */
+    @Test
+    void readsEmbeddedMessageThroughTheMessageSeam() throws Exception {
+        try (var pst = new PstFile(fixture("submessage.pst"))) {
+            var root = new Folder(pst, NID_ROOT_FOLDER);
+            boolean sawEmbedded = false;
+            for (var entry : collectMessagesWithAttachments(pst, root)) {
+                for (var attachment : entry.getAttachments()) {
+                    if (attachment.getAttachMethod() != 5) { // afEmbeddedMessage
+                        continue;
+                    }
+                    sawEmbedded = true;
+                    var embedded = entry.readEmbeddedMessage(attachment);
+                    assertNotNull(embedded, "The embedded message must resolve through the seam");
+                    assertEquals("This is an embedded message", embedded.getSubject());
+                    assertTrue(
+                            embedded.getBody().contains("This is the body of an embedded message"),
+                            "The embedded body must be readable");
+                    assertEquals(
+                            "This is an embedded message",
+                            attachment.getDisplayName(),
+                            "Embedded attachments carry their name in PR_DISPLAY_NAME");
+                }
+            }
+            assertTrue(sawEmbedded, "Expected submessage.pst to contain an embedded-message attachment");
+        }
+    }
+
+    private static List<Message> collectMessagesWithAttachments(PstFile pst, Folder folder) throws Exception {
+        var messages = new ArrayList<Message>();
+        for (int nid : folder.getMessages()) {
+            var message = new Message(pst, nid);
+            if (message.hasAttachments() || !message.getAttachments().isEmpty()) {
+                messages.add(message);
+            }
+        }
+        for (var child : folder.getSubFolders()) {
+            messages.addAll(collectMessagesWithAttachments(pst, child));
+        }
+        return messages;
     }
 
     @Test

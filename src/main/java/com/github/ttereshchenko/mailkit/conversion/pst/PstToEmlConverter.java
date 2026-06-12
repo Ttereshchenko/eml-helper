@@ -29,6 +29,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Pure (UI-free) orchestration that walks the IPM subtree of an open {@link PstFile}
@@ -53,6 +54,9 @@ public final class PstToEmlConverter {
     // Keep the full output path within Windows' 260-char MAX_PATH (with headroom for the long-path API).
     private static final int MAX_PATH_LENGTH = 255;
     private static final int ATTACH_EMBEDDED_MSG = 5; // PR_ATTACH_METHOD == afEmbeddedMessage
+    // PR_ATTACH_METHOD values whose content lives outside the store ([MS-OXCMSG] §2.2.2.9).
+    private static final int ATTACH_BY_REFERENCE = 2; // afByReference
+    private static final int ATTACH_BY_REFERENCE_ONLY = 4; // afByRefOnly (3 = afByReferenceResolve)
     // maxNodeSize bounds a single attachment, but a crafted message can declare many of them and the
     // serializer holds every part in memory before writing — the aggregate can OutOfMemoryError, which
     // (like the folder-depth Error) escapes catch(Exception). Cap the per-message total bytes and count.
@@ -69,6 +73,12 @@ public final class PstToEmlConverter {
     // Low 5 bits of a NID encode its type; a normal message node is type 0x04.
     private static final int NID_TYPE_MASK = 0x1F;
     private static final int NID_TYPE_NORMAL_MESSAGE = 0x04;
+    // Matches the Exchange journal-report marker header at the start of a transport-header line;
+    // its value is almost always empty, so only the same-line remainder is captured (the marker is
+    // not folded in practice).
+    private static final Pattern JOURNAL_REPORT_HEADER =
+            Pattern.compile("(?im)^X-MS-Journal-Report[ \\t]*:[ \\t]*(.*)$");
+
     // Synthetic folders that hold messages recovered outside the normal folder walk.
     private static final String RECOVERED_FOLDER_NAME = "Recovered Items";
     private static final String ORPHANED_FOLDER_NAME = "Orphaned Items";
@@ -111,6 +121,7 @@ public final class PstToEmlConverter {
         private int converted;
         private int failedMessages;
         private int failedFolders;
+        private int failedAttachments;
         private int recoveredDeleted;
         private int recoveredOrphans;
 
@@ -120,6 +131,10 @@ public final class PstToEmlConverter {
 
         public int failedMessages() {
             return failedMessages;
+        }
+
+        public int failedAttachments() {
+            return failedAttachments;
         }
 
         public int failedFolders() {
@@ -290,7 +305,7 @@ public final class PstToEmlConverter {
                     }
                 }
 
-                var serializer = createSerializer(message, options, pstFile, log);
+                var serializer = createSerializer(message, options, pstFile, 0, log, stats);
                 writeSerializerAtomically(serializer, emlFile);
                 stats.converted++;
                 if (dumpster) {
@@ -497,7 +512,7 @@ public final class PstToEmlConverter {
                         }
                     }
 
-                    var serializer = createSerializer(message, options, pstFile, log);
+                    var serializer = createSerializer(message, options, pstFile, 0, log, stats);
                     writeSerializerAtomically(serializer, emlFile);
                     stats.converted++;
                 } catch (Exception exception) {
@@ -549,11 +564,11 @@ public final class PstToEmlConverter {
     }
 
     static EmlSerializer createSerializer(Message message, Options options, PstFile pstFile, ConversionLog log) {
-        return createSerializer(message, options, pstFile, 0, log);
+        return createSerializer(message, options, pstFile, 0, log, new Stats());
     }
 
     static EmlSerializer createSerializer(
-            Message message, Options options, PstFile pstFile, int depth, ConversionLog log) {
+            Message message, Options options, PstFile pstFile, int depth, ConversionLog log, Stats stats) {
         if (depth > MAX_EMBEDDED_DEPTH) {
             log.info("Maximum nested message depth reached. Truncating message.");
             var stub = new EmlSerializer();
@@ -563,10 +578,18 @@ public final class PstToEmlConverter {
         }
         var serializer = new EmlSerializer();
 
+        String transportHeaders = message.getTransportHeaders();
         if (options.useOriginalHeaders()) {
-            String headers = message.getTransportHeaders();
-            if (headers != null && !headers.isBlank()) {
-                serializer.setTransportHeaders(headers);
+            if (transportHeaders != null && !transportHeaders.isBlank()) {
+                serializer.setTransportHeaders(transportHeaders);
+            }
+        } else {
+            // The journal-report marker has no MAPI-derived substitute: without it an exported
+            // Exchange journal report is no longer identifiable as one, so it survives even when
+            // the user opted out of the original transport headers.
+            String journalMarker = journalReportMarkerValue(transportHeaders);
+            if (journalMarker != null) {
+                serializer.addCustomHeader("X-MS-Journal-Report", journalMarker);
             }
         }
 
@@ -648,6 +671,14 @@ public final class PstToEmlConverter {
         }
 
         String msgClass = message.getMessageClass();
+        if (msgClass != null && msgClass.startsWith("IPM.Note.SMIME")) {
+            // The serializer re-encodes the MIME structure, which necessarily invalidates a
+            // signed/encrypted envelope; surface that instead of letting the user discover it
+            // when signature verification fails.
+            log.info("Message " + message.getNid() + " is S/MIME (" + msgClass
+                    + "); the converted EML re-encodes the MIME structure, so the original"
+                    + " signature/encryption envelope will not verify");
+        }
         // Emit a calendar invite for both calendar items (IPM.Appointment) and meeting messages
         // (IPM.Schedule.Meeting.*); both store the start/end/location named properties below.
         if (msgClass != null
@@ -707,33 +738,51 @@ public final class PstToEmlConverter {
             if (attachName.isEmpty()) attachName = "attachment.dat";
 
             if (attachment.getAttachMethod() == ATTACH_EMBEDDED_MSG) {
-                Integer embedNid = attachment.getEmbeddedMessageNodeId();
-                if (embedNid != null) {
-                    log.info("Found embedded message attachment: " + attachName);
-                    try {
-                        var attachNode = attachment.getNode();
-                        if (attachNode != null) {
-                            NodeEntry embedEntry = pstFile.readSubnodeEntry(attachNode.subBid(), embedNid);
-                            if (embedEntry != null) {
-                                var embedMessage = new Message(pstFile, embedEntry);
-                                embedMessage.setAddressPreference(options.addressPreference());
-                                var embedSerializer = createSerializer(embedMessage, options, pstFile, depth + 1, log);
-                                var stringWriter = new StringWriter();
-                                embedSerializer.writeTo(stringWriter);
-                                if (!attachName.toLowerCase(Locale.ROOT).endsWith(".eml")) attachName += ".eml";
-                                serializer.addEmbeddedMessage(attachName, stringWriter.toString());
-                            }
-                        }
-                    } catch (Exception exception) {
-                        log.error("Failed to extract embedded message '" + attachName + "': "
-                                + describeFailure(exception));
+                if (attachName.equals("attachment.dat")) {
+                    // Embedded messages usually carry no filename properties, only PR_DISPLAY_NAME
+                    // (typically the embedded subject); prefer it over the generic default.
+                    var displayName = attachment.getDisplayName();
+                    attachName = !displayName.isBlank() ? displayName : "message";
+                }
+                try {
+                    Message embedMessage = message.readEmbeddedMessage(attachment);
+                    if (embedMessage == null) {
+                        // A method-5 attachment that does not resolve to a message node means the
+                        // store is damaged; dropping it silently would lose the message a journal
+                        // report (or forward) exists to carry.
+                        stats.failedAttachments++;
+                        log.error("Failed to resolve embedded message '" + attachName + "' in message "
+                                + message.getNid() + "; the attachment was skipped");
+                        continue;
                     }
+                    log.info("Found embedded message attachment: " + attachName);
+                    var embedSerializer = createSerializer(embedMessage, options, pstFile, depth + 1, log, stats);
+                    var stringWriter = new StringWriter();
+                    embedSerializer.writeTo(stringWriter);
+                    if (!attachName.toLowerCase(Locale.ROOT).endsWith(".eml")) attachName += ".eml";
+                    serializer.addEmbeddedMessage(attachName, stringWriter.toString());
+                } catch (Exception exception) {
+                    stats.failedAttachments++;
+                    log.error("Failed to extract embedded message '" + attachName + "': " + describeFailure(exception));
                 }
                 continue;
             }
 
             byte[] data = attachment.getData();
-            if (data == null) continue;
+            if (data == null) {
+                int attachMethod = attachment.getAttachMethod();
+                if (attachMethod >= ATTACH_BY_REFERENCE && attachMethod <= ATTACH_BY_REFERENCE_ONLY) {
+                    // By-reference attachments are links to files outside the store; there are no
+                    // bytes to export, so this is expected rather than a failure.
+                    log.info("Attachment '" + attachName + "' in message " + message.getNid()
+                            + " is a reference to a file outside the store; nothing to export");
+                } else {
+                    stats.failedAttachments++;
+                    log.error("Attachment '" + attachName + "' in message " + message.getNid()
+                            + " has no stored content (attach method " + attachMethod + "); it was skipped");
+                }
+                continue;
+            }
 
             totalAttachmentBytes += data.length;
             if (totalAttachmentBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
@@ -816,6 +865,20 @@ public final class PstToEmlConverter {
             return "Folder_" + nid + "_" + sanitized;
         }
         return sanitized;
+    }
+
+    /**
+     * The value of the {@code X-MS-Journal-Report} header in an original transport-header block, or
+     * {@code null} when the block has none. The marker is normally empty-valued ([MS-OXTNEF]
+     * journaling), so an empty string is a meaningful "present" result distinct from {@code null}.
+     * Package-private for testing.
+     */
+    static String journalReportMarkerValue(String transportHeaders) {
+        if (transportHeaders == null || transportHeaders.isBlank()) {
+            return null;
+        }
+        var matcher = JOURNAL_REPORT_HEADER.matcher(transportHeaders);
+        return matcher.find() ? matcher.group(1).trim() : null;
     }
 
     /**

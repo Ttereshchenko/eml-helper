@@ -128,6 +128,65 @@ class PstConversionTest {
         }
     }
 
+    /**
+     * N2/N3 e2e against a real archive: submessage.pst (pstsdk test corpus, Apache-2.0) carries an
+     * embedded message whose attachment has only PR_DISPLAY_NAME. The export must contain a
+     * message/rfc822 part named after that display name (not the old "attachment.dat.eml"), with
+     * the embedded subject and body intact.
+     */
+    @Test
+    void convertsSubmessagePstEmbeddedMessageAsNamedRfc822Part() throws Exception {
+        Path path = Paths.get("src/test/resources/samples/pst/submessage.pst");
+        Path tempDir = java.nio.file.Files.createTempDirectory("pst_submessage");
+        try (var pstFile = new PstFile(path)) {
+            var options = new PstToEmlConverter.Options(
+                    PstToEmlConverter.DuplicateHandling.OVERWRITE,
+                    null,
+                    false,
+                    true,
+                    Message.AddressPreference.PREFER_SMTP,
+                    false,
+                    false,
+                    64L * 1024 * 1024);
+            var stats = new PstToEmlConverter.Stats();
+            PstToEmlConverter.processFolder(
+                    pstFile, 0x122, tempDir, options, stats, new ProgressIndicatorBase(), "", ConversionLog.NOOP);
+
+            String hostEml = null;
+            try (var stream = java.nio.file.Files.walk(tempDir)) {
+                for (Path eml : stream.filter(pathEntry -> pathEntry.toString().endsWith(".eml"))
+                        .toList()) {
+                    String content = java.nio.file.Files.readString(eml);
+                    if (content.contains("Subject: This is a message which has an embedded message attached")) {
+                        hostEml = content;
+                    }
+                }
+            }
+            org.junit.jupiter.api.Assertions.assertNotNull(hostEml, "The host message must be exported");
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    hostEml.contains("Content-Type: message/rfc822"),
+                    "The embedded message must be a message/rfc822 part");
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    hostEml.contains("name=\"This is an embedded message.eml\""),
+                    "N3: the part takes its name from the attachment's PR_DISPLAY_NAME");
+            org.junit.jupiter.api.Assertions.assertFalse(
+                    hostEml.contains("attachment.dat.eml"), "N3: the generic default name must be gone");
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    hostEml.contains("Subject: This is an embedded message"),
+                    "The embedded message's own headers must survive");
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    hostEml.contains("This is the body of an embedded message"),
+                    "The embedded message's body must survive");
+            org.junit.jupiter.api.Assertions.assertEquals(0, stats.failedAttachments(), "No attachment may be lost");
+        } finally {
+            try (var stream = java.nio.file.Files.walk(tempDir)) {
+                stream.sorted(java.util.Comparator.reverseOrder())
+                        .map(java.nio.file.Path::toFile)
+                        .forEach(java.io.File::delete);
+            }
+        }
+    }
+
     @Test
     void testConversionOutput() throws Exception {
         Path path = Paths.get("src/test/resources/samples/pst/tika-testPST.pst");
@@ -156,6 +215,7 @@ class PstConversionTest {
             boolean foundRoutableFrom = false;
             boolean foundBodyText = false;
             boolean foundAttachment = false;
+            boolean foundEmbeddedMessagePart = false;
 
             for (Path eml : emls) {
                 String content = java.nio.file.Files.readString(eml);
@@ -168,6 +228,10 @@ class PstConversionTest {
 
                 if (content.contains("Nick Burch resolved TIKA-1249")) {
                     foundBodyText = true;
+                }
+
+                if (content.contains("Content-Type: message/rfc822")) {
+                    foundEmbeddedMessagePart = true;
                 }
 
                 if (content.contains("Content-Disposition: attachment")) {
@@ -203,6 +267,11 @@ class PstConversionTest {
 
             org.junit.jupiter.api.Assertions.assertTrue(foundRoutableFrom, "Should have a routable SMTP From");
             org.junit.jupiter.api.Assertions.assertTrue(foundBodyText, "Should have decoded body text");
+            // T1: these two used to be computed but never asserted.
+            org.junit.jupiter.api.Assertions.assertTrue(foundAttachment, "Should have at least one attachment part");
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    foundEmbeddedMessagePart,
+                    "tika-testPST.pst's embedded message must export as a message/rfc822 part");
         } finally {
             try (var stream = java.nio.file.Files.walk(tempDir)) {
                 stream.sorted(java.util.Comparator.reverseOrder())
@@ -446,7 +515,8 @@ class PstConversionTest {
                 false,
                 false,
                 64L * 1024 * 1024);
-        var stub = PstToEmlConverter.createSerializer(null, options, null, 11, ConversionLog.NOOP);
+        var stub = PstToEmlConverter.createSerializer(
+                null, options, null, 11, ConversionLog.NOOP, new PstToEmlConverter.Stats());
 
         java.io.StringWriter writer = new java.io.StringWriter();
         stub.writeTo(writer);

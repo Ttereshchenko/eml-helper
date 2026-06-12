@@ -46,6 +46,15 @@ public class Attachment {
     }
 
     /**
+     * The display name (PR_DISPLAY_NAME), or an empty string if absent. Embedded-message
+     * attachments usually carry only this (typically the embedded message's subject) and no
+     * filename properties.
+     */
+    public String getDisplayName() {
+        return propertyContext.getProperty(MapiProperties.PR_DISPLAY_NAME_W) instanceof String value ? value : "";
+    }
+
+    /**
      * The attachment content fully materialized in memory, or {@code null} if absent. Reads larger
      * than the store's configured {@code maxNodeSize} fail; for large attachments prefer
      * {@link #openDataStream()}.

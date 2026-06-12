@@ -19,6 +19,8 @@ import java.util.UUID;
 
 public final class EmlSerializer {
     private static final String CRLF = "\r\n";
+    // RFC 5322 §2.1.1: a header line must never exceed 998 characters (excluding CRLF).
+    private static final int MAX_HEADER_LINE_LENGTH = 998;
     public static final int RECIPIENT_TYPE_TO = 1;
     public static final int RECIPIENT_TYPE_CC = 2;
     public static final int RECIPIENT_TYPE_BCC = 3;
@@ -204,7 +206,14 @@ public final class EmlSerializer {
             String headerName = entry.getKey();
             if (!present.contains(headerName.toLowerCase(Locale.ROOT))) {
                 for (String value : entry.getValue()) {
-                    appendHeader(out, headerName, encodeHeaderIfNeeded(value));
+                    if (value == null || value.isBlank()) {
+                        // An empty field body is legal (RFC 5322 §2.2) and meaningful — e.g. the
+                        // X-MS-Journal-Report marker on Exchange journal reports carries no value —
+                        // so emit the bare field instead of dropping it like appendHeader would.
+                        out.append(headerName).append(':').append(CRLF);
+                    } else {
+                        appendHeader(out, headerName, encodeHeaderIfNeeded(value));
+                    }
                 }
             }
         }
@@ -685,7 +694,7 @@ public final class EmlSerializer {
             }
             if (Character.isWhitespace(line.charAt(0))) {
                 if (currentHeader != null && !isFilteredHeader(currentHeader)) {
-                    writer.append(line).append(CRLF);
+                    appendRawHeaderLine(writer, line);
                 }
             } else {
                 var colonIndex = line.indexOf(':');
@@ -695,13 +704,40 @@ public final class EmlSerializer {
                     // which essential headers are already present and need no synthesizing.
                     present.add(currentHeader.toLowerCase(Locale.ROOT));
                     if (!isFilteredHeader(currentHeader)) {
-                        writer.append(line).append(CRLF);
+                        appendRawHeaderLine(writer, line);
                     }
                 } else {
                     currentHeader = null;
                 }
             }
         }
+    }
+
+    /**
+     * Emits one original transport-header line verbatim, except that a line longer than the
+     * RFC 5322 §2.1.1 hard limit of 998 characters is re-folded at whitespace so the passthrough
+     * cannot produce an unparseable message. A line with no foldable whitespace is left overlong
+     * rather than corrupted by an arbitrary split.
+     */
+    private static void appendRawHeaderLine(Writer writer, String line) throws IOException {
+        while (line.length() > MAX_HEADER_LINE_LENGTH) {
+            int breakPos = -1;
+            for (int candidate = MAX_HEADER_LINE_LENGTH; candidate > 0; candidate--) {
+                char character = line.charAt(candidate);
+                if (character == ' ' || character == '\t') {
+                    breakPos = candidate;
+                    break;
+                }
+            }
+            if (breakPos <= 0) {
+                break;
+            }
+            writer.append(line, 0, breakPos).append(CRLF);
+            // Keep the whitespace at the start of the continuation: that is what makes the fold
+            // valid RFC 5322 §2.2.3 folding instead of a new header field.
+            line = line.substring(breakPos);
+        }
+        writer.append(line).append(CRLF);
     }
 
     private static boolean isFilteredHeader(String name) {

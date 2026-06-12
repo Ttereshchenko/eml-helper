@@ -94,6 +94,13 @@ public final class MapiProperties {
     public static final int PR_MESSAGE_CODEPAGE = 0x3FFD;
 
     /**
+     * The store-wide default code page, kept on the message store object (PidTagCodePageId).
+     * Not documented in [MS-PST]; the id matches libpff's message-store codepage entry. Used as the
+     * last-resort PT_STRING8 code page for messages that carry no code page of their own.
+     */
+    public static final int PR_CODE_PAGE_ID = 0x66C3;
+
+    /**
      * Has attachment flag.
      */
     public static final int PR_HASATTACH = 0x0E1B;

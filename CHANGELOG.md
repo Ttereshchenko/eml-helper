@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed (PST/OST conversion quality review)
+
+- Simplified-Chinese (GB2312/EUC-CN), ISO-2022-CN, extended EUC-JP, Arabic ASMO-708, logical Hebrew (ISO-8859-8-I), ISCII Devanagari and ten more Macintosh code pages now convert with their actual character set instead of degrading to garbled windows-1252 text. When a store uses a code page the JDK genuinely cannot decode, the degradation is now reported in the log instead of being silent.
+- A message that names no code page of its own now picks up the store-wide default code page (when the archive records one) before assuming windows-1252.
+- An embedded message that cannot be resolved from a damaged archive is now reported in the MailKit console and counted in the conversion summary instead of vanishing silently; the same accountability applies to attachments whose stored content is missing. Attachments that are by-reference links to files outside the archive are noted as such.
+- Exported embedded messages are now named after the attachment's display name (typically the embedded message's subject, e.g. `First email.eml`) instead of the generic `attachment.dat.eml`.
+- Exchange journal reports stay identifiable after conversion: the `X-MS-Journal-Report` marker now survives even when "Use original SMTP headers" is disabled.
+- Converting an S/MIME message now notes in the MailKit console that the re-encoded EML cannot keep the original signature/encryption envelope verifiable.
+- HTML extracted from RTF-encapsulated bodies is more faithful: character escapes inside `htmltag` markup runs are decoded with the right code page, escaped braces no longer truncate tags, and Unicode escapes written in unsigned form (as some writers do) are no longer dropped.
+- A compressed RTF body no longer loses its final one or two characters when the compressed stream ends exactly on a flag byte, and a truncated RTF stream is now reported as a warning rather than silently shortened.
+- Original transport-header lines longer than the RFC 5322 hard limit of 998 characters are now re-folded at whitespace so strict parsers accept the converted message.
+
 ### Changed
 
 - PST/OST conversion no longer wraps everything in a synthetic `Folder_290` directory: the archive's real top-level folders now land directly in the chosen target directory.
