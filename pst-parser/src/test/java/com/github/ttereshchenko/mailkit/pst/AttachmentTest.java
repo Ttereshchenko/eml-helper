@@ -1,6 +1,7 @@
 package com.github.ttereshchenko.mailkit.pst;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -34,5 +35,14 @@ class AttachmentTest {
     void nothingSetMeansRegularAttachment() {
         assertFalse(Attachment.isInline(null, null, null));
         assertFalse(Attachment.isInline(42, "not-a-bool", "not-an-int"));
+    }
+
+    // The protected no-arg constructor is the documented test seam and leaves no property context;
+    // the size/content-location getters must tolerate that, since converter stubs rely on them.
+    @Test
+    void sizeAndContentLocationAreNullSafeWithoutPropertyContext() {
+        var bare = new Attachment() {};
+        assertNull(bare.getSize());
+        assertNull(bare.getContentLocation());
     }
 }

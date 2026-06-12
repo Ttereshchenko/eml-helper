@@ -109,6 +109,28 @@ public class Attachment {
                 : null;
     }
 
+    /** The Content-Location URI (PR_ATTACH_CONTENT_LOCATION), or {@code null}. */
+    public String getContentLocation() {
+        return propertyContext != null
+                        && propertyContext.getProperty(MapiProperties.PR_ATTACH_CONTENT_LOCATION_W)
+                                instanceof String value
+                ? value
+                : null;
+    }
+
+    /**
+     * The attachment object's approximate size in bytes, content plus property overhead
+     * (PR_ATTACH_SIZE), or {@code null} when the writer did not record one. Useful to tell an
+     * attachment whose content exceeded the store's configured {@code maxNodeSize} apart from one
+     * with no stored content at all.
+     */
+    public Long getSize() {
+        return propertyContext != null
+                        && propertyContext.getProperty(MapiProperties.PR_ATTACH_SIZE) instanceof Number value
+                ? value.longValue()
+                : null;
+    }
+
     /** Whether the attachment is meant to render inline, per its disposition, hidden flag or attach flags. */
     public boolean isInline() {
         return isInline(

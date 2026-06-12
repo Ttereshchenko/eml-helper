@@ -2,8 +2,19 @@
 
 ## Unreleased
 
+### Added (PST/OST conversion fidelity)
+
+- Converted messages keep more of their Outlook metadata: `Sensitivity` (Personal/Private/Company-Confidential), the conversation-threading `Thread-Topic` and `Thread-Index` headers, and `Reply-To` (resolved from the archive's reply-recipient entries, honouring the configured address preference) are now exported. Attachments keep their `Content-Location`, so converted MHTML web archives stay browsable.
+
 ### Fixed (PST/OST conversion quality review)
 
+- A message whose stored properties cannot be read (corrupt or truncated archive) no longer exports as a blank "No Subject" message silently counted as a success: it is reported in the MailKit console and counted as failed — for folder messages, recovered/orphaned messages and embedded messages alike.
+- An HTML body stored as a string property no longer keeps a stale `<meta charset=...>` declaration contradicting the converted message's UTF-8 encoding; it is rewritten the same way as byte-stored HTML bodies.
+- An attachment larger than the configured cap is now diagnosed as such — naming the "Max single attachment size (MB)" dialog option that raises it — instead of being misreported as having no stored content.
+- UTF-32, EBCDIC (US-Canada and the national variants), Korean Wansung, Traditional-Chinese ISO-2022 and EUC-TW code pages now decode with their actual character sets instead of degrading to windows-1252.
+- RTF that merely encapsulates the plain-text body (`\fromtext`) is no longer exported as a redundant `body.rtf` attachment; if such RTF is the only body content the message has, it is still kept so nothing is lost.
+- A nested message replaced by the depth-cap placeholder now counts as a failed attachment in the conversion summary instead of passing unnoticed.
+- Quoted-printable bodies can no longer emit a line one character over the RFC 2045 limit when a full line ends in a space or tab.
 - Simplified-Chinese (GB2312/EUC-CN), ISO-2022-CN, extended EUC-JP, Arabic ASMO-708, logical Hebrew (ISO-8859-8-I), ISCII Devanagari and ten more Macintosh code pages now convert with their actual character set instead of degrading to garbled windows-1252 text. When a store uses a code page the JDK genuinely cannot decode, the degradation is now reported in the log instead of being silent.
 - A message that names no code page of its own now picks up the store-wide default code page (when the archive records one) before assuming windows-1252.
 - An embedded message that cannot be resolved from a damaged archive is now reported in the MailKit console and counted in the conversion summary instead of vanishing silently; the same accountability applies to attachments whose stored content is missing. Attachments that are by-reference links to files outside the archive are noted as such.

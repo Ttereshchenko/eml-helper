@@ -2,11 +2,17 @@ package com.github.ttereshchenko.mailkit.pst;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.IntFunction;
 import org.junit.jupiter.api.Test;
@@ -242,5 +248,182 @@ class MessageTest {
 
         // Nothing present -> empty string.
         assertEquals("", Message.resolveSenderEmail(new HashMap<Integer, Object>()::get));
+    }
+
+    // Review finding #2: a String-typed PR_HTML (the PR_BODY_HTML variant, same id 0x1013) used to
+    // skip the <meta charset> rewrite, leaving a stale declaration contradicting the UTF-8 output.
+    @Test
+    void normalizeStoredHtmlRewritesMetaCharsetInStringTypedHtml() {
+        var html = "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1251\">"
+                + "</head><body>Привет</body></html>";
+        var normalized = Message.normalizeStoredHtml(html, StandardCharsets.UTF_8);
+        assertTrue(normalized.contains("charset=utf-8"), "meta charset must be rewritten: " + normalized);
+        assertFalse(normalized.contains("windows-1251"), "stale charset must be gone: " + normalized);
+        assertTrue(normalized.contains("Привет"), "body text must be untouched: " + normalized);
+    }
+
+    @Test
+    void normalizeStoredHtmlDecodesBytesAndRewritesShortFormMeta() {
+        var charset = Charset.forName("windows-1251");
+        var bytes = "<html><head><meta charset='windows-1251'></head><body>Привет</body></html>".getBytes(charset);
+        var normalized = Message.normalizeStoredHtml(bytes, charset);
+        assertTrue(normalized.contains("charset='utf-8'"), "short-form meta must be rewritten: " + normalized);
+        assertTrue(normalized.contains("Привет"), "bytes must decode with the internet charset: " + normalized);
+    }
+
+    @Test
+    void normalizeStoredHtmlReturnsNullForNonHtmlValues() {
+        assertNull(Message.normalizeStoredHtml(null, StandardCharsets.UTF_8));
+        assertNull(Message.normalizeStoredHtml(42, StandardCharsets.UTF_8));
+    }
+
+    // Review nit: \fromtext encapsulation ([MS-OXRTFEX]) wraps the plain-text body the same way
+    // \fromhtml wraps the HTML body; neither is a genuine RTF body worth exporting as body.rtf.
+    @Test
+    void encapsulationRtfCoversFromHtmlAndFromText() {
+        assertTrue(Message.isEncapsulationRtf("{\\rtf1\\ansi\\ansicpg1252\\fromhtml1 {\\*\\htmltag <p>hi</p>}}"));
+        assertTrue(Message.isEncapsulationRtf("{\\rtf1\\ansi\\fromtext \\uc1 plain body}"));
+        assertFalse(Message.isEncapsulationRtf("{\\rtf1\\ansi a genuine rtf document}"));
+    }
+
+    // --- PR_REPLY_RECIPIENT_ENTRIES (Reply-To) ---
+
+    private static final byte[] ONE_OFF_UID = {
+        (byte) 0x81,
+        0x2B,
+        0x1F,
+        (byte) 0xA4,
+        (byte) 0xBE,
+        (byte) 0xA3,
+        0x10,
+        0x19,
+        (byte) 0x9D,
+        0x6E,
+        0x00,
+        (byte) 0xDD,
+        0x01,
+        0x0F,
+        0x54,
+        0x02
+    };
+    private static final byte[] ADDRESS_BOOK_UID = {
+        (byte) 0xDC,
+        (byte) 0xA7,
+        0x40,
+        (byte) 0xC8,
+        (byte) 0xC0,
+        0x42,
+        0x10,
+        0x1A,
+        (byte) 0xB4,
+        (byte) 0xB9,
+        0x08,
+        0x00,
+        0x2B,
+        0x2F,
+        (byte) 0xE1,
+        (byte) 0x82
+    };
+
+    private static byte[] oneOffEntryId(
+            String name, String addressType, String email, boolean unicode, Charset ansiCharset) {
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(new byte[4]); // abFlags
+        out.writeBytes(ONE_OFF_UID);
+        out.writeBytes(new byte[] {0, 0}); // wVersion
+        int flags = unicode ? 0x8000 : 0;
+        out.write(flags & 0xFF); // wFlags, little-endian
+        out.write((flags >>> 8) & 0xFF);
+        var charset = unicode ? StandardCharsets.UTF_16LE : ansiCharset;
+        for (var value : new String[] {name, addressType, email}) {
+            out.writeBytes(value.getBytes(charset));
+            out.writeBytes(unicode ? new byte[] {0, 0} : new byte[] {0});
+        }
+        return out.toByteArray();
+    }
+
+    private static byte[] addressBookEntryId(String legacyDn) {
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(new byte[4]); // abFlags
+        out.writeBytes(ADDRESS_BOOK_UID);
+        out.writeBytes(new byte[] {1, 0, 0, 0}); // version
+        out.writeBytes(new byte[4]); // type: local mail user
+        out.writeBytes(legacyDn.getBytes(StandardCharsets.US_ASCII));
+        out.write(0);
+        return out.toByteArray();
+    }
+
+    private static byte[] flatEntryList(byte[]... entryIds) {
+        var body = new ByteArrayOutputStream();
+        for (var entryId : entryIds) {
+            var size = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(entryId.length);
+            body.writeBytes(size.array());
+            body.writeBytes(entryId);
+            body.writeBytes(new byte[(4 - (entryId.length & 3)) & 3]); // 4-byte alignment
+        }
+        var out = ByteBuffer.allocate(8 + body.size()).order(ByteOrder.LITTLE_ENDIAN);
+        out.putInt(entryIds.length);
+        out.putInt(body.size());
+        out.put(body.toByteArray());
+        return out.array();
+    }
+
+    @Test
+    void parsesUnicodeAndAnsiOneOffReplyRecipients() {
+        var windows1251 = Charset.forName("windows-1251");
+        var blob = flatEntryList(
+                oneOffEntryId("Replies Mailbox", "SMTP", "replies@example.com", true, windows1251),
+                oneOffEntryId("Отдел", "SMTP", "otdel@example.com", false, windows1251));
+
+        var recipients = Message.parseReplyRecipients(blob, "", windows1251, Message.AddressPreference.PREFER_SMTP);
+
+        assertEquals(2, recipients.size());
+        assertEquals("Replies Mailbox", recipients.get(0).name);
+        assertEquals("replies@example.com", recipients.get(0).email);
+        assertEquals("Отдел", recipients.get(1).name, "ANSI strings must decode with the message's String8 charset");
+        assertEquals("otdel@example.com", recipients.get(1).email);
+    }
+
+    @Test
+    void replyRecipientExchangeAddressesHonourAddressPreference() {
+        var legacyDn = "/O=ORG/CN=RECIPIENTS/CN=replies";
+        var blob = flatEntryList(
+                oneOffEntryId("Exchange Replies", "EX", legacyDn, true, StandardCharsets.US_ASCII),
+                addressBookEntryId(legacyDn));
+
+        var smtp = Message.parseReplyRecipients(
+                blob, "ignored;Address Book Name", StandardCharsets.US_ASCII, Message.AddressPreference.PREFER_SMTP);
+        assertEquals(2, smtp.size());
+        assertTrue(smtp.get(0).email.startsWith("IMCEAEX-"), "EX one-off must be IMCEA-encapsulated: " + smtp);
+        assertTrue(smtp.get(0).email.endsWith("@invalid"), smtp.get(0).email);
+        assertTrue(smtp.get(1).email.startsWith("IMCEAEX-"), "AB entry must be IMCEA-encapsulated: " + smtp);
+        assertEquals("Address Book Name", smtp.get(1).name, "AB entries take their name from PR_REPLY_RECIPIENT_NAMES");
+
+        var legacy = Message.parseReplyRecipients(
+                blob, "", StandardCharsets.US_ASCII, Message.AddressPreference.PREFER_LEGACY_DN);
+        assertEquals(legacyDn, legacy.get(0).email, "PREFER_LEGACY_DN keeps the raw DN");
+        assertEquals(legacyDn, legacy.get(1).email);
+    }
+
+    @Test
+    void malformedReplyRecipientEntriesDegradeToEmpty() {
+        assertEquals(List.of(), Message.parseReplyRecipients(null, "x", StandardCharsets.UTF_8, null));
+        assertEquals(List.of(), Message.parseReplyRecipients(new byte[3], "", StandardCharsets.UTF_8, null));
+        // Declared count larger than the available bytes: stop without reading past the blob.
+        var truncated = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        truncated.putInt(5).putInt(100).putInt(200); // one entry claiming 200 bytes
+        assertEquals(
+                List.of(),
+                Message.parseReplyRecipients(
+                        truncated.array(), "", StandardCharsets.UTF_8, Message.AddressPreference.PREFER_SMTP));
+        // An unknown provider UID is skipped, not misparsed.
+        var unknownProvider = new byte[24];
+        assertEquals(
+                List.of(),
+                Message.parseReplyRecipients(
+                        flatEntryList(unknownProvider),
+                        "",
+                        StandardCharsets.UTF_8,
+                        Message.AddressPreference.PREFER_SMTP));
     }
 }

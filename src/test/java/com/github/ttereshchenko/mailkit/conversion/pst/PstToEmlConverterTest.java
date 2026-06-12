@@ -508,12 +508,18 @@ class PstToEmlConverterTest {
         }
     }
 
-    /** A binary attachment whose stored content is absent. */
+    /** A binary attachment whose stored content is absent (optionally with a recorded size). */
     private static final class ContentlessAttachmentStub extends Attachment {
         private final int attachMethod;
+        private final Long size;
 
         ContentlessAttachmentStub(int attachMethod) {
+            this(attachMethod, null);
+        }
+
+        ContentlessAttachmentStub(int attachMethod, Long size) {
             this.attachMethod = attachMethod;
+            this.size = size;
         }
 
         @Override
@@ -534,6 +540,60 @@ class PstToEmlConverterTest {
         @Override
         public byte[] getData() {
             return null;
+        }
+
+        @Override
+        public Long getSize() {
+            return size;
+        }
+    }
+
+    /** A by-value attachment with real bytes and an optional Content-Location. */
+    private static final class DataAttachmentStub extends Attachment {
+        private final String contentLocation;
+
+        DataAttachmentStub(String contentLocation) {
+            this.contentLocation = contentLocation;
+        }
+
+        @Override
+        public String getLongFilename() {
+            return "logo.png";
+        }
+
+        @Override
+        public String getFilename() {
+            return "";
+        }
+
+        @Override
+        public int getAttachMethod() {
+            return 1; // afByValue
+        }
+
+        @Override
+        public byte[] getData() {
+            return new byte[] {1, 2, 3};
+        }
+
+        @Override
+        public String getMimeTag() {
+            return "image/png";
+        }
+
+        @Override
+        public String getContentId() {
+            return null;
+        }
+
+        @Override
+        public String getContentLocation() {
+            return contentLocation;
+        }
+
+        @Override
+        public boolean isInline() {
+            return false;
         }
     }
 
@@ -797,6 +857,231 @@ class PstToEmlConverterTest {
                     log.infos.stream().anyMatch(info -> info.contains("S/MIME")),
                     () -> "Expected an S/MIME structure-loss note, got: " + log.infos);
         }
+    }
+
+    /**
+     * Review finding #1 regression: a message whose properties fail to load used to export as a
+     * blank "No Subject" EML counted as a success; it must be reported and counted as failed.
+     */
+    @Test
+    void messageThatFailsToLoadIsCountedAsFailedNotConverted() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var broken = new Message(pstFile, 0x7FFFF04); // nonexistent NID (type 0x04)
+            assertFalse(broken.isLoaded(), "Sanity: the fixture must not contain this node");
+
+            var stats = new PstToEmlConverter.Stats();
+            var log = new RecordingLog();
+            assertTrue(PstToEmlConverter.failedToLoad(broken, "Inbox", stats, log), "Must tell the caller to skip");
+            assertEquals(1, stats.failedMessages(), "The unloadable message counts as failed");
+            assertTrue(
+                    log.errors.stream()
+                            .anyMatch(error -> error.contains("Failed to convert message") && error.contains("Inbox")),
+                    () -> "Expected a console error naming the folder, got: " + log.errors);
+
+            var healthy = new StubMessage(pstFile, "fine", List.of(), null, "");
+            assertFalse(PstToEmlConverter.failedToLoad(healthy, "Inbox", stats, log));
+            assertEquals(1, stats.failedMessages(), "A loaded message must not be miscounted");
+        }
+    }
+
+    /**
+     * Review finding #1 regression (embedded variant): an embedded message whose node resolves but
+     * whose properties fail to load used to serialize as an empty .eml part silently.
+     */
+    @Test
+    void embeddedMessageThatFailsToLoadIsCountedAndSkipped() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var unloadable = new Message(pstFile, 0x7FFFF04);
+            assertFalse(unloadable.isLoaded());
+            var host = new StubMessage(
+                    pstFile, "Host", List.of(new EmbeddedAttachmentStub("Lost original")), unloadable, "");
+            var log = new RecordingLog();
+            var stats = new PstToEmlConverter.Stats();
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(host, defaultOptions(), pstFile, 0, log, stats)
+                    .writeTo(writer);
+
+            assertEquals(1, stats.failedAttachments(), "The unloadable embedded message must be counted");
+            assertFalse(
+                    writer.toString().contains("message/rfc822"), "No empty rfc822 part may replace the lost original");
+            assertTrue(
+                    log.errors.stream().anyMatch(error -> error.contains("Failed to load embedded message")),
+                    () -> "Expected a console error for the unloadable embed, got: " + log.errors);
+        }
+    }
+
+    /** Review nit: the depth-cap placeholder replaces real content, so it must show up in the stats. */
+    @Test
+    void depthCapPlaceholderIsCountedAsFailedAttachment() throws Exception {
+        var log = new RecordingLog();
+        var stats = new PstToEmlConverter.Stats();
+        var stub = PstToEmlConverter.createSerializer(null, defaultOptions(), null, 11, log, stats);
+        var writer = new StringWriter();
+        stub.writeTo(writer);
+
+        assertEquals(1, stats.failedAttachments(), "The truncated nested message must be counted");
+        assertTrue(writer.toString().contains("Nested Message Limit Exceeded"));
+        assertTrue(
+                log.errors.stream().anyMatch(error -> error.contains("Maximum nested message depth")),
+                () -> "Expected a console error for the depth cap, got: " + log.errors);
+    }
+
+    /**
+     * Review finding #4 regression: an attachment whose content exceeds the configured single-node
+     * cap used to be misreported as having "no stored content"; the error must name the actual
+     * cause and the dialog option that raises the cap.
+     */
+    @Test
+    void oversizedAttachmentErrorNamesTheDialogOption() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var log = new RecordingLog();
+            var stats = new PstToEmlConverter.Stats();
+            var oversize = new StubMessage(
+                    pstFile, "Host", List.of(new ContentlessAttachmentStub(1, 200L * 1024 * 1024)), null, "");
+
+            PstToEmlConverter.createSerializer(oversize, defaultOptions(), pstFile, 0, log, stats)
+                    .writeTo(new StringWriter());
+
+            assertEquals(1, stats.failedAttachments());
+            assertTrue(
+                    log.errors.stream()
+                            .anyMatch(error -> error.contains("Max single attachment size")
+                                    && error.contains("exceeds the configured limit")),
+                    () -> "Expected the oversize diagnosis naming the dialog option, got: " + log.errors);
+            assertFalse(
+                    log.errors.stream().anyMatch(error -> error.contains("no stored content")),
+                    "The old misdiagnosis must be gone");
+        }
+    }
+
+    /**
+     * Review fidelity gaps: PR_SENSITIVITY, PR_CONVERSATION_TOPIC, PR_CONVERSATION_INDEX and
+     * PR_REPLY_RECIPIENT_ENTRIES now export as their RFC header equivalents. The manually openable
+     * companion sample is samples/eml/edge/pst_export_fidelity_headers.eml.
+     */
+    @Test
+    void sensitivityThreadingAndReplyToAreExported() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(pstFile, "Quarterly budget", List.of(), null, "") {
+                @Override
+                public Object getProperty(int tag) {
+                    if (tag == MapiProperties.PR_SENSITIVITY) {
+                        return 2; // private
+                    }
+                    if (tag == MapiProperties.PR_CONVERSATION_INDEX) {
+                        return new byte[] {1, 2, 3, 4, 5};
+                    }
+                    return null;
+                }
+
+                @Override
+                public String getStringProperty(int tag) {
+                    return tag == MapiProperties.PR_CONVERSATION_TOPIC_W ? "Quarterly budget" : null;
+                }
+
+                @Override
+                public List<Recipient> getReplyTo() {
+                    return List.of(new Recipient(1, "Replies Mailbox", "replies@example.com"));
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("Sensitivity: Private"), () -> "Sensitivity must be exported:\n" + eml);
+            assertTrue(eml.contains("Thread-Topic: Quarterly budget"), () -> "Thread-Topic must be exported:\n" + eml);
+            assertTrue(
+                    eml.contains("Thread-Index: " + Base64.getEncoder().encodeToString(new byte[] {1, 2, 3, 4, 5})),
+                    () -> "Thread-Index must be exported base64-encoded:\n" + eml);
+            assertTrue(
+                    eml.contains("Reply-To: \"Replies Mailbox\" <replies@example.com>"),
+                    () -> "Reply-To must be exported:\n" + eml);
+        }
+    }
+
+    /** Review fidelity gap: PR_ATTACH_CONTENT_LOCATION now reaches the part's Content-Location header. */
+    @Test
+    void attachmentContentLocationSurvivesExport() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(
+                    pstFile, "Web archive", List.of(new DataAttachmentStub("http://example.com/logo.png")), null, "");
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+
+            assertTrue(
+                    writer.toString().contains("Content-Location: http://example.com/logo.png"),
+                    () -> "Content-Location must survive:\n" + writer);
+        }
+    }
+
+    /**
+     * Review nit regression: \fromtext RTF duplicates the plain-text body and must not export as a
+     * body.rtf attachment — except as a last resort when the message has no other body at all.
+     */
+    @Test
+    void encapsulationRtfExportsOnlyAsLastResort() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var fromTextRtf = "{\\rtf1\\ansi\\fromtext \\uc1 plain body}";
+
+            var withBodies = new StubMessage(pstFile, "Has bodies", List.of(), null, "") {
+                @Override
+                public String getRawRtfBody() {
+                    return fromTextRtf;
+                }
+            };
+            var withBodiesWriter = new StringWriter();
+            PstToEmlConverter.createSerializer(withBodies, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(withBodiesWriter);
+            assertFalse(
+                    withBodiesWriter.toString().contains("body.rtf"),
+                    "\\fromtext RTF duplicates the text body and must not become an attachment");
+
+            var rtfOnly = new StubMessage(pstFile, "RTF only", List.of(), null, "") {
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getHtmlBody() {
+                    return "";
+                }
+
+                @Override
+                public String getRawRtfBody() {
+                    return fromTextRtf;
+                }
+            };
+            var rtfOnlyWriter = new StringWriter();
+            PstToEmlConverter.createSerializer(rtfOnly, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(rtfOnlyWriter);
+            assertTrue(
+                    rtfOnlyWriter.toString().contains("body.rtf"),
+                    "With no other body the raw RTF is the only content left and must be kept");
+        }
+    }
+
+    /**
+     * The fidelity sample (manual-verification companion of
+     * {@link #sensitivityThreadingAndReplyToAreExported}) mirrors the converter's export shape:
+     * Sensitivity, Thread-Topic, base64 Thread-Index, Reply-To and a Content-Location part.
+     */
+    @Test
+    void fidelityHeadersSampleMirrorsExportShape() throws Exception {
+        var sample = java.nio.file.Files.readString(
+                Paths.get("src/test/resources/samples/eml/edge/pst_export_fidelity_headers.eml"));
+        assertTrue(sample.contains("Sensitivity: Private"));
+        assertTrue(sample.contains("Thread-Topic: "));
+        assertTrue(sample.contains("Thread-Index: AQIDBAU="));
+        assertTrue(sample.contains("Reply-To: "));
+        assertTrue(sample.contains("Content-Location: http://example.com/logo.png"));
+        // "=3D" is the quoted-printable escape of '=': the rewritten meta reads <meta charset="utf-8">.
+        assertTrue(sample.contains("charset=3D\"utf-8\""), "The HTML body's meta charset is rewritten to UTF-8");
     }
 
     private static int countOccurrences(String haystack, String needle) {

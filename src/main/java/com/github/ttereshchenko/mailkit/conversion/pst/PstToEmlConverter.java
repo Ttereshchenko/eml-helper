@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -258,6 +259,9 @@ public final class PstToEmlConverter {
             var nid = candidate.nid();
             try {
                 var message = new Message(pstFile, nid);
+                if (failedToLoad(message, dumpster ? RECOVERED_FOLDER_NAME : ORPHANED_FOLDER_NAME, stats, log)) {
+                    continue;
+                }
                 message.setAddressPreference(options.addressPreference());
                 if (!isAllowedMessageClass(message.getMessageClass())) {
                     continue;
@@ -478,6 +482,9 @@ public final class PstToEmlConverter {
 
                 try {
                     var message = new Message(pstFile, msgNid);
+                    if (failedToLoad(message, displayPath, stats, log)) {
+                        continue;
+                    }
                     message.setAddressPreference(options.addressPreference());
                     String messageClass = message.getMessageClass();
                     if (!isAllowedMessageClass(messageClass)) {
@@ -570,7 +577,10 @@ public final class PstToEmlConverter {
     static EmlSerializer createSerializer(
             Message message, Options options, PstFile pstFile, int depth, ConversionLog log, Stats stats) {
         if (depth > MAX_EMBEDDED_DEPTH) {
-            log.info("Maximum nested message depth reached. Truncating message.");
+            // The replaced content is lost, so this is a failure worth counting, not just a note.
+            stats.failedAttachments++;
+            log.error("Maximum nested message depth (" + MAX_EMBEDDED_DEPTH
+                    + ") reached; the deeper embedded message was replaced with a placeholder");
             var stub = new EmlSerializer();
             stub.setSubject("Nested Message Limit Exceeded");
             stub.addBody("The maximum nested message depth was reached.", "text/plain; charset=UTF-8");
@@ -633,6 +643,27 @@ public final class PstToEmlConverter {
                 serializer.addCustomHeader("X-Priority", "5");
             }
         }
+        if (message.getProperty(MapiProperties.PR_SENSITIVITY) instanceof Number sensitivity) {
+            // MAPI sensitivity: 0 = none (stays implicit); 1-3 map to the RFC 2156 Sensitivity values.
+            String sensitivityLabel =
+                    switch (sensitivity.intValue()) {
+                        case 1 -> "Personal";
+                        case 2 -> "Private";
+                        case 3 -> "Company-Confidential";
+                        default -> null;
+                    };
+            if (sensitivityLabel != null) {
+                serializer.addCustomHeader("Sensitivity", sensitivityLabel);
+            }
+        }
+        String threadTopic = message.getStringProperty(MapiProperties.PR_CONVERSATION_TOPIC_W);
+        if (threadTopic != null && !threadTopic.isBlank()) {
+            serializer.addCustomHeader("Thread-Topic", threadTopic);
+        }
+        if (message.getProperty(MapiProperties.PR_CONVERSATION_INDEX) instanceof byte[] conversationIndex
+                && conversationIndex.length > 0) {
+            serializer.addCustomHeader("Thread-Index", Base64.getEncoder().encodeToString(conversationIndex));
+        }
 
         var senderName = message.getSenderName();
         var senderEmail = message.getSenderEmail();
@@ -660,9 +691,28 @@ public final class PstToEmlConverter {
             addDisplayFallback(serializer, message.getDisplayBcc(), EmlSerializer.RECIPIENT_TYPE_BCC);
         }
 
-        serializer.addBody(message.getBody(), "text/plain; charset=UTF-8");
-        serializer.addBody(message.getHtmlBody(), "text/html; charset=UTF-8");
+        var replyTo = new ArrayList<String>();
+        for (Message.Recipient recipient : message.getReplyTo()) {
+            String formatted = EmlSerializer.formatAddress(recipient.name, recipient.email);
+            if (!formatted.isBlank()) {
+                replyTo.add(formatted);
+            }
+        }
+        if (!replyTo.isEmpty()) {
+            serializer.addCustomHeader("Reply-To", String.join(", ", replyTo));
+        }
+
+        String plainBody = message.getBody();
+        String htmlBody = message.getHtmlBody();
+        serializer.addBody(plainBody, "text/plain; charset=UTF-8");
+        serializer.addBody(htmlBody, "text/html; charset=UTF-8");
         String rtfBody = message.getRtfBody();
+        if (rtfBody.isEmpty() && plainBody.isEmpty() && htmlBody.isEmpty()) {
+            // Encapsulation RTF (\fromtext / \fromhtml) is normally redundant with the decoded
+            // bodies and dropped; when the sibling bodies are missing it is the only content left,
+            // so keep the raw RTF rather than exporting an empty message.
+            rtfBody = message.getRawRtfBody();
+        }
         if (!rtfBody.isEmpty()) {
             // A genuine RTF body (not encapsulated HTML) is not renderable by mail clients as a
             // multipart/alternative sibling; preserve it as an application/rtf attachment carrying
@@ -746,6 +796,15 @@ public final class PstToEmlConverter {
                 }
                 try {
                     Message embedMessage = message.readEmbeddedMessage(attachment);
+                    if (embedMessage != null && !embedMessage.isLoaded()) {
+                        // The embedded node resolved but its properties would not parse; serializing
+                        // it would silently replace the original content with an empty .eml part.
+                        stats.failedAttachments++;
+                        log.error("Failed to load embedded message '" + attachName + "' in message "
+                                + message.getNid() + ": " + describeFailure(embedMessage.getLoadError())
+                                + "; the attachment was skipped");
+                        continue;
+                    }
                     if (embedMessage == null) {
                         // A method-5 attachment that does not resolve to a message node means the
                         // store is damaged; dropping it silently would lose the message a journal
@@ -778,8 +837,18 @@ public final class PstToEmlConverter {
                             + " is a reference to a file outside the store; nothing to export");
                 } else {
                     stats.failedAttachments++;
-                    log.error("Attachment '" + attachName + "' in message " + message.getNid()
-                            + " has no stored content (attach method " + attachMethod + "); it was skipped");
+                    Long attachSize = attachment.getSize();
+                    if (attachSize != null && attachSize > options.maxNodeSize()) {
+                        // The content exists but exceeds the configured single-node cap; without
+                        // this distinction the log misdiagnoses it as missing content.
+                        log.error("Attachment '" + attachName + "' in message " + message.getNid() + " (~"
+                                + (attachSize / (1024 * 1024)) + " MB) exceeds the configured limit of "
+                                + (options.maxNodeSize() / (1024 * 1024)) + " MB; raise \"Max single attachment"
+                                + " size (MB)\" in the conversion dialog to export it");
+                    } else {
+                        log.error("Attachment '" + attachName + "' in message " + message.getNid()
+                                + " has no stored content (attach method " + attachMethod + "); it was skipped");
+                    }
                 }
                 continue;
             }
@@ -795,7 +864,13 @@ public final class PstToEmlConverter {
             if (mime.isEmpty()) mime = "application/octet-stream";
 
             log.info("Found attachment: " + attachName + " (" + mime + ")");
-            serializer.addAttachment(attachName, mime, data, attachment.getContentId(), attachment.isInline());
+            serializer.addAttachment(
+                    attachName,
+                    mime,
+                    data,
+                    attachment.getContentId(),
+                    attachment.getContentLocation(),
+                    attachment.isInline());
         }
 
         return serializer;
@@ -879,6 +954,22 @@ public final class PstToEmlConverter {
         }
         var matcher = JOURNAL_REPORT_HEADER.matcher(transportHeaders);
         return matcher.find() ? matcher.group(1).trim() : null;
+    }
+
+    /**
+     * Reports a message whose properties failed to load (corrupt or missing node) and tells the
+     * caller to skip it. Without this check every getter returns its empty default and the message
+     * is exported as a blank "No Subject" EML silently counted as a success. Package-private for
+     * testing.
+     */
+    static boolean failedToLoad(Message message, String displayPath, Stats stats, ConversionLog log) {
+        if (message.isLoaded()) {
+            return false;
+        }
+        stats.failedMessages++;
+        log.error("Failed to convert message " + message.getNid() + " in " + displayPath + ": "
+                + describeFailure(message.getLoadError()));
+        return true;
     }
 
     /**
