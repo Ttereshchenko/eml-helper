@@ -100,15 +100,29 @@ public class Attachment {
                 : null;
     }
 
-    /** Whether the attachment is meant to render inline, per its disposition or attach flags. */
+    /** Whether the attachment is meant to render inline, per its disposition, hidden flag or attach flags. */
     public boolean isInline() {
-        if (propertyContext.getProperty(MapiProperties.PR_ATTACH_DISPOSITION) instanceof String disposition) {
-            return "inline".equalsIgnoreCase(disposition);
+        return isInline(
+                propertyContext.getProperty(MapiProperties.PR_ATTACH_DISPOSITION),
+                propertyContext.getProperty(MapiProperties.PR_ATTACHMENT_HIDDEN),
+                propertyContext.getProperty(MapiProperties.PR_ATTACH_FLAGS));
+    }
+
+    /**
+     * Inline decision from the three relevant MAPI properties: an explicit Content-Disposition wins;
+     * otherwise a hidden attachment (PR_ATTACHMENT_HIDDEN — how Outlook marks cid-referenced images)
+     * or the ATT_MHTML_REF (0x4) / ATT_INVISIBLE_IN_HTML (0x1) attach flags mean inline.
+     * PR_RENDERING_POSITION is deliberately not consulted: writers routinely store {@code 0} on
+     * ordinary attachments, so treating "has a position" as inline would misfile real attachments
+     * into the multipart/related body subtree. Package-private for testing.
+     */
+    static boolean isInline(Object disposition, Object hidden, Object attachFlags) {
+        if (disposition instanceof String dispositionValue) {
+            return "inline".equalsIgnoreCase(dispositionValue.trim());
         }
-        if (propertyContext.getProperty(MapiProperties.PR_ATTACH_FLAGS) instanceof Integer flags) {
-            // attRenderedInBody (0x4) or ATT_INVISIBLE_IN_HTML (0x1) or ATT_HIDDEN (0x7FFE)
-            return (flags & 0x00000004) != 0 || (flags & 0x00000001) != 0 || flags == 0x7FFE;
+        if (hidden instanceof Boolean hiddenValue && hiddenValue) {
+            return true;
         }
-        return false;
+        return attachFlags instanceof Integer flags && ((flags & 0x00000004) != 0 || (flags & 0x00000001) != 0);
     }
 }

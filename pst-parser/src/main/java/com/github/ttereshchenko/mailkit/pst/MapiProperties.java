@@ -40,6 +40,24 @@ public final class MapiProperties {
     public static final int PR_INTERNET_MESSAGE_ID_W = 0x1035;
 
     /**
+     * The Message-ID of the message this one replies to.
+     * EML alternative: The "In-Reply-To:" header.
+     */
+    public static final int PR_IN_REPLY_TO_ID_W = 0x1042;
+
+    /**
+     * The thread of Message-IDs this message belongs to.
+     * EML alternative: The "References:" header.
+     */
+    public static final int PR_INTERNET_REFERENCES_W = 0x1039;
+
+    /**
+     * The sender-assigned importance ({@code 0} = low, {@code 1} = normal, {@code 2} = high).
+     * EML alternative: The "Importance:" / "X-Priority:" headers.
+     */
+    public static final int PR_IMPORTANCE = 0x0017;
+
+    /**
      * The plain text body of the message.
      * EML alternative: The text/plain part of the message body.
      */
@@ -223,10 +241,18 @@ public final class MapiProperties {
     public static final int PR_ATTACH_DISPOSITION = 0x3716;
 
     /**
-     * Attachment flags.
+     * Attachment flags ({@code ATT_INVISIBLE_IN_HTML} = 0x1, {@code ATT_INVISIBLE_IN_RTF} = 0x2,
+     * {@code ATT_MHTML_REF} = 0x4).
      * EML alternative: Influences the Content-Disposition (e.g., inline).
      */
     public static final int PR_ATTACH_FLAGS = 0x3714;
+
+    /**
+     * Whether the attachment is hidden from the attachment list (PidTagAttachmentHidden), as inline
+     * cid-referenced images typically are.
+     * EML alternative: Influences the Content-Disposition (inline vs. attachment).
+     */
+    public static final int PR_ATTACHMENT_HIDDEN = 0x7FFE;
 
     // Other / Table Properties
 

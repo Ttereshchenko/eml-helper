@@ -135,9 +135,9 @@ class PropertyContext {
                     return;
                 }
                 if (valueType == 0x001F) {
-                    properties.put(tag, new String(data, StandardCharsets.UTF_16LE).trim());
+                    properties.put(tag, stripTrailingNuls(new String(data, StandardCharsets.UTF_16LE)));
                 } else {
-                    properties.put(tag, new String(data, StandardCharsets.ISO_8859_1).trim());
+                    properties.put(tag, stripTrailingNuls(new String(data, StandardCharsets.ISO_8859_1)));
                     string8Tags.add(tag);
                 }
             }
@@ -290,7 +290,21 @@ class PropertyContext {
 
     private static String redecode(String latin1Text, Charset charset) {
         byte[] raw = latin1Text.getBytes(StandardCharsets.ISO_8859_1);
-        return new String(raw, charset).trim();
+        return stripTrailingNuls(new String(raw, charset));
+    }
+
+    /**
+     * Strips trailing NUL terminators some PST writers persist into string properties. Deliberately
+     * narrower than {@link String#trim()}: real leading/trailing whitespace is message content
+     * (e.g. in PR_BODY) and must survive conversion, and trimming before {@link #redecode} would
+     * destroy charsets whose escape bytes are control characters (ISO-2022's leading ESC).
+     */
+    static String stripTrailingNuls(String text) {
+        int end = text.length();
+        while (end > 0 && text.charAt(end - 1) == '\0') {
+            end--;
+        }
+        return end == text.length() ? text : text.substring(0, end);
     }
 
     public String getString(int propertyId) {
@@ -332,14 +346,14 @@ class PropertyContext {
             case 0x101F -> {
                 var values = new ArrayList<String>();
                 for (byte[] segment : splitVariableMultiValue(data)) {
-                    values.add(new String(segment, StandardCharsets.UTF_16LE).trim());
+                    values.add(stripTrailingNuls(new String(segment, StandardCharsets.UTF_16LE)));
                 }
                 yield Collections.unmodifiableList(values);
             }
             case 0x101E -> {
                 var values = new ArrayList<String>();
                 for (byte[] segment : splitVariableMultiValue(data)) {
-                    values.add(new String(segment, string8Charset).trim());
+                    values.add(stripTrailingNuls(new String(segment, string8Charset)));
                 }
                 yield Collections.unmodifiableList(values);
             }

@@ -3,14 +3,15 @@ package com.github.ttereshchenko.mailkit.pst;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.IntFunction;
+import java.util.regex.Pattern;
 
 /**
  * A single message within a PST/OST store, wrapping its Property Context.
@@ -33,13 +34,17 @@ public class Message {
     private static final int NID_ATTACHMENT_TABLE = 0x0671;
     private static final int NID_RECIPIENT_TABLE = 0x0692;
 
+    /** The {@code \ansicpgN} control word naming the code page of an RTF body's {@code \'hh} escapes. */
+    private static final Pattern RTF_ANSI_CODE_PAGE = Pattern.compile("\\\\ansicpg(\\d{1,9})");
+
     private final PstFile pstFile;
     private final int nid;
     private final NodeDatabase nodeDatabase;
     private final NodeEntry node;
     private PropertyContext propertyContext;
     private AddressPreference addressPreference = AddressPreference.PREFER_SMTP;
-    private Charset cachedCharset;
+    private Charset cachedString8Charset;
+    private Charset cachedInternetCharset;
     private String cachedRawRtf;
     private Exception loadError;
 
@@ -105,7 +110,7 @@ public class Message {
 
             byte[] data = nodeDatabase.readNodeData(node.dataBid());
             this.propertyContext = new PropertyContext(data, nodeDatabase, node);
-            this.propertyContext.decodeString8(getMessageCharset());
+            this.propertyContext.decodeString8(getString8Charset());
         } catch (Exception exception) {
             // Degrades gracefully (all getters return their empty defaults), but record and log so
             // genuine corruption is not hidden.
@@ -138,10 +143,24 @@ public class Message {
         return propertyContext.getProperty(MapiProperties.PR_MESSAGE_CLASS_W) instanceof String value ? value : "";
     }
 
-    /** The subject, or an empty string if absent. */
+    /** The subject (with any [MS-PST] prefix marker stripped), or an empty string if absent. */
     public String getSubject() {
         if (propertyContext == null) return "";
-        return propertyContext.getProperty(MapiProperties.PR_SUBJECT_W) instanceof String value ? value : "";
+        return propertyContext.getProperty(MapiProperties.PR_SUBJECT_W) instanceof String value
+                ? stripSubjectPrefixMarker(value)
+                : "";
+    }
+
+    /**
+     * Strips the PidTagSubject prefix marker ([MS-PST] §2.5.3.1.1): when the stored subject begins
+     * with {@code 0x01}, the second character encodes the prefix length and the full subject text
+     * (prefix included) follows after those two marker characters.
+     */
+    static String stripSubjectPrefixMarker(String subject) {
+        if (!subject.isEmpty() && subject.charAt(0) == 0x01) {
+            return subject.length() >= 2 ? subject.substring(2) : "";
+        }
+        return subject;
     }
 
     /** The plain-text body, or an empty string if absent. */
@@ -162,7 +181,7 @@ public class Message {
         Object value = propertyContext.getProperty(MapiProperties.PR_HTML);
         if (value instanceof String text) return text;
         if (value instanceof byte[] bytes) {
-            Charset charset = getMessageCharset();
+            Charset charset = getInternetCharset();
             String decoded = new String(bytes, charset).trim();
             decoded = decoded.replaceAll("(?i)(<meta[^>]*charset=[\"']?)[^\"'>]+([\"']?[^>]*>)", "$1utf-8$2");
             return decoded;
@@ -170,61 +189,62 @@ public class Message {
 
         String rtf = getRawRtfBody();
         if (rtf.contains("\\fromhtml")) {
-            return extractHtmlFromRtf(rtf, getMessageCharset().name());
+            return extractHtmlFromRtf(rtf, getInternetCharset().name());
         }
         return "";
     }
 
-    private Charset getMessageCharset() {
-        if (cachedCharset != null) {
-            return cachedCharset;
+    /**
+     * The charset governing this message's PT_STRING8 properties: PR_MESSAGE_CODEPAGE per
+     * [MS-OXCMAIL], with PR_INTERNET_CPID as fallback. Distinct from {@link #getInternetCharset()}
+     * — the two can legitimately differ (e.g. GBK String8 properties with a UTF-8 HTML body).
+     */
+    private Charset getString8Charset() {
+        if (cachedString8Charset == null) {
+            cachedString8Charset = resolveCharset(MapiProperties.PR_MESSAGE_CODEPAGE, MapiProperties.PR_INTERNET_CPID);
         }
-        Charset charset = Charset.forName("windows-1252");
+        return cachedString8Charset;
+    }
+
+    /** The charset governing the PR_HTML body bytes: PR_INTERNET_CPID, falling back to PR_MESSAGE_CODEPAGE. */
+    private Charset getInternetCharset() {
+        if (cachedInternetCharset == null) {
+            cachedInternetCharset = resolveCharset(MapiProperties.PR_INTERNET_CPID, MapiProperties.PR_MESSAGE_CODEPAGE);
+        }
+        return cachedInternetCharset;
+    }
+
+    private Charset resolveCharset(int preferredTag, int fallbackTag) {
         if (propertyContext != null) {
-            Object codePage = propertyContext.getProperty(MapiProperties.PR_INTERNET_CPID);
+            Object codePage = propertyContext.getProperty(preferredTag);
             if (codePage == null) {
-                codePage = propertyContext.getProperty(MapiProperties.PR_MESSAGE_CODEPAGE);
+                codePage = propertyContext.getProperty(fallbackTag);
             }
             if (codePage instanceof Number number) {
-                charset = codePageToCharset(number.intValue());
+                return CodePages.charsetFor(number.intValue());
             }
         }
-        cachedCharset = charset;
-        return charset;
-    }
-
-    private Charset codePageToCharset(int codePageId) {
-        return switch (codePageId) {
-            case 1200 -> StandardCharsets.UTF_16LE;
-            case 1201 -> StandardCharsets.UTF_16BE;
-            case 20127 -> StandardCharsets.US_ASCII;
-            case 65001 -> StandardCharsets.UTF_8;
-            case 28591 -> StandardCharsets.ISO_8859_1;
-            case 28592 -> charsetOrDefault("ISO-8859-2");
-            case 932 -> charsetOrDefault("Shift_JIS");
-            case 936 -> charsetOrDefault("GBK");
-            case 949 -> charsetOrDefault("EUC-KR");
-            case 950 -> charsetOrDefault("Big5");
-            case 50220, 50221, 50222 -> charsetOrDefault("ISO-2022-JP");
-            case 50225 -> charsetOrDefault("ISO-2022-KR");
-            case 51932 -> charsetOrDefault("EUC-JP");
-            case 51949 -> charsetOrDefault("EUC-KR");
-            default -> charsetOrDefault("windows-" + codePageId);
-        };
-    }
-
-    private static Charset charsetOrDefault(String name) {
-        try {
-            return Charset.forName(name);
-        } catch (Exception ignored) {
-            return Charset.forName("windows-1252");
-        }
+        return CodePages.defaultCharset();
     }
 
     static String extractHtmlFromRtf(String rtf, String charsetName) {
+        // \ansicpgN in the RTF header names the code page its \'hh escapes were written in and is
+        // more authoritative than the message-level charset the caller resolved.
+        var codePageMatcher = RTF_ANSI_CODE_PAGE.matcher(rtf);
+        if (codePageMatcher.find()) {
+            try {
+                charsetName = CodePages.charsetFor(Integer.parseInt(codePageMatcher.group(1)))
+                        .name();
+            } catch (NumberFormatException ignored) {
+                // implausibly long code-page number — keep the caller's charset
+            }
+        }
+
         StringBuilder html = new StringBuilder();
         int index = 0;
         boolean inHtmlRtf = false;
+        int unicodeFallbackCount =
+                1; // current "uc" control-word value; one fallback char per unicode escape by default
         while (index < rtf.length()) {
             if (rtf.startsWith("\\htmlrtf0", index)) {
                 inHtmlRtf = false;
@@ -252,11 +272,23 @@ public class Message {
                     continue;
                 }
             }
+            // RTF header/metadata groups are not renderable content ([MS-OXRTFEX]): plain text inside
+            // {\fonttbl…} & co. and inside non-htmltag {\*\…} destinations ({\*\generator …},
+            // {\*\formatConverter …}) must not leak into the extracted HTML as body text.
+            if (isNonRenderableGroupStart(rtf, index)) {
+                index = skipGroup(rtf, index);
+                continue;
+            }
             if (inHtmlRtf) {
                 index++;
                 continue;
             }
             if (rtf.charAt(index) == '{' || rtf.charAt(index) == '}') {
+                index++;
+                continue;
+            }
+            if (rtf.charAt(index) == '\r' || rtf.charAt(index) == '\n') {
+                // Raw CR/LF in RTF source is wrapping, not content — line breaks are \par / \line.
                 index++;
                 continue;
             }
@@ -279,6 +311,20 @@ public class Message {
                     }
                     continue;
                 }
+                if (rtf.startsWith("\\uc", index)
+                        && index + 3 < rtf.length()
+                        && Character.isDigit(rtf.charAt(index + 3))) {
+                    int endNum = index + 3;
+                    while (endNum < rtf.length() && Character.isDigit(rtf.charAt(endNum))) endNum++;
+                    try {
+                        unicodeFallbackCount = Integer.parseInt(rtf.substring(index + 3, endNum));
+                    } catch (NumberFormatException ignored) {
+                        // implausibly long "uc" parameter — keep the current fallback count
+                    }
+                    index = endNum;
+                    if (index < rtf.length() && rtf.charAt(index) == ' ') index++;
+                    continue;
+                }
                 if (index + 2 < rtf.length()
                         && rtf.charAt(index + 1) == 'u'
                         && (Character.isDigit(rtf.charAt(index + 2)) || rtf.charAt(index + 2) == '-')) {
@@ -292,11 +338,22 @@ public class Message {
                         // malformed \\uN escape — skip this code point
                     }
                     index = endNum;
-                    // skip substitute char
-                    if (index < rtf.length() && rtf.charAt(index) == ' ') index++;
-                    else if (index + 3 < rtf.length() && rtf.charAt(index) == '\\' && rtf.charAt(index + 1) == '\'')
-                        index += 4;
-                    else if (index < rtf.length() && rtf.charAt(index) == '?') index++;
+                    if (index < rtf.length() && rtf.charAt(index) == ' ') index++; // control-word delimiter
+                    // Skip the "uc"-counted fallback characters that follow: each is one plain
+                    // character or one \'hh escape; a group boundary or control word ends the run.
+                    for (int skipped = 0; skipped < unicodeFallbackCount && index < rtf.length(); skipped++) {
+                        char fallback = rtf.charAt(index);
+                        if (fallback == '{' || fallback == '}') {
+                            break;
+                        }
+                        if (fallback == '\\' && index + 3 < rtf.length() && rtf.charAt(index + 1) == '\'') {
+                            index += 4;
+                        } else if (fallback == '\\') {
+                            break;
+                        } else {
+                            index++;
+                        }
+                    }
                     continue;
                 }
                 int nextSpace = rtf.indexOf(' ', index);
@@ -318,6 +375,50 @@ public class Message {
             index++;
         }
         return html.toString().trim();
+    }
+
+    /**
+     * Whether {@code index} starts an RTF group whose contents are metadata rather than renderable
+     * text: the font/color/stylesheet/info header tables and every {@code {\*\…}} destination other
+     * than {@code {\*\htmltag…}} (which the caller handles as HTML content).
+     */
+    private static boolean isNonRenderableGroupStart(String rtf, int index) {
+        if (rtf.charAt(index) != '{') {
+            return false;
+        }
+        if (rtf.startsWith("{\\*\\htmltag", index)) {
+            return false;
+        }
+        return rtf.startsWith("{\\fonttbl", index)
+                || rtf.startsWith("{\\colortbl", index)
+                || rtf.startsWith("{\\stylesheet", index)
+                || rtf.startsWith("{\\info", index)
+                || rtf.startsWith("{\\*\\", index);
+    }
+
+    /**
+     * Returns the index just past the {@code }} closing the group that opens at {@code index},
+     * honouring {@code \{ \} \\} escapes so an escaped brace cannot unbalance the count.
+     */
+    private static int skipGroup(String rtf, int index) {
+        int depth = 0;
+        while (index < rtf.length()) {
+            char current = rtf.charAt(index);
+            if (current == '\\' && index + 1 < rtf.length()) {
+                index += 2;
+                continue;
+            }
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return index + 1;
+                }
+            }
+            index++;
+        }
+        return index;
     }
 
     private String getRawRtfBody() {
@@ -434,6 +535,56 @@ public class Message {
         return "";
     }
 
+    /**
+     * The display name of the author the message was sent on behalf of
+     * (PR_SENT_REPRESENTING_NAME), or an empty string if absent.
+     */
+    public String getSentRepresentingName() {
+        if (propertyContext == null) return "";
+        return propertyContext.getProperty(MapiProperties.PR_SENT_REPRESENTING_NAME_W) instanceof String value
+                ? value
+                : "";
+    }
+
+    /**
+     * The resolved address of the author the message was sent on behalf of, honouring the
+     * configured {@link AddressPreference}, or an empty string. When this differs from
+     * {@link #getSenderEmail()}, the message was sent on behalf of someone else — RFC 5322 maps
+     * the pair to {@code From:} (this address) plus {@code Sender:} (the actual sender).
+     */
+    public String getSentRepresentingEmail() {
+        if (propertyContext == null) return "";
+        return resolveSentRepresentingEmail(propertyContext::getProperty, addressPreference);
+    }
+
+    // Package-private for testing
+    static String resolveSentRepresentingEmail(IntFunction<Object> properties, AddressPreference addressPreference) {
+        if (addressPreference == AddressPreference.PREFER_LEGACY_DN) {
+            if (properties.apply(MapiProperties.PR_SENT_REPRESENTING_EMAIL_ADDRESS_W) instanceof String email
+                    && !email.isEmpty()) {
+                return email;
+            }
+            if (properties.apply(MapiProperties.PR_SENT_REPRESENTING_SMTP_ADDRESS_W) instanceof String smtp
+                    && !smtp.isEmpty()) {
+                return smtp;
+            }
+        } else {
+            if (properties.apply(MapiProperties.PR_SENT_REPRESENTING_SMTP_ADDRESS_W) instanceof String smtp
+                    && !smtp.isEmpty()) {
+                return smtp;
+            }
+            if (properties.apply(MapiProperties.PR_SENT_REPRESENTING_EMAIL_ADDRESS_W) instanceof String email
+                    && !email.isEmpty()) {
+                String addrType =
+                        properties.apply(MapiProperties.PR_SENT_REPRESENTING_ADDRTYPE_W) instanceof String type
+                                ? type
+                                : "";
+                return imceaEncapsulate(addrType, email);
+            }
+        }
+        return "";
+    }
+
     /** The display string of the To: recipients (PR_DISPLAY_TO), or an empty string. */
     public String getTo() {
         if (propertyContext == null) return "";
@@ -508,7 +659,7 @@ public class Message {
             byte[] tableData = nodeDatabase.readSubnodeData(node.subBid(), NID_ATTACHMENT_TABLE);
             if (tableData == null) return attachments;
 
-            var tableContext = new TableContext(tableData, nodeDatabase, node, getMessageCharset());
+            var tableContext = new TableContext(tableData, nodeDatabase, node, getString8Charset());
             for (Map<Integer, Object> row : tableContext.getRows()) {
                 if (!(row.get(MapiProperties.PidTagLtpRowId) instanceof Integer attachNid)) {
                     continue;
@@ -520,7 +671,7 @@ public class Message {
                 byte[] attachPcData = nodeDatabase.readNodeData(attachEntry.dataBid());
                 if (attachPcData != null) {
                     var attachPc = new PropertyContext(attachPcData, nodeDatabase, attachEntry);
-                    attachPc.decodeString8(getMessageCharset());
+                    attachPc.decodeString8(getString8Charset());
                     attachments.add(new Attachment(attachPc));
                 }
             }
@@ -557,7 +708,7 @@ public class Message {
             byte[] tableData = nodeDatabase.readSubnodeData(node.subBid(), NID_RECIPIENT_TABLE);
             if (tableData == null) return recipients;
 
-            var tableContext = new TableContext(tableData, nodeDatabase, node, getMessageCharset());
+            var tableContext = new TableContext(tableData, nodeDatabase, node, getString8Charset());
             recipients = parseRecipients(tableContext.getRows(), addressPreference);
         } catch (IOException | RuntimeException exception) {
             LOG.log(System.Logger.Level.WARNING, () -> "Failed to read recipients for message node " + nid, exception);
@@ -634,12 +785,14 @@ public class Message {
         return propertyContext == null ? null : propertyContext.getString(propertyId);
     }
 
+    // Kept in sync with EmlSerializer.imceaEncapsulate in the plugin module (which cannot be
+    // referenced from this standalone library); change both together.
     private static String imceaEncapsulate(String addrType, String address) {
         if (address == null || address.isBlank()) return address;
         if (addrType == null || addrType.equalsIgnoreCase("SMTP") || address.contains("@")) return address;
 
         StringBuilder builder = new StringBuilder("IMCEA");
-        builder.append(addrType.toUpperCase()).append("-");
+        builder.append(addrType.toUpperCase(Locale.ROOT)).append("-");
 
         for (int i = 0; i < address.length(); i++) {
             char chr = address.charAt(i);
@@ -651,7 +804,9 @@ public class Message {
                 builder.append(String.format("_x%04X_", (int) chr));
             }
         }
-        builder.append("@example.com");
+        // ".invalid" (RFC 2606) marks the encapsulated address as synthesized — a real Exchange
+        // deployment would use its own accepted domain, which a PST does not record.
+        builder.append("@invalid");
         return builder.toString();
     }
 }

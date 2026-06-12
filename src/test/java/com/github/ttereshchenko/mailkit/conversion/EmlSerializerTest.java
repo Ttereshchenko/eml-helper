@@ -369,4 +369,89 @@ class EmlSerializerTest {
         assertEquals(0, linesStartingWith(eml, "X-Injected:"), "Content-ID CRLF must not inject a header: " + eml);
         assertEquals(1, linesStartingWith(eml, "Content-ID:"), "Exactly one Content-ID header: " + eml);
     }
+
+    // F5 regression: the SCL header was nested inside the Message-ID synthesis branch, so it
+    // silently vanished when the message had no Message-ID or the transport block supplied one.
+    @Test
+    void sclHeaderDoesNotDependOnMessageIdSynthesis() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.setScl(5);
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        assertTrue(
+                writer.toString().contains("X-MS-Exchange-Organization-SCL: 5"),
+                "SCL must be emitted without a Message-ID: " + writer);
+
+        serializer = new EmlSerializer();
+        serializer.setScl(3);
+        serializer.setTransportHeaders("Message-ID: <orig@example.com>\r\nFrom: <a@example.com>\r\n");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        writer = new StringWriter();
+        serializer.writeTo(writer);
+        assertTrue(
+                writer.toString().contains("X-MS-Exchange-Organization-SCL: 3"),
+                "a transport-supplied Message-ID must not suppress the SCL: " + writer);
+    }
+
+    // F11 regression: a lone CR (classic Mac line ending) was silently dropped, joining its two
+    // lines into one; all three line-break flavours must encode as a hard break.
+    @Test
+    void quotedPrintableTreatsLoneCarriageReturnAsLineBreak() {
+        assertEquals("line1\r\nline2\r\n", EmlSerializer.quotedPrintableEncode("line1\rline2"));
+        assertEquals("line1\r\nline2\r\n", EmlSerializer.quotedPrintableEncode("line1\r\nline2"));
+        assertEquals("line1\r\nline2\r\n", EmlSerializer.quotedPrintableEncode("line1\nline2"));
+    }
+
+    // F19: a stored Message-ID without angle brackets gains them (RFC 5322 §3.6.4).
+    @Test
+    void messageIdGainsAngleBracketsWhenMissing() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.setMessageId("bare-id@mailkit.org");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        assertTrue(writer.toString().contains("Message-ID: <bare-id@mailkit.org>"), writer.toString());
+    }
+
+    // F9: an on-behalf-of message carries both From: (author) and Sender: (actual transmitter).
+    @Test
+    void transmitterEmitsSenderHeader() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.setSender("Author", "author@example.com");
+        serializer.setTransmitter("Assistant", "assistant@example.com");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+        assertTrue(eml.contains("From: \"Author\" <author@example.com>"), eml);
+        assertTrue(eml.contains("Sender: \"Assistant\" <assistant@example.com>"), eml);
+        assertTrue(eml.contains("X-MailKit-Synthesized-Headers: From, Sender"), eml);
+    }
+
+    // F19: custom headers keep their insertion order, so repeated conversions emit identical files.
+    @Test
+    void customHeadersKeepInsertionOrder() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.addCustomHeader("In-Reply-To", "<a@example.com>");
+        serializer.addCustomHeader("References", "<a@example.com> <b@example.com>");
+        serializer.addCustomHeader("Importance", "High");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+        var inReplyTo = eml.indexOf("In-Reply-To:");
+        var references = eml.indexOf("References:");
+        var importance = eml.indexOf("Importance:");
+        assertTrue(inReplyTo >= 0 && inReplyTo < references && references < importance, eml);
+    }
+
+    // F10: encapsulated non-SMTP addresses end in the reserved ".invalid" TLD so synthesized
+    // addresses are recognizable as such and can never route.
+    @Test
+    void imceaEncapsulationUsesInvalidTld() {
+        assertEquals(
+                "IMCEAEX-_O_x003D_ORG_CN_x003D_user@invalid", EmlSerializer.imceaEncapsulate("EX", "/O=ORG/CN=user"));
+        assertEquals("real@example.com", EmlSerializer.imceaEncapsulate("SMTP", "real@example.com"));
+    }
 }

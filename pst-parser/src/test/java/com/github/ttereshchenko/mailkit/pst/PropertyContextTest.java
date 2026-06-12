@@ -129,4 +129,63 @@ class PropertyContextTest {
         // One second past the Unix epoch is 10^7 FILETIME ticks later.
         assertEquals(Instant.ofEpochSecond(1), PropertyContext.fileTimeToInstant(116_444_736_010_000_000L));
     }
+
+    // F13: only trailing NUL terminators are stripped from string properties; real whitespace is
+    // message content (PR_BODY's trailing newline) and must survive, unlike the old trim().
+    @Test
+    void stripsOnlyTrailingNulsNotWhitespace() {
+        assertEquals("abc", PropertyContext.stripTrailingNuls("abc\0\0"));
+        assertEquals("abc", PropertyContext.stripTrailingNuls("abc"));
+        assertEquals("  body text \r\n", PropertyContext.stripTrailingNuls("  body text \r\n"));
+        assertEquals("", PropertyContext.stripTrailingNuls("\0"));
+        assertEquals("a\0b", PropertyContext.stripTrailingNuls("a\0b"));
+    }
+
+    /**
+     * F13 regression: the old parse-time {@code trim()} ran before {@code decodeString8} and ate the
+     * leading ESC (0x1B ≤ 0x20) of an ISO-2022-JP String8 value, destroying the escape sequence the
+     * re-decode depends on. Built like {@link #decodesString8PropertiesUsingProvidedCharset} but
+     * with the ISO-2022-JP bytes for あ ({@code ESC $ B 0x24 0x22 ESC ( B}).
+     */
+    @Test
+    void iso2022LeadingEscapeSurvivesString8Redecode() throws Exception {
+        byte[] jis = "あ".getBytes(Charset.forName("ISO-2022-JP"));
+
+        var data = new byte[44 + jis.length + 12];
+        var buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        int pageMap = 32 + jis.length;
+        buf.putShort(0, (short) pageMap); // ibHnpm
+        buf.put(2, (byte) 0xEC); // bSig
+        buf.putInt(4, 0x20); // hidUserRoot -> item 1 (BTH header)
+
+        // Item 1 [16, 24): BTH header — cbKey=2, cbEnt=6, leaf, root at item 2.
+        buf.put(16, (byte) 0xB5);
+        buf.put(17, (byte) 2);
+        buf.put(18, (byte) 6);
+        buf.put(19, (byte) 0);
+        buf.putInt(20, 0x40); // hidRoot -> item 2
+
+        // Item 2 [24, 32): one record — tag 0x0037 (PR_SUBJECT), type 0x001E (String8), HNID item 3.
+        buf.putShort(24, (short) 0x0037);
+        buf.putShort(26, (short) 0x001E);
+        buf.putInt(28, 0x60); // -> item 3
+
+        // Item 3 [32, 32 + jis.length): the raw ISO-2022-JP bytes, leading ESC included.
+        for (int i = 0; i < jis.length; i++) {
+            buf.put(32 + i, jis[i]);
+        }
+
+        // Page map: cAlloc=3, cFree=0, rgibAlloc = {16, 24, 32, 32 + jis.length}.
+        buf.putShort(pageMap, (short) 3);
+        buf.putShort(pageMap + 2, (short) 0);
+        buf.putShort(pageMap + 4, (short) 16);
+        buf.putShort(pageMap + 6, (short) 24);
+        buf.putShort(pageMap + 8, (short) 32);
+        buf.putShort(pageMap + 10, (short) (32 + jis.length));
+
+        var propertyContext = new PropertyContext(data, null, null);
+        propertyContext.decodeString8(Charset.forName("ISO-2022-JP"));
+
+        assertEquals("あ", propertyContext.getProperty(0x0037), "the escape sequence must survive re-decoding");
+    }
 }

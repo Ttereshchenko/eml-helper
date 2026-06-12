@@ -6,13 +6,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.pst.Attachment;
+import com.github.ttereshchenko.mailkit.pst.MapiProperties;
 import com.github.ttereshchenko.mailkit.pst.Message;
 import com.github.ttereshchenko.mailkit.pst.NodeEntry;
 import com.github.ttereshchenko.mailkit.pst.PstFile;
 import java.io.StringWriter;
+import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Base64;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class PstToEmlConverterTest {
@@ -146,6 +150,287 @@ class PstToEmlConverterTest {
                         .map(Path::toFile)
                         .forEach(java.io.File::delete);
             }
+        }
+    }
+
+    // F8 regression: a subject-less message used to gain a fabricated "Subject: No Subject" header
+    // (and the synthesized-headers disclosure claimed it came from the message).
+    @Test
+    void blankSubjectProducesNoSubjectHeader() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertFalse(eml.startsWith("Subject:") || eml.contains("\r\nSubject:"), "no fabricated subject: " + eml);
+            assertFalse(eml.contains("No Subject"), eml);
+        }
+    }
+
+    // F9: threading and importance metadata stored in the PST surfaces as the standard headers.
+    @Test
+    void threadingAndImportanceHeadersAreExported() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Threaded";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getStringProperty(int propertyId) {
+                    if (propertyId == MapiProperties.PR_IN_REPLY_TO_ID_W) {
+                        return "<parent@example.com>";
+                    }
+                    if (propertyId == MapiProperties.PR_INTERNET_REFERENCES_W) {
+                        return "<root@example.com> <parent@example.com>";
+                    }
+                    return null;
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    return propertyId == MapiProperties.PR_IMPORTANCE ? 2 : null;
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("In-Reply-To: <parent@example.com>"), eml);
+            assertTrue(eml.contains("References: <root@example.com> <parent@example.com>"), eml);
+            assertTrue(eml.contains("Importance: High"), eml);
+            assertTrue(eml.contains("X-Priority: 1"), eml);
+        }
+    }
+
+    // F9: a message sent on behalf of someone else maps the author to From: and the actual
+    // transmitter to Sender: (RFC 5322 §3.6.2).
+    @Test
+    void onBehalfOfEmitsFromAuthorAndSenderTransmitter() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "On behalf";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Assistant";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "assistant@example.com";
+                }
+
+                @Override
+                public String getSentRepresentingName() {
+                    return "Boss";
+                }
+
+                @Override
+                public String getSentRepresentingEmail() {
+                    return "boss@example.com";
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("From: \"Boss\" <boss@example.com>"), eml);
+            assertTrue(eml.contains("Sender: \"Assistant\" <assistant@example.com>"), eml);
+        }
+    }
+
+    // F18 regression: a genuine RTF body used to be emitted as a text/rtf; charset=UTF-8
+    // multipart/alternative sibling no client can render; it is now preserved as an
+    // application/rtf attachment carrying the original windows-1252 bytes.
+    @Test
+    void rtfBodyBecomesApplicationRtfAttachment() throws Exception {
+        var rtf = "{\\rtf1 caf\\'e9}";
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Rtf";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Plain";
+                }
+
+                @Override
+                public String getRtfBody() {
+                    return rtf;
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertFalse(eml.contains("text/rtf"), "RTF must not be an alternative body: " + eml);
+            assertTrue(eml.contains("application/rtf"), eml);
+            assertTrue(eml.contains("body.rtf"), eml);
+
+            var matcher = Pattern.compile("(?is)application/rtf.*?\\r\\n\\r\\n(.*?)\\r\\n--")
+                    .matcher(eml);
+            assertTrue(matcher.find(), eml);
+            var decoded = Base64.getMimeDecoder().decode(matcher.group(1));
+            org.junit.jupiter.api.Assertions.assertArrayEquals(
+                    rtf.getBytes(Charset.forName("windows-1252")),
+                    decoded,
+                    "the attachment must carry the original RTF bytes");
+        }
+    }
+
+    // F2: the iTIP method follows the message class, downgrading to PUBLISH whenever no attendee
+    // is available (REQUEST/CANCEL/REPLY are invalid without one).
+    @Test
+    void icalMethodFollowsMessageClassAndAttendees() {
+        assertEquals("PUBLISH", PstToEmlConverter.icalMethod("IPM.Appointment", true));
+        assertEquals("PUBLISH", PstToEmlConverter.icalMethod("IPM.Appointment", false));
+        assertEquals("PUBLISH", PstToEmlConverter.icalMethod("IPM.Schedule.Meeting.Request", false));
+        assertEquals("REQUEST", PstToEmlConverter.icalMethod("IPM.Schedule.Meeting.Request", true));
+        assertEquals("CANCEL", PstToEmlConverter.icalMethod("IPM.Schedule.Meeting.Canceled", true));
+        assertEquals("REPLY", PstToEmlConverter.icalMethod("IPM.Schedule.Meeting.Resp.Pos", true));
+    }
+
+    // F19: an appointment whose store carries no start time gets no invite at all instead of one
+    // fabricated at conversion time.
+    @Test
+    void appointmentWithoutStartTimeGetsNoInvite() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Appointment";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Timeless";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    return null;
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertFalse(eml.contains("invite.ics"), "no invite may be fabricated without a start time: " + eml);
+            assertFalse(eml.contains("text/calendar"), eml);
         }
     }
 

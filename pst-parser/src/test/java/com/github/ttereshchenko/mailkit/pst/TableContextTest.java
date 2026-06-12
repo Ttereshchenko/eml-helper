@@ -110,6 +110,98 @@ class TableContextTest {
         }
     }
 
+    // F14 regression: PT_SHORT (i2) table cells are signed — the old Short.toUnsignedInt turned -2
+    // into 65534 — and 16-byte PT_CLSID cells were dropped with only a debug log.
+    @Test
+    void shortColumnsAreSignedAndClsidColumnsSurface() throws Exception {
+        var tableContext = new TableContext(buildTypedColumnsHeap(), null, null);
+        var rows = tableContext.getRows();
+
+        assertEquals(1, rows.size());
+        Map<Integer, Object> row = rows.get(0);
+        assertEquals(7, row.get(MapiProperties.PidTagLtpRowId));
+        assertEquals(-2, row.get(0x1234), "PT_SHORT must keep its sign");
+        var clsid = new byte[16];
+        for (int i = 0; i < 16; i++) {
+            clsid[i] = (byte) i;
+        }
+        assertArrayEquals(clsid, (byte[]) row.get(0x4321), "PT_CLSID cells must be surfaced raw");
+    }
+
+    /**
+     * A single-block TC heap with one row of three columns — PidTagLtpRowId (PT_LONG, offset 0),
+     * a PT_SHORT at offset 4 holding {@code -2} and a PT_CLSID at offset 6 — and an in-heap row
+     * matrix (row width 24, CEB byte at offset 22 with all three existence bits set).
+     */
+    private static byte[] buildTypedColumnsHeap() {
+        int tcInfoStart = 16;
+        int tcInfoLength = 22 + 3 * 8; // 46
+        int bthHeaderStart = tcInfoStart + tcInfoLength; // 62
+        int bthLeafStart = bthHeaderStart + 8; // 70
+        int rowMatrixStart = bthLeafStart + 8; // 78
+        int pageMapStart = rowMatrixStart + 24; // 102
+        var heap = ByteBuffer.allocate(pageMapStart + 4 + 5 * 2).order(ByteOrder.LITTLE_ENDIAN);
+
+        heap.putShort(0, (short) pageMapStart); // ibHnpm
+        heap.put(2, (byte) 0xEC); // bSig
+        heap.putInt(4, 0x20); // hidUserRoot -> item 1 (TCINFO)
+
+        // TCINFO: 3 columns, CEB at row offset 22, row width 24, row index item 2, rows item 4.
+        heap.put(tcInfoStart, (byte) 0x7C);
+        heap.put(tcInfoStart + 1, (byte) 3);
+        heap.putShort(tcInfoStart + 6, (short) 22);
+        heap.putShort(tcInfoStart + 8, (short) 24);
+        heap.putInt(tcInfoStart + 10, 0x40); // hidRowIndex -> item 2
+        heap.putInt(tcInfoStart + 14, 0x80); // hnidRows -> item 4 (in-heap HID)
+        // TCOLDESC: PidTagLtpRowId (PT_LONG, offset 0, size 4, iBit 0)
+        heap.putShort(tcInfoStart + 22, (short) 0x0003);
+        heap.putShort(tcInfoStart + 24, (short) MapiProperties.PidTagLtpRowId);
+        heap.putShort(tcInfoStart + 26, (short) 0);
+        heap.put(tcInfoStart + 28, (byte) 4);
+        heap.put(tcInfoStart + 29, (byte) 0);
+        // TCOLDESC: tag 0x1234 (PT_SHORT, offset 4, size 2, iBit 1)
+        heap.putShort(tcInfoStart + 30, (short) 0x0002);
+        heap.putShort(tcInfoStart + 32, (short) 0x1234);
+        heap.putShort(tcInfoStart + 34, (short) 4);
+        heap.put(tcInfoStart + 36, (byte) 2);
+        heap.put(tcInfoStart + 37, (byte) 1);
+        // TCOLDESC: tag 0x4321 (PT_CLSID, offset 6, size 16, iBit 2)
+        heap.putShort(tcInfoStart + 38, (short) 0x0048);
+        heap.putShort(tcInfoStart + 40, (short) 0x4321);
+        heap.putShort(tcInfoStart + 42, (short) 6);
+        heap.put(tcInfoStart + 44, (byte) 16);
+        heap.put(tcInfoStart + 45, (byte) 2);
+
+        // Row-index BTH header: 4-byte keys, 4-byte entries, leaf root at item 3.
+        heap.put(bthHeaderStart, (byte) 0xB5);
+        heap.put(bthHeaderStart + 1, (byte) 4);
+        heap.put(bthHeaderStart + 2, (byte) 4);
+        heap.put(bthHeaderStart + 3, (byte) 0);
+        heap.putInt(bthHeaderStart + 4, 0x60); // hidRoot -> item 3
+
+        // One row-index entry: rowId 7 at rowIndex 0.
+        heap.putInt(bthLeafStart, 7);
+        heap.putInt(bthLeafStart + 4, 0);
+
+        // The row: rowId 7, PT_SHORT -2, CLSID bytes 0..15, CEB 0xE0 (bits 0..2 set).
+        heap.putInt(rowMatrixStart, 7);
+        heap.putShort(rowMatrixStart + 4, (short) -2);
+        for (int i = 0; i < 16; i++) {
+            heap.put(rowMatrixStart + 6 + i, (byte) i);
+        }
+        heap.put(rowMatrixStart + 22, (byte) 0xE0);
+
+        // HN page map: 4 allocations -> rgibAlloc has 5 offsets.
+        heap.putShort(pageMapStart, (short) 4);
+        heap.putShort(pageMapStart + 2, (short) 0);
+        heap.putShort(pageMapStart + 4, (short) tcInfoStart);
+        heap.putShort(pageMapStart + 6, (short) bthHeaderStart);
+        heap.putShort(pageMapStart + 8, (short) bthLeafStart);
+        heap.putShort(pageMapStart + 10, (short) rowMatrixStart);
+        heap.putShort(pageMapStart + 12, (short) pageMapStart);
+        return heap.array();
+    }
+
     /** A PC heap whose single record is PR_ATTACH_DATA_BIN (PT_BINARY) pointing at the subnode. */
     private static byte[] buildBinaryPropertyHeap() {
         var heap = ByteBuffer.allocate(46).order(ByteOrder.LITTLE_ENDIAN);
