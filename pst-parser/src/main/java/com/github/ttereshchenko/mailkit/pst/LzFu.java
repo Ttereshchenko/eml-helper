@@ -55,7 +55,10 @@ final class LzFu {
             int bufferPosition = headerBytes.length;
             int currentDataPosition = 16;
 
-            while (currentDataPosition < data.length - 2 && output.size() < uncompressedSize) {
+            // Run to the end of the input: stopping 2 bytes early (an old guard) dropped up to two
+            // trailing literals when the final flag byte sat near the tail. The token reads below
+            // carry their own truncation guards.
+            while (currentDataPosition < data.length && output.size() < uncompressedSize) {
                 int flags = data[currentDataPosition++] & 0xFF;
                 for (int x = 0; x < 8 && output.size() < uncompressedSize; x++) {
                     boolean isReference = ((flags & 1) == 1);
@@ -88,8 +91,10 @@ final class LzFu {
             }
             if (output.size() != uncompressedSize) {
                 int decompressed = output.size();
+                // WARNING, not DEBUG: a short decompression means body text was lost, which the
+                // user should be able to see in the log without enabling debug output.
                 LOG.log(
-                        System.Logger.Level.DEBUG,
+                        System.Logger.Level.WARNING,
                         () -> "LZFu body truncated: decompressed " + decompressed + " of " + uncompressedSize
                                 + " declared bytes");
             }

@@ -59,4 +59,43 @@ class CodePagesTest {
         // The same bytes decoded with the old fallback would be mojibake, not equality.
         assertEquals(6, bytes.length, "windows-1251 encodes Cyrillic as single bytes");
     }
+
+    /**
+     * C1 regression: these ids used to degrade to windows-1252 even though the JDK ships a charset
+     * for each — most damagingly the Simplified-Chinese internet pages (GB2312/EUC-CN), which are
+     * common in older Chinese mail.
+     */
+    @Test
+    void mapsSimplifiedChineseJapaneseArabicHebrewAndIndicPages() {
+        assertEquals(Charset.forName("GB2312"), CodePages.charsetFor(20936));
+        assertEquals(Charset.forName("GB2312"), CodePages.charsetFor(51936));
+        assertEquals(Charset.forName("ISO-2022-CN"), CodePages.charsetFor(50227));
+        assertEquals(Charset.forName("EUC-JP"), CodePages.charsetFor(20932));
+        assertEquals(Charset.forName("ISO-8859-6"), CodePages.charsetFor(708));
+        assertEquals(Charset.forName("ISO-8859-8"), CodePages.charsetFor(38598));
+        assertEquals(Charset.forName("x-ISCII91"), CodePages.charsetFor(57002));
+    }
+
+    /** C1 regression: only Mac Roman and Mac Cyrillic of the Macintosh family were mapped. */
+    @Test
+    void mapsMacintoshCodePages() {
+        assertEquals(Charset.forName("x-MacArabic"), CodePages.charsetFor(10004));
+        assertEquals(Charset.forName("x-MacHebrew"), CodePages.charsetFor(10005));
+        assertEquals(Charset.forName("x-MacGreek"), CodePages.charsetFor(10006));
+        assertEquals(Charset.forName("x-MacRomania"), CodePages.charsetFor(10010));
+        assertEquals(Charset.forName("x-MacUkraine"), CodePages.charsetFor(10017));
+        assertEquals(Charset.forName("x-MacThai"), CodePages.charsetFor(10021));
+        assertEquals(Charset.forName("x-MacCentralEurope"), CodePages.charsetFor(10029));
+        assertEquals(Charset.forName("x-MacIceland"), CodePages.charsetFor(10079));
+        assertEquals(Charset.forName("x-MacTurkish"), CodePages.charsetFor(10081));
+        assertEquals(Charset.forName("x-MacCroatian"), CodePages.charsetFor(10082));
+    }
+
+    @Test
+    void simplifiedChineseBytesRoundTripThroughGb2312() {
+        var text = "中文邮件";
+        var bytes = text.getBytes(CodePages.charsetFor(51936));
+        assertEquals(text, new String(bytes, CodePages.charsetFor(51936)));
+        assertEquals(8, bytes.length, "GB2312 encodes CJK as two-byte sequences");
+    }
 }

@@ -33,6 +33,8 @@ import java.util.UUID;
  */
 public final class PstFile implements AutoCloseable {
 
+    private static final System.Logger LOG = System.getLogger(PstFile.class.getName());
+
     private static final int MAGIC_NUMBER = 0x4E444221; // "!BDN"
     private static final int HEADER_VERSION_OFFSET = 10;
     private static final int NID_MESSAGE_STORE = 0x21;
@@ -85,6 +87,9 @@ public final class PstFile implements AutoCloseable {
     // The store-wide named-property map (NBT node 0x61) is expensive to parse and identical for every
     // message, so build it lazily once per file; the lock makes the lazy init safe across threads.
     private NameToIdMap nameToIdMap;
+    // Lazily read store-wide default code page (message store object); resolved at most once.
+    private boolean storeCodePageResolved;
+    private Integer storeCodePage;
 
     /**
      * Opens the PST/OST file at the given path with the {@linkplain #DEFAULT_MAX_NODE_SIZE default}
@@ -226,6 +231,35 @@ public final class PstFile implements AutoCloseable {
         var propertyContext =
                 new PropertyContext(nodeDatabase.readNodeData(storeNode.dataBid()), nodeDatabase, storeNode);
         return propertyContext.getProperty(MapiProperties.PR_PST_PASSWORD) instanceof Integer crc && crc != 0;
+    }
+
+    /**
+     * The store's default code page id from the message store object (PidTagCodePageId, with
+     * PR_MESSAGE_CODEPAGE as a fallback), or {@code null} when the store does not record one. Used
+     * as the last-resort PT_STRING8 code page for messages that carry neither
+     * {@code PR_MESSAGE_CODEPAGE} nor {@code PR_INTERNET_CPID} themselves.
+     */
+    public synchronized Integer storeCodePage() {
+        if (!storeCodePageResolved) {
+            storeCodePageResolved = true;
+            try {
+                var storeNode = nodeDatabase.getNode(NID_MESSAGE_STORE);
+                if (storeNode != null) {
+                    var propertyContext = new PropertyContext(
+                            nodeDatabase.readNodeData(storeNode.dataBid()), nodeDatabase, storeNode);
+                    Object value = propertyContext.getProperty(MapiProperties.PR_CODE_PAGE_ID);
+                    if (value == null) {
+                        value = propertyContext.getProperty(MapiProperties.PR_MESSAGE_CODEPAGE);
+                    }
+                    if (value instanceof Number codePage) {
+                        storeCodePage = codePage.intValue();
+                    }
+                }
+            } catch (IOException | RuntimeException exception) {
+                LOG.log(System.Logger.Level.DEBUG, "Failed to read the message store object's code page", exception);
+            }
+        }
+        return storeCodePage;
     }
 
     /** The store's wire format, derived from the header version. */

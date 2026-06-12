@@ -4,9 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.IntFunction;
 import org.junit.jupiter.api.Test;
 
 class MessageTest {
@@ -104,6 +106,58 @@ class MessageTest {
         assertEquals(
                 "<span>" + (char) (short) -1000 + "</span>",
                 Message.extractHtmlFromRtf(rtfUnicodeNegative, "windows-1252"));
+    }
+
+    /**
+     * G2 regression: writers in the wild emit the unsigned form of the RTF unicode escape (e.g.
+     * 65533 instead of -3); the signed-only parse used to throw and silently drop the character.
+     */
+    @Test
+    void unicodeEscapeAcceptsUnsignedValues() {
+        var rtf = "{\\rtf1 \\htmlrtf0 <span>\\u65533?</span>}";
+        assertEquals("<span>" + (char) 0xFFFD + "</span>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    /**
+     * G1 regression: RTF escapes inside a {@code {\*\htmltag…}} destination used to be appended
+     * raw, leaking literal RTF syntax ({@code \'e9}, {@code \{}) into the extracted HTML — and an
+     * escaped {@code \}} inside the tag content truncated the group at the wrong brace.
+     */
+    @Test
+    void htmlTagGroupContentDecodesRtfEscapes() {
+        var rtf = "{\\rtf1 {\\*\\htmltag84 <a href=\"caf\\'e9 \\{x\\}.html\">}}";
+        assertEquals("<a href=\"café {x}.html\">", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    /** Multi-byte {@code \'hh} runs inside an htmltag destination must decode as one sequence. */
+    @Test
+    void htmlTagContentDecodesMultiByteEscapeRuns() {
+        assertEquals("日", Message.decodeHtmlTagContent("\\'93\\'fa", "windows-31j"));
+        assertEquals("a\tb", Message.decodeHtmlTagContent("a\\tab b", "windows-1252"));
+        assertEquals("x\r\ny", Message.decodeHtmlTagContent("x\\par y", "windows-1252"));
+    }
+
+    /**
+     * C3: a message that names no code page of its own picks up the store-wide default before
+     * degrading to windows-1252; a message-level code page always wins over the store's.
+     */
+    @Test
+    void charsetResolutionFallsBackToStoreCodePage() {
+        IntFunction<Object> noProperties = ignored -> null;
+        assertEquals(
+                Charset.forName("windows-31j"),
+                Message.resolveCharset(
+                        noProperties, 932, MapiProperties.PR_MESSAGE_CODEPAGE, MapiProperties.PR_INTERNET_CPID));
+        assertEquals(
+                Charset.forName("windows-1252"),
+                Message.resolveCharset(
+                        noProperties, null, MapiProperties.PR_MESSAGE_CODEPAGE, MapiProperties.PR_INTERNET_CPID));
+
+        IntFunction<Object> messageLevel = tag -> tag == MapiProperties.PR_MESSAGE_CODEPAGE ? 1251 : null;
+        assertEquals(
+                Charset.forName("windows-1251"),
+                Message.resolveCharset(
+                        messageLevel, 932, MapiProperties.PR_MESSAGE_CODEPAGE, MapiProperties.PR_INTERNET_CPID));
     }
 
     @Test

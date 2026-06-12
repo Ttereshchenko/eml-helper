@@ -2,6 +2,7 @@ package com.github.ttereshchenko.mailkit.conversion.pst;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
@@ -14,6 +15,7 @@ import java.io.StringWriter;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -459,5 +461,351 @@ class PstToEmlConverterTest {
                         PstToEmlConverter.RecoveryCandidate::nid, java.util.function.Function.identity()));
         assertTrue(byNid.get(dumpsterMessage).fromVisitedFolder(), "parent folder was visited -> dumpster");
         assertFalse(byNid.get(orphanMessage).fromVisitedFolder(), "parent outside the tree -> orphan");
+    }
+
+    /** Collects console output so tests can assert on conversion diagnostics. */
+    private static final class RecordingLog implements ConversionLog {
+        final List<String> infos = new ArrayList<>();
+        final List<String> errors = new ArrayList<>();
+
+        @Override
+        public void info(String message) {
+            infos.add(message);
+        }
+
+        @Override
+        public void error(String message) {
+            errors.add(message);
+        }
+    }
+
+    /** An embedded-message attachment (afEmbeddedMessage) carrying only a display name. */
+    private static final class EmbeddedAttachmentStub extends Attachment {
+        private final String displayName;
+
+        EmbeddedAttachmentStub(String displayName) {
+            this.displayName = displayName;
+        }
+
+        @Override
+        public String getLongFilename() {
+            return "";
+        }
+
+        @Override
+        public String getFilename() {
+            return "";
+        }
+
+        @Override
+        public String getDisplayName() {
+            return displayName;
+        }
+
+        @Override
+        public int getAttachMethod() {
+            return 5; // afEmbeddedMessage
+        }
+    }
+
+    /** A binary attachment whose stored content is absent. */
+    private static final class ContentlessAttachmentStub extends Attachment {
+        private final int attachMethod;
+
+        ContentlessAttachmentStub(int attachMethod) {
+            this.attachMethod = attachMethod;
+        }
+
+        @Override
+        public String getLongFilename() {
+            return "report.pdf";
+        }
+
+        @Override
+        public String getFilename() {
+            return "";
+        }
+
+        @Override
+        public int getAttachMethod() {
+            return attachMethod;
+        }
+
+        @Override
+        public byte[] getData() {
+            return null;
+        }
+    }
+
+    /**
+     * A message double for serializer-level tests: fixed subject/class/attachments and a canned
+     * result for {@link Message#readEmbeddedMessage}, so nesting scenarios that no public PST
+     * fixture provides (journal reports, depth ≥ 2) stay testable. The real resolution path behind
+     * readEmbeddedMessage is covered against submessage.pst in the pst-parser module's tests.
+     */
+    private static class StubMessage extends Message {
+        private final String subject;
+        private final List<Attachment> attachments;
+        private final Message embedded;
+        private final String transportHeaders;
+
+        StubMessage(
+                PstFile pstFile,
+                String subject,
+                List<Attachment> attachments,
+                Message embedded,
+                String transportHeaders) {
+            super(pstFile, 0x122);
+            this.subject = subject;
+            this.attachments = attachments;
+            this.embedded = embedded;
+            this.transportHeaders = transportHeaders;
+        }
+
+        @Override
+        public String getMessageClass() {
+            return "IPM.Note";
+        }
+
+        @Override
+        public String getSubject() {
+            return subject;
+        }
+
+        @Override
+        public String getBody() {
+            return "Body of " + subject;
+        }
+
+        @Override
+        public String getSenderName() {
+            return "Sender";
+        }
+
+        @Override
+        public String getSenderEmail() {
+            return "sender@example.com";
+        }
+
+        @Override
+        public List<Recipient> getRecipients() {
+            return List.of();
+        }
+
+        @Override
+        public List<Attachment> getAttachments() {
+            return attachments;
+        }
+
+        @Override
+        public String getTransportHeaders() {
+            return transportHeaders;
+        }
+
+        @Override
+        public Message readEmbeddedMessage(Attachment attachment) {
+            return embedded;
+        }
+    }
+
+    /**
+     * N2: embedded messages nested two levels deep serialize recursively — each level becomes a
+     * message/rfc822 part inside its parent, and (N3) each part is named after the attachment's
+     * display name instead of the old "attachment.dat.eml".
+     */
+    @Test
+    void deeplyNestedEmbeddedMessagesSerializeRecursively() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var level3 = new StubMessage(pstFile, "Level 3 innermost", List.of(), null, "");
+            var level2 = new StubMessage(
+                    pstFile, "Level 2", List.of(new EmbeddedAttachmentStub("Level 3 innermost")), level3, "");
+            var level1 = new StubMessage(
+                    pstFile, "Level 1 outer", List.of(new EmbeddedAttachmentStub("Level 2")), level2, "");
+
+            var serializer = PstToEmlConverter.createSerializer(level1, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertEquals(
+                    2,
+                    countOccurrences(eml, "Content-Type: message/rfc822"),
+                    () -> "Expected two nested message/rfc822 parts in:\n" + eml);
+            assertTrue(eml.contains("Subject: Level 1 outer"), "Outer subject");
+            assertTrue(eml.contains("Subject: Level 2"), "Mid subject");
+            assertTrue(eml.contains("Subject: Level 3 innermost"), "Innermost subject");
+            assertTrue(eml.contains("name=\"Level 2.eml\""), "N3: the part is named from PR_DISPLAY_NAME");
+            assertFalse(eml.contains("attachment.dat.eml"), "N3: the generic default name must be gone");
+        }
+    }
+
+    /**
+     * N1 regression: an embedded message that fails to resolve used to vanish silently; it must be
+     * reported on the console and counted in the conversion stats.
+     */
+    @Test
+    void unresolvableEmbeddedMessageIsLoggedAndCounted() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(
+                    pstFile, "Damaged host", List.of(new EmbeddedAttachmentStub("Lost original")), null, "");
+            var log = new RecordingLog();
+            var stats = new PstToEmlConverter.Stats();
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, 0, log, stats);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+
+            assertEquals(1, stats.failedAttachments(), "The dropped embedded message must be counted");
+            assertTrue(
+                    log.errors.stream()
+                            .anyMatch(error -> error.contains("Failed to resolve embedded message")
+                                    && error.contains("Lost original")),
+                    () -> "Expected a console error naming the lost attachment, got: " + log.errors);
+        }
+    }
+
+    /**
+     * N1 regression: a by-value attachment with no stored bytes used to be dropped silently; it is
+     * an error worth counting. A by-reference attachment (methods 2–4) has no bytes by design and
+     * stays informational.
+     */
+    @Test
+    void attachmentWithoutContentIsLoggedAndCounted() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var log = new RecordingLog();
+            var stats = new PstToEmlConverter.Stats();
+            var byValue =
+                    new StubMessage(pstFile, "Host", List.of(new ContentlessAttachmentStub(1)), null, ""); // afByValue
+            var serializer = PstToEmlConverter.createSerializer(byValue, defaultOptions(), pstFile, 0, log, stats);
+            serializer.writeTo(new StringWriter());
+            assertEquals(1, stats.failedAttachments());
+            assertTrue(
+                    log.errors.stream().anyMatch(error -> error.contains("report.pdf")),
+                    () -> "Expected an error naming the contentless attachment, got: " + log.errors);
+
+            var referenceLog = new RecordingLog();
+            var referenceStats = new PstToEmlConverter.Stats();
+            var byReference = new StubMessage(
+                    pstFile, "Host", List.of(new ContentlessAttachmentStub(2)), null, ""); // afByReference
+            PstToEmlConverter.createSerializer(byReference, defaultOptions(), pstFile, 0, referenceLog, referenceStats)
+                    .writeTo(new StringWriter());
+            assertEquals(0, referenceStats.failedAttachments(), "By-reference attachments are not failures");
+            assertTrue(
+                    referenceLog.infos.stream().anyMatch(info -> info.contains("reference")),
+                    () -> "Expected an informational note for the by-reference attachment, got: " + referenceLog.infos);
+        }
+    }
+
+    private static final String JOURNAL_TRANSPORT_HEADERS = "Received: from journaling.example.com\r\n"
+            + "Date: Sat, 10 Jun 2017 08:51:30 +0000\r\n"
+            + "Message-ID: <journal@journal.report.generator>\r\n"
+            + "X-MS-Journal-Report: \r\n"
+            + "Content-Type: multipart/mixed; boundary=\"original\"\r\n"
+            + "MIME-Version: 1.0\r\n";
+
+    /**
+     * J1 regression: the X-MS-Journal-Report marker has no MAPI substitute, so it must survive the
+     * conversion even when the user opts out of the original transport headers — and stay
+     * un-duplicated when the headers are passed through. The full envelope shape this models (and a
+     * manually openable export) is samples/eml/journaled/journal_report_pst_export.eml.
+     */
+    @Test
+    void journalReportMarkerSurvivesIndependentOfHeaderOption() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var original = new StubMessage(pstFile, "Original message", List.of(), null, "");
+            var journalReport = new StubMessage(
+                    pstFile,
+                    "Journal report",
+                    List.of(new EmbeddedAttachmentStub("Original message")),
+                    original,
+                    JOURNAL_TRANSPORT_HEADERS);
+
+            var withoutOriginalHeaders =
+                    PstToEmlConverter.createSerializer(journalReport, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var withoutWriter = new StringWriter();
+            withoutOriginalHeaders.writeTo(withoutWriter);
+            assertEquals(
+                    1,
+                    countOccurrences(withoutWriter.toString(), "X-MS-Journal-Report:"),
+                    () -> "The journal marker must survive without original headers:\n" + withoutWriter);
+            assertTrue(
+                    withoutWriter.toString().contains("Content-Type: message/rfc822"),
+                    "The journaled original must remain an embedded message part");
+
+            var keepHeadersOptions = new PstToEmlConverter.Options(
+                    PstToEmlConverter.DuplicateHandling.OVERWRITE,
+                    null,
+                    true,
+                    true,
+                    Message.AddressPreference.PREFER_SMTP,
+                    false,
+                    false,
+                    64L * 1024 * 1024);
+            var withOriginalHeaders =
+                    PstToEmlConverter.createSerializer(journalReport, keepHeadersOptions, pstFile, ConversionLog.NOOP);
+            var withWriter = new StringWriter();
+            withOriginalHeaders.writeTo(withWriter);
+            assertEquals(
+                    1,
+                    countOccurrences(withWriter.toString(), "X-MS-Journal-Report:"),
+                    () -> "The passthrough must not duplicate the journal marker:\n" + withWriter);
+        }
+    }
+
+    /**
+     * The journal-report sample (manual-verification companion of
+     * {@link #journalReportMarkerSurvivesIndependentOfHeaderOption}) mirrors the converter's export
+     * shape: a bare X-MS-Journal-Report marker plus the original as a message/rfc822 part.
+     */
+    @Test
+    void journalReportSampleMirrorsExportShape() throws Exception {
+        var sample = java.nio.file.Files.readString(
+                Paths.get("src/test/resources/samples/eml/journaled/journal_report_pst_export.eml"));
+        assertTrue(sample.contains("X-MS-Journal-Report:\r\n"), "The sample carries the bare journal marker");
+        assertTrue(sample.contains("Content-Type: message/rfc822"), "The sample embeds the original message");
+        assertEquals(1, countOccurrences(sample, "X-MS-Journal-Report:"));
+    }
+
+    /** J1: the marker extractor distinguishes "absent" (null) from "present but empty" (""). */
+    @Test
+    void journalReportMarkerValueParsesTransportHeaders() {
+        assertNull(PstToEmlConverter.journalReportMarkerValue(null));
+        assertNull(PstToEmlConverter.journalReportMarkerValue(""));
+        assertNull(PstToEmlConverter.journalReportMarkerValue("Subject: hi\r\nDate: now\r\n"));
+        assertEquals("", PstToEmlConverter.journalReportMarkerValue(JOURNAL_TRANSPORT_HEADERS));
+        assertEquals(
+                "v2",
+                PstToEmlConverter.journalReportMarkerValue("x-ms-journal-report: v2\r\nSubject: s\r\n"),
+                "Matching is case-insensitive and keeps a non-empty value");
+    }
+
+    /** G5: converting an S/MIME message logs that the re-encoded EML cannot keep its envelope verifiable. */
+    @Test
+    void smimeMessagesGetAStructureLossNote() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(pstFile, "Signed", List.of(), null, "") {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note.SMIME.MultipartSigned";
+                }
+            };
+            var log = new RecordingLog();
+            PstToEmlConverter.createSerializer(
+                            message, defaultOptions(), pstFile, 0, log, new PstToEmlConverter.Stats())
+                    .writeTo(new StringWriter());
+            assertTrue(
+                    log.infos.stream().anyMatch(info -> info.contains("S/MIME")),
+                    () -> "Expected an S/MIME structure-loss note, got: " + log.infos);
+        }
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int from = 0;
+        while ((from = haystack.indexOf(needle, from)) != -1) {
+            count++;
+            from += needle.length();
+        }
+        return count;
     }
 }

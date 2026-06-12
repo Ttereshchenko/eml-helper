@@ -2,17 +2,25 @@ package com.github.ttereshchenko.mailkit.pst;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Maps Windows code-page identifiers (PR_INTERNET_CPID / PR_MESSAGE_CODEPAGE values) to Java
  * {@link Charset}s, preferring the Microsoft variant where it differs from the IANA one (e.g.
  * {@code windows-31j} over {@code Shift_JIS}, {@code x-windows-949} over {@code EUC-KR}), because
  * the bytes were written by Windows. Unknown ids fall back to {@code windows-1252} so decoding
- * always succeeds.
+ * always succeeds; the degradation is logged once per id so silent mojibake is diagnosable.
  */
 final class CodePages {
 
+    private static final System.Logger LOG = System.getLogger(CodePages.class.getName());
+
     private static final Charset WINDOWS_1252 = Charset.forName("windows-1252");
+
+    // Ids whose windows-1252 degradation has already been logged, so a store full of messages in an
+    // unsupported code page produces one diagnostic instead of thousands.
+    private static final Set<Integer> WARNED_FALLBACK_IDS = ConcurrentHashMap.newKeySet();
 
     private CodePages() {}
 
@@ -21,6 +29,17 @@ final class CodePages {
     }
 
     static Charset charsetFor(int codePageId) {
+        var charset = resolve(codePageId);
+        if (codePageId != 1252 && charset.equals(WINDOWS_1252) && WARNED_FALLBACK_IDS.add(codePageId)) {
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    () -> "Unsupported code page " + codePageId
+                            + "; decoding as windows-1252 — non-ASCII text may be garbled");
+        }
+        return charset;
+    }
+
+    private static Charset resolve(int codePageId) {
         // ISO-8859 family: 28591 + n maps to ISO-8859-n (28602/-12 does not exist; the fallback
         // chain below degrades it to windows-1252 like any other unknown id).
         if (codePageId >= 28591 && codePageId <= 28606) {
@@ -28,6 +47,7 @@ final class CodePages {
         }
         return switch (codePageId) {
             case 437 -> firstSupported("IBM437");
+            case 708 -> firstSupported("ISO-8859-6"); // ASMO 708 is ISO-8859-6 Arabic
             case 850 -> firstSupported("IBM850");
             case 852 -> firstSupported("IBM852");
             case 855 -> firstSupported("IBM855");
@@ -43,15 +63,30 @@ final class CodePages {
             case 1201 -> StandardCharsets.UTF_16BE;
             case 1361 -> firstSupported("x-Johab");
             case 10000 -> firstSupported("x-MacRoman");
+            case 10004 -> firstSupported("x-MacArabic");
+            case 10005 -> firstSupported("x-MacHebrew");
+            case 10006 -> firstSupported("x-MacGreek");
             case 10007 -> firstSupported("x-MacCyrillic");
+            case 10010 -> firstSupported("x-MacRomania");
+            case 10017 -> firstSupported("x-MacUkraine");
+            case 10021 -> firstSupported("x-MacThai");
+            case 10029 -> firstSupported("x-MacCentralEurope");
+            case 10079 -> firstSupported("x-MacIceland");
+            case 10081 -> firstSupported("x-MacTurkish");
+            case 10082 -> firstSupported("x-MacCroatian");
             case 20127 -> StandardCharsets.US_ASCII;
             case 20866 -> firstSupported("KOI8-R");
+            case 20932 -> firstSupported("EUC-JP"); // JIS X 0208-1990 & 0212-1990
+            case 20936, 51936 -> firstSupported("GB2312", "EUC-CN"); // Simplified Chinese (GB2312-80 / EUC-CN)
             case 21866 -> firstSupported("KOI8-U");
+            case 38598 -> firstSupported("ISO-8859-8"); // ISO-8859-8-I (logical Hebrew); same bytes
             case 50220, 50221, 50222 -> firstSupported("ISO-2022-JP");
             case 50225 -> firstSupported("ISO-2022-KR");
+            case 50227 -> firstSupported("ISO-2022-CN", "x-ISO-2022-CN-GB");
             case 51932 -> firstSupported("EUC-JP");
             case 51949 -> firstSupported("EUC-KR");
             case 54936 -> firstSupported("GB18030");
+            case 57002 -> firstSupported("x-ISCII91"); // ISCII Devanagari
             case 65001 -> StandardCharsets.UTF_8;
             default -> firstSupported("windows-" + codePageId, "cp" + codePageId);
         };

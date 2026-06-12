@@ -539,4 +539,55 @@ class EmlSerializerTest {
         assertTrue(
                 alternativeWriter.toString().contains("; type=\"multipart/alternative\""), alternativeWriter::toString);
     }
+
+    /**
+     * J1 regression: an empty-valued custom header (the X-MS-Journal-Report marker on Exchange
+     * journal reports has no value) used to be silently dropped by the blank-value guard in
+     * appendHeader; it must be emitted as a bare field instead.
+     */
+    @Test
+    void emptyValuedCustomHeaderIsEmittedBare() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.addCustomHeader("X-MS-Journal-Report", "");
+        serializer.addBody("journal record", "text/plain; charset=UTF-8");
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        assertTrue(
+                writer.toString().contains("X-MS-Journal-Report:\r\n"),
+                () -> "Expected the bare journal marker header in:\n" + writer);
+    }
+
+    /**
+     * G4 regression: an original transport-header line longer than the RFC 5322 §2.1.1 hard limit
+     * of 998 characters used to be passed through verbatim; it must be re-folded at whitespace so
+     * the generated message stays parseable.
+     */
+    @Test
+    void overlongTransportHeaderLineIsRefolded() throws Exception {
+        var receivedTokens = new StringBuilder("Received: from relay.example.com");
+        while (receivedTokens.length() < 1400) {
+            receivedTokens.append(" by hop").append(receivedTokens.length()).append(".example.com");
+        }
+        var serializer = new EmlSerializer();
+        serializer.setTransportHeaders(receivedTokens + "\r\nSubject: kept\r\n");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+
+        var output = writer.toString();
+        assertTrue(output.contains("Received: from relay.example.com"), "The header itself must survive");
+        for (var line : output.split("\r\n")) {
+            assertTrue(line.length() <= 998, () -> "Line exceeds the RFC 5322 hard limit: " + line.length());
+        }
+        // The folded continuations must start with whitespace, i.e. remain one logical header.
+        var folded = output.split("\r\n");
+        for (int lineIndex = 1; lineIndex < folded.length; lineIndex++) {
+            if (folded[lineIndex - 1].startsWith("Received:") && !folded[lineIndex].isEmpty()) {
+                assertTrue(
+                        Character.isWhitespace(folded[lineIndex].charAt(0)),
+                        "The continuation of the folded Received line must start with WSP");
+                break;
+            }
+        }
+    }
 }

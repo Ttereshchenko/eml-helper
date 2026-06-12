@@ -1,0 +1,39 @@
+From: "Compliance Journaling" <journaling@example.com>
+To: <journal-archive@example.com>
+Subject: RE: Quarterly results
+Date: Wed, 10 Jun 2026 08:51:30 +0000
+Message-ID: <6l3dg15s8inj4c@journal.report.generator>
+X-MailKit-Synthesized-Headers: From, To, Subject, Date, Message-ID
+X-MS-Journal-Report:
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MAILKIT_8c2e6f4a9b1d4e72a3c5d8f0b6a91c47"
+
+--MAILKIT_8c2e6f4a9b1d4e72a3c5d8f0b6a91c47
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Sender: alice@example.com
+Subject: RE: Quarterly results
+Message-Id: <original-7f3a@example.com>
+Recipients:
+   bob@example.com (To)
+--MAILKIT_8c2e6f4a9b1d4e72a3c5d8f0b6a91c47
+Content-Type: message/rfc822; name="RE: Quarterly results.eml"
+Content-Transfer-Encoding: 8bit
+Content-Disposition: attachment; filename="RE: Quarterly results.eml"
+
+From: "Alice" <alice@example.com>
+To: <bob@example.com>
+Subject: RE: Quarterly results
+Date: Wed, 10 Jun 2026 08:50:12 +0000
+Message-ID: <original-7f3a@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Hi Bob,
+
+the quarterly numbers are attached.
+
+Alice
+--MAILKIT_8c2e6f4a9b1d4e72a3c5d8f0b6a91c47--

@@ -215,14 +215,30 @@ public class Message {
     }
 
     private Charset resolveCharset(int preferredTag, int fallbackTag) {
-        if (propertyContext != null) {
-            Object codePage = propertyContext.getProperty(preferredTag);
-            if (codePage == null) {
-                codePage = propertyContext.getProperty(fallbackTag);
-            }
-            if (codePage instanceof Number number) {
-                return CodePages.charsetFor(number.intValue());
-            }
+        return resolveCharset(
+                propertyContext != null ? propertyContext::getProperty : ignored -> null,
+                pstFile != null ? pstFile.storeCodePage() : null,
+                preferredTag,
+                fallbackTag);
+    }
+
+    /**
+     * Pure code-page resolution: the preferred tag, then the fallback tag, then the store-wide
+     * default, then windows-1252. Package-private for testing.
+     */
+    static Charset resolveCharset(
+            IntFunction<Object> properties, Integer storeCodePage, int preferredTag, int fallbackTag) {
+        Object codePage = properties.apply(preferredTag);
+        if (codePage == null) {
+            codePage = properties.apply(fallbackTag);
+        }
+        if (codePage instanceof Number number) {
+            return CodePages.charsetFor(number.intValue());
+        }
+        // The message names no code page of its own; fall back to the store-wide default before
+        // assuming windows-1252 (common for items written by a non-Outlook MAPI client).
+        if (storeCodePage != null) {
+            return CodePages.charsetFor(storeCodePage);
         }
         return CodePages.defaultCharset();
     }
@@ -259,14 +275,16 @@ public class Message {
             }
 
             if (rtf.startsWith("{\\*\\htmltag", index)) {
-                int end = rtf.indexOf("}", index);
+                // The group end must honor RTF escapes: an escaped \} inside the tag content would
+                // otherwise truncate the tag at the wrong brace.
+                int end = findGroupEnd(rtf, index);
                 if (end != -1) {
                     String tag = rtf.substring(index + 11, end).trim();
                     tag = tag.replaceFirst("^\\d+\\s*", "");
-                    if (!tag.equals("\\par") && !tag.matches("\\d+")) {
-                        html.append(tag);
-                    } else if (tag.equals("\\par")) {
+                    if (tag.equals("\\par")) {
                         html.append("\r\n");
+                    } else if (!tag.matches("\\d+")) {
+                        html.append(decodeHtmlTagContent(tag, charsetName));
                     }
                     index = end + 1;
                     continue;
@@ -332,7 +350,10 @@ public class Message {
                     if (rtf.charAt(endNum) == '-') endNum++;
                     while (endNum < rtf.length() && Character.isDigit(rtf.charAt(endNum))) endNum++;
                     try {
-                        short codePoint = Short.parseShort(rtf.substring(index + 2, endNum));
+                        // A unicode escape parameter is nominally a signed 16-bit value, but real
+                        // writers also emit the unsigned form (e.g. 65533); accept both and
+                        // truncate to a char.
+                        int codePoint = Integer.parseInt(rtf.substring(index + 2, endNum));
                         html.append((char) codePoint);
                     } catch (Exception ignored) {
                         // malformed \\uN escape — skip this code point
@@ -419,6 +440,105 @@ public class Message {
             index++;
         }
         return index;
+    }
+
+    /**
+     * Returns the index of the {@code }} closing the group that opens at {@code index} (not past
+     * it), honouring {@code \{ \} \\} escapes, or {@code -1} when the group never closes.
+     */
+    private static int findGroupEnd(String rtf, int index) {
+        int depth = 0;
+        while (index < rtf.length()) {
+            char current = rtf.charAt(index);
+            if (current == '\\' && index + 1 < rtf.length()) {
+                index += 2;
+                continue;
+            }
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return index;
+                }
+            }
+            index++;
+        }
+        return -1;
+    }
+
+    /**
+     * Decodes the RTF escapes inside a {@code {\*\htmltag…}} destination's content ([MS-OXRTFEX]
+     * §2.1.3.1.2): {@code \'hh} runs are decoded with the message's code page (runs decoded
+     * together so multi-byte encodings survive), {@code \{ \} \\} unescape to the literal
+     * character, {@code \par}/{@code \line} become CRLF, {@code \tab} a tab; any other control
+     * word is dropped rather than leaked into the HTML as literal RTF syntax.
+     */
+    static String decodeHtmlTagContent(String content, String charsetName) {
+        var html = new StringBuilder();
+        int index = 0;
+        while (index < content.length()) {
+            char current = content.charAt(index);
+            if (current != '\\') {
+                html.append(current);
+                index++;
+                continue;
+            }
+            if (index + 1 >= content.length()) {
+                break; // dangling backslash at the end of the tag content
+            }
+            char escaped = content.charAt(index + 1);
+            if (escaped == '\'') {
+                if (index + 4 > content.length()) {
+                    break; // truncated \'hh escape at the end of the tag content
+                }
+                var hexBuffer = new ByteArrayOutputStream();
+                while (index + 4 <= content.length()
+                        && content.charAt(index) == '\\'
+                        && content.charAt(index + 1) == '\'') {
+                    try {
+                        hexBuffer.write(Integer.parseInt(content.substring(index + 2, index + 4), 16));
+                    } catch (Exception ignored) {
+                        // malformed \'hh escape
+                    }
+                    index += 4;
+                }
+                try {
+                    html.append(new String(hexBuffer.toByteArray(), charsetName));
+                } catch (Exception ignored) {
+                    // unsupported charset name — skip the escaped bytes
+                }
+                continue;
+            }
+            if (escaped == '{' || escaped == '}' || escaped == '\\') {
+                html.append(escaped);
+                index += 2;
+                continue;
+            }
+            // Control word: consume the word (letters then an optional numeric parameter) plus its
+            // single delimiting space, translating the line-break words.
+            int wordEnd = index + 1;
+            while (wordEnd < content.length() && Character.isLetter(content.charAt(wordEnd))) {
+                wordEnd++;
+            }
+            String word = content.substring(index + 1, wordEnd);
+            while (wordEnd < content.length()
+                    && (Character.isDigit(content.charAt(wordEnd)) || content.charAt(wordEnd) == '-')) {
+                wordEnd++;
+            }
+            if (wordEnd < content.length() && content.charAt(wordEnd) == ' ') {
+                wordEnd++;
+            }
+            switch (word) {
+                case "par", "line" -> html.append("\r\n");
+                case "tab" -> html.append('\t');
+                default -> {
+                    // other control words (formatting noise) are dropped
+                }
+            }
+            index = wordEnd;
+        }
+        return html.toString();
     }
 
     private String getRawRtfBody() {
@@ -679,6 +799,30 @@ public class Message {
             LOG.log(System.Logger.Level.WARNING, () -> "Failed to read attachments for message node " + nid, exception);
         }
         return attachments;
+    }
+
+    /**
+     * Resolves the message embedded in {@code attachment} (attach method {@code afEmbeddedMessage}),
+     * looking the embedded node up in the attachment's own sub-node tree. The returned message
+     * inherits this message's {@link AddressPreference}. Returns {@code null} when the attachment
+     * does not embed a message or the embedded node cannot be resolved (corrupted store).
+     *
+     * @throws IOException if the store cannot be read while resolving the embedded node
+     */
+    public Message readEmbeddedMessage(Attachment attachment) throws IOException {
+        Objects.requireNonNull(attachment, "attachment");
+        Integer embeddedNid = attachment.getEmbeddedMessageNodeId();
+        NodeEntry attachmentNode = attachment.getNode();
+        if (embeddedNid == null || attachmentNode == null || pstFile == null) {
+            return null;
+        }
+        NodeEntry embeddedEntry = pstFile.readSubnodeEntry(attachmentNode.subBid(), embeddedNid);
+        if (embeddedEntry == null) {
+            return null;
+        }
+        var embeddedMessage = new Message(pstFile, embeddedEntry);
+        embeddedMessage.setAddressPreference(addressPreference);
+        return embeddedMessage;
     }
 
     /**

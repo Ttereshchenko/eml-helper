@@ -83,4 +83,21 @@ class LzFuTest {
         byte[] data = header(-5, LZFU_SIGNATURE, 8);
         assertEquals("", LzFu.decode(data));
     }
+
+    /**
+     * G3 regression: the decode loop used to stop two bytes before the end of the input, so a flag
+     * byte at {@code data.length - 2} stranded its trailing literal and the body lost its last
+     * characters. No padding bytes after the final literal here, unlike the other fixtures.
+     */
+    @Test
+    void decodesLiteralsAtTheVeryEndOfTheStream() {
+        byte[] firstRun = "12345678".getBytes(StandardCharsets.US_ASCII);
+        byte[] data = header(9, LZFU_SIGNATURE, 1 + firstRun.length + 1 + 1);
+        data[16] = 0x00; // flags: 8 literals
+        System.arraycopy(firstRun, 0, data, 17, firstRun.length);
+        data[25] = 0x00; // second flag byte, at data.length - 2
+        data[26] = '9'; // final literal, at data.length - 1
+
+        assertEquals("123456789", LzFu.decode(data));
+    }
 }
