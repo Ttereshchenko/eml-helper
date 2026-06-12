@@ -5,7 +5,9 @@
 ### Changed
 
 - PST/OST conversion no longer wraps everything in a synthetic `Folder_290` directory: the archive's real top-level folders now land directly in the chosen target directory.
-- A genuine RTF message body is now preserved as a `body.rtf` attachment (with its original bytes) instead of being emitted as a `text/rtf` body alternative that no mail client can render.
+- A genuine RTF message body is now preserved as a `body.rtf` attachment (with its original bytes) instead of being emitted as a `text/rtf` body alternative that no mail client can render — in MSG conversion as well as PST. An MSG whose RTF is just the encapsulated copy of its HTML body no longer carries that redundant copy at all, which substantially shrinks typical converted messages.
+- Converting a `.msg` file now asks before overwriting an existing `.eml` of the same name instead of silently replacing it.
+- Canceling an MSG conversion now takes effect while the message is being converted, not only after it finishes.
 
 ### Fixed
 
@@ -20,6 +22,15 @@
 - Plain-text bodies with classic-Mac (CR-only) line endings no longer have their lines joined together, and leading/trailing whitespace in message bodies survives conversion instead of being trimmed away.
 - Attachments marked hidden in Outlook (typical for inline cid-referenced images) are now correctly grouped with the message body as inline parts.
 - A stored Message-ID without angle brackets is now wrapped in them as RFC 5322 requires.
+- MSG conversion now resolves the sender's real SMTP address when the message stores it beside an Exchange X.500 DN, and exports the stored spam-confidence level (`X-MS-Exchange-Organization-SCL`); both were previously dropped because the property lookup could never match.
+- Exchange X.500 addresses whose CN segment contains `@` (e.g. `/O=ORG/.../CN=USER@HOST`) no longer leak raw — spaces, slashes and all — into From/To headers of converted messages; they are encapsulated like other Exchange-only addresses, so the headers stay parseable.
+- A corrupt RTF body stream no longer fails the whole MSG conversion: the message converts with its remaining plain-text/HTML bodies and the problem is reported in the MailKit console.
+- An attachment whose stored MIME type is `multipart/...` (e.g. a forwarded S/MIME blob) no longer produces a structurally invalid part in the converted EML; its payload is kept under `application/octet-stream`.
+- An MSG without a structured recipient table no longer emits unparseable `"John Doe" <John Doe>` addresses built from bare display names; names get the explicit `undisclosed@invalid` placeholder instead.
+- HTML recovered from RTF-encapsulated MSG bodies is more faithful: character escapes inside markup runs are decoded, escaped braces no longer truncate tags, and the character following a Unicode escape is no longer duplicated.
+- Messages with inline images now declare the `type` parameter RFC 2387 requires on `multipart/related`, satisfying strict MIME validators.
+- Two embedded messages with the same subject now get distinct nested `.eml` attachment names instead of identical ones.
+- An MSG with more than 2048 recipients now converts with the first 2048 (and a console warning) instead of failing outright.
 
 ## 1.2.0 - 2026-06-10
 

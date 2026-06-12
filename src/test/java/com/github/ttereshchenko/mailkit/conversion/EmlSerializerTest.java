@@ -454,4 +454,89 @@ class EmlSerializerTest {
                 "IMCEAEX-_O_x003D_ORG_CN_x003D_user@invalid", EmlSerializer.imceaEncapsulate("EX", "/O=ORG/CN=user"));
         assertEquals("real@example.com", EmlSerializer.imceaEncapsulate("SMTP", "real@example.com"));
     }
+
+    // R3: an X.500 DN containing "@" inside a CN segment used to bypass encapsulation (the check was
+    // a bare contains("@")) and leak raw — spaces, slashes and all — into the From/To angle brackets.
+    @Test
+    void imceaEncapsulatesExchangeDnContainingAtSign() {
+        var encapsulated = EmlSerializer.imceaEncapsulate("EX", "/O=ORG/OU=AD GROUP/CN=RECIPIENTS/CN=USER@HOST");
+        assertTrue(encapsulated.startsWith("IMCEAEX-"), encapsulated);
+        assertTrue(encapsulated.endsWith("@invalid"), encapsulated);
+        assertFalse(encapsulated.contains("/"), encapsulated);
+        assertFalse(encapsulated.contains(" "), encapsulated);
+
+        // A DN with no recorded address type is still recognizably an Exchange address.
+        var typeless = EmlSerializer.imceaEncapsulate(null, "/O=ORG/CN=USER@HOST");
+        assertTrue(typeless.startsWith("IMCEAEX-"), typeless);
+
+        // Values that genuinely parse as addr-specs keep passing through untouched.
+        assertEquals("user@host.example", EmlSerializer.imceaEncapsulate("EX", "user@host.example"));
+        assertEquals("opaque", EmlSerializer.imceaEncapsulate(null, "opaque"));
+    }
+
+    @Test
+    void looksLikeSmtpAddressRejectsUnparseableValues() {
+        assertTrue(EmlSerializer.looksLikeSmtpAddress("user@host.example"));
+        assertFalse(EmlSerializer.looksLikeSmtpAddress("/O=ORG/CN=USER@HOST"));
+        assertFalse(EmlSerializer.looksLikeSmtpAddress("two words@host"));
+        assertFalse(EmlSerializer.looksLikeSmtpAddress("user@@host"));
+        assertFalse(EmlSerializer.looksLikeSmtpAddress("@host"));
+        assertFalse(EmlSerializer.looksLikeSmtpAddress("user@"));
+        assertFalse(EmlSerializer.looksLikeSmtpAddress("no-at-sign"));
+    }
+
+    // R5: a stored multipart/* MIME tag on an opaque base64 attachment used to emit a structurally
+    // invalid part — base64 is forbidden on composite types and the multipart had no boundary.
+    @Test
+    void compositeMimeTagOnOpaqueAttachmentDowngradesToOctetStream() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        serializer.addAttachment(
+                "smime.p7m",
+                "multipart/signed; protocol=\"application/x-pkcs7-signature\"",
+                new byte[] {1, 2, 3},
+                null,
+                false);
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(eml.contains("Content-Type: application/octet-stream; name=\"smime.p7m\""), eml);
+        assertFalse(eml.contains("multipart/signed"), eml);
+    }
+
+    // R5 guard: real embedded messages take the nestedEml path and must keep their composite type.
+    @Test
+    void embeddedMessageKeepsMessageRfc822Type() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        serializer.addEmbeddedMessage("inner.eml", "Subject: inner\r\n\r\ninner body\r\n");
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(eml.contains("Content-Type: message/rfc822; name=\"inner.eml\""), eml);
+    }
+
+    // R10: RFC 2387 §3.1 makes the root part's media type a required multipart/related parameter.
+    @Test
+    void relatedPartCarriesRequiredTypeParameter() throws Exception {
+        var single = new EmlSerializer();
+        single.addBody("<p>hi</p>", "text/html; charset=UTF-8");
+        single.addAttachment("img.png", "image/png", new byte[] {1}, "cid-1", true);
+        var singleWriter = new StringWriter();
+        single.writeTo(singleWriter);
+        assertTrue(singleWriter.toString().contains("; type=\"text/html\""), singleWriter::toString);
+
+        var alternative = new EmlSerializer();
+        alternative.addBody("plain", "text/plain; charset=UTF-8");
+        alternative.addBody("<p>hi</p>", "text/html; charset=UTF-8");
+        alternative.addAttachment("img.png", "image/png", new byte[] {1}, "cid-1", true);
+        var alternativeWriter = new StringWriter();
+        alternative.writeTo(alternativeWriter);
+        assertTrue(
+                alternativeWriter.toString().contains("; type=\"multipart/alternative\""), alternativeWriter::toString);
+    }
 }

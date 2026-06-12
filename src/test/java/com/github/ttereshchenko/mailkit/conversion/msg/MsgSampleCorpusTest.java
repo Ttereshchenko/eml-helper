@@ -1,5 +1,6 @@
 package com.github.ttereshchenko.mailkit.conversion.msg;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -117,6 +118,69 @@ class MsgSampleCorpusTest {
                     () -> MsgToEmlConverter.convert(SAMPLES.resolve(name), out, ConversionLog.NOOP),
                     name);
         }
+    }
+
+    // R3: quick.msg carries an Exchange X.500 sender DN whose CN segment contains "@"; it used to
+    // leak raw — spaces and slashes included — into the From angle brackets.
+    @Test
+    void exchangeDnSenderIsEncapsulatedInRealSample() throws Exception {
+        var headers = unfold(headersOf(convert("quick.msg")));
+        assertTrue(headers.contains("IMCEAEX-"), headers);
+        assertFalse(headers.contains("</O="), headers);
+    }
+
+    // R3/R7 corpus-wide guard: every address header the converter emits must parse — each angle-addr
+    // carries exactly one "@" and no whitespace.
+    @Test
+    void allEmittedAddressHeadersParseAsAddrSpecs() throws Exception {
+        try (var files = Files.list(SAMPLES)) {
+            var samples = files.filter(path -> path.getFileName().toString().endsWith(".msg"))
+                    .sorted()
+                    .toList();
+            for (var sample : samples) {
+                var out = new ByteArrayOutputStream();
+                try {
+                    MsgToEmlConverter.convert(sample, out, ConversionLog.NOOP);
+                } catch (ConversionException expected) {
+                    continue; // corrupt fuzzer samples are covered elsewhere
+                }
+                var headers = unfold(headersOf(out.toString(StandardCharsets.UTF_8)));
+                for (var line : headers.split("\r\n")) {
+                    if (!line.matches("(From|Sender|To|Cc|Bcc):.*")) {
+                        continue;
+                    }
+                    var angleAddr = Pattern.compile("<([^>]*)>").matcher(line);
+                    while (angleAddr.find()) {
+                        var address = angleAddr.group(1);
+                        assertTrue(
+                                address.indexOf('@') > 0 && !address.contains(" "),
+                                sample + " emitted unparseable angle-addr: " + line);
+                    }
+                }
+            }
+        }
+    }
+
+    // R5: logsat's S/MIME attachment stores PR_ATTACH_MIME_TAG "multipart/signed"; emitting it raw
+    // with base64 produced a structurally invalid MIME part (no boundary, forbidden CTE).
+    @Test
+    void compositeMimeTagAttachmentDowngradesToOctetStream() throws Exception {
+        var eml = convert("logsat.com_signatures_valid.msg");
+        assertFalse(eml.contains("Content-Type: multipart/signed"), headersOf(eml));
+        assertTrue(eml.contains("Content-Type: application/octet-stream"), headersOf(eml));
+    }
+
+    // R1/R2: PidTagContentFilterSpamConfidenceLevel is stored on this real-world sample; the dead
+    // createCustom lookup (and the emission nested under Message-ID synthesis) meant the header was
+    // never written.
+    @Test
+    void spamConfidenceLevelExportedFromRealSample() throws Exception {
+        var eml = convert("bug66335.msg");
+        assertTrue(eml.contains("X-MS-Exchange-Organization-SCL: 1"), headersOf(eml));
+    }
+
+    private static String unfold(String headers) {
+        return headers.replace("\r\n ", " ").replace("\r\n\t", " ");
     }
 
     private static String convert(String sampleName) throws ConversionException {

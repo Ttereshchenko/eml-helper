@@ -300,6 +300,9 @@ public final class EmlSerializer {
         var relatedBoundary = uniqueBoundary("MAILKIT_REL_");
         writer.append("Content-Type: multipart/related; boundary=\"")
                 .append(relatedBoundary)
+                .append("\"; type=\"")
+                // RFC 2387 §3.1 makes the root part's media type a required parameter.
+                .append(rootBodyMimeType())
                 .append('"')
                 .append(CRLF);
         writer.append(CRLF);
@@ -310,6 +313,19 @@ public final class EmlSerializer {
             appendAttachmentPart(writer, part);
         }
         appendBoundary(writer, relatedBoundary, true);
+    }
+
+    /** The media type of the entity {@link #appendBodyEntity} will write as the multipart/related root. */
+    private String rootBodyMimeType() {
+        if (bodies.size() > 1) {
+            return "multipart/alternative";
+        }
+        if (bodies.isEmpty()) {
+            return "text/plain";
+        }
+        var contentType = bodies.get(0).contentType;
+        var parameterStart = contentType.indexOf(';');
+        return (parameterStart < 0 ? contentType : contentType.substring(0, parameterStart)).trim();
     }
 
     private static void appendAttachmentPart(Writer writer, Attachment part) throws IOException {
@@ -475,10 +491,23 @@ public final class EmlSerializer {
     // depend on this module); change both together.
     public static String imceaEncapsulate(String addrType, String address) {
         if (address == null || address.isBlank()) return address;
-        if (addrType == null || addrType.equalsIgnoreCase("SMTP") || address.contains("@")) return address;
+        // Only a value that actually parses as local@domain may pass through unencapsulated: an
+        // Exchange X.500 DN such as /O=ORG/CN=USER@HOST contains "@" yet is not an addr-spec, and
+        // emitting it raw produces an unparseable From/To header.
+        if (looksLikeSmtpAddress(address)) return address;
+        var resolvedType = addrType;
+        if (resolvedType == null || resolvedType.isBlank()) {
+            if (!address.startsWith("/")) {
+                return address;
+            }
+            // An X.500 DN with no recorded address type is still an Exchange address; encapsulate it
+            // the way Exchange itself would (IMCEAEX-...).
+            resolvedType = "EX";
+        }
+        if (resolvedType.equalsIgnoreCase("SMTP")) return address;
 
         StringBuilder builder = new StringBuilder("IMCEA");
-        builder.append(addrType.toUpperCase(Locale.ROOT)).append("-");
+        builder.append(resolvedType.toUpperCase(Locale.ROOT)).append("-");
 
         for (int i = 0; i < address.length(); i++) {
             char chr = address.charAt(i);
@@ -494,6 +523,26 @@ public final class EmlSerializer {
         // deployment would use its own accepted domain, which the source store does not record.
         builder.append("@invalid");
         return builder.toString();
+    }
+
+    /**
+     * True when the value plausibly parses as an SMTP addr-spec: a single {@code @} separating
+     * non-empty halves, with no whitespace/control characters, X.500 DN separators, or angle
+     * brackets. Kept deliberately loose otherwise — the goal is to reject values that would render
+     * an address header unparseable, not to validate RFC 5321 syntax.
+     */
+    public static boolean looksLikeSmtpAddress(String address) {
+        var atIndex = address.indexOf('@');
+        if (atIndex <= 0 || atIndex != address.lastIndexOf('@') || atIndex == address.length() - 1) {
+            return false;
+        }
+        for (var index = 0; index < address.length(); index++) {
+            var character = address.charAt(index);
+            if (character <= ' ' || character == '/' || character == '<' || character == '>') {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -598,6 +647,16 @@ public final class EmlSerializer {
         }
         var result = builder.toString().trim();
         return result.isEmpty() ? "application/octet-stream" : result;
+    }
+
+    /** True for the composite media types (multipart/*, message/*) that cannot carry a base64 leaf body. */
+    private static boolean isCompositeMimeType(String mimeType) {
+        var slash = mimeType.indexOf('/');
+        if (slash < 0) {
+            return false;
+        }
+        var primaryType = mimeType.substring(0, slash).trim();
+        return primaryType.equalsIgnoreCase("multipart") || primaryType.equalsIgnoreCase("message");
     }
 
     /**
@@ -826,7 +885,15 @@ public final class EmlSerializer {
             // properties (PR_ATTACH_MIME_TAG_W, PR_ATTACH_CONTENT_ID_W) and are written raw here rather
             // than through appendHeader, so each is sanitized of CR/LF (and the bracket/control chars
             // that would let it break out) before it reaches the output.
-            headers.append("Content-Type: ").append(sanitizeMimeType(mimeType));
+            var safeMimeType = sanitizeMimeType(mimeType);
+            if (nestedEml == null && isCompositeMimeType(safeMimeType)) {
+                // A stored multipart/* or message/* MIME tag on an opaque base64 payload would emit a
+                // structurally invalid part: RFC 2045 §6.4 forbids base64 on composite types, and a
+                // multipart Content-Type without a boundary parameter is unparseable. (Real embedded
+                // messages take the nestedEml path above and keep their message/rfc822 type.)
+                safeMimeType = "application/octet-stream";
+            }
+            headers.append("Content-Type: ").append(safeMimeType);
             if (filename != null) {
                 headers.append("; ").append(filenameParameter("name", filename));
             }
