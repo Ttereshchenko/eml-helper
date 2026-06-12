@@ -598,6 +598,127 @@ class PstToEmlConverterTest {
     }
 
     /**
+     * Attachment-loss tripwire: PR_HASATTACH set but an empty attachment table means the
+     * attachments were unreadable (e.g. a corrupted table); that must surface as a counted failure
+     * instead of a silently attachment-less "successful" export.
+     */
+    @Test
+    void claimedButUnreadableAttachmentsAreCountedAsFailed() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(pstFile, "Claims attachments", List.of(), null, "") {
+                @Override
+                public boolean hasAttachments() {
+                    return true;
+                }
+            };
+            var stats = new PstToEmlConverter.Stats();
+            var log = new RecordingLog();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, 0, log, stats);
+
+            assertEquals(1, stats.failedAttachments(), "The unreadable attachments must be counted as failed");
+            assertTrue(
+                    log.errors.stream().anyMatch(error -> error.contains("PR_HASATTACH")),
+                    "The loss must be reported: " + log.errors);
+        }
+    }
+
+    /** F2: an OLE attachment (method 6) exports its raw object bytes instead of being dropped. */
+    @Test
+    void oleAttachmentExportsItsRawObjectBytes() throws Exception {
+        var oleBytes = "ole-storage-payload".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        var oleAttachment = new Attachment() {
+            @Override
+            public String getLongFilename() {
+                return "Worksheet";
+            }
+
+            @Override
+            public String getFilename() {
+                return "";
+            }
+
+            @Override
+            public String getMimeTag() {
+                return "";
+            }
+
+            @Override
+            public int getAttachMethod() {
+                return 6; // afStorage
+            }
+
+            @Override
+            public byte[] getData() {
+                return null;
+            }
+
+            @Override
+            public byte[] getObjectData() {
+                return oleBytes;
+            }
+
+            @Override
+            public String getContentId() {
+                return null;
+            }
+
+            @Override
+            public String getContentLocation() {
+                return null;
+            }
+
+            @Override
+            public boolean isInline() {
+                return false;
+            }
+        };
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(pstFile, "Has OLE object", List.of(oleAttachment), null, "");
+            var stats = new PstToEmlConverter.Stats();
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, 0, ConversionLog.NOOP, stats)
+                    .writeTo(writer);
+
+            var eml = writer.toString();
+            assertEquals(0, stats.failedAttachments(), "An exported OLE object is not a failure");
+            assertTrue(eml.contains("name=\"Worksheet.ole\""), "The part must carry an .ole-suffixed name");
+            assertTrue(eml.contains("application/octet-stream"), "OLE storage is opaque binary");
+            assertTrue(
+                    eml.contains(java.util.Base64.getEncoder().encodeToString(oleBytes)),
+                    "The raw object bytes must round-trip");
+        }
+    }
+
+    /** F4: a task exports a VTODO calendar part alongside its text body. */
+    @Test
+    void taskExportsAVTodoPart() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var task = new StubMessage(pstFile, "File the report", List.of(), null, "") {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Task";
+                }
+            };
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(
+                            task, defaultOptions(), pstFile, 0, ConversionLog.NOOP, new PstToEmlConverter.Stats())
+                    .writeTo(writer);
+
+            var eml = writer.toString();
+            assertTrue(eml.contains("name=\"task.ics\""), "The task must carry a task.ics part");
+            var icsMatcher = java.util.regex.Pattern.compile(
+                            "(?s)name=\"task\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                    .matcher(eml);
+            assertTrue(icsMatcher.find(), "The task.ics part must be base64-encoded");
+            var ics = new String(
+                    java.util.Base64.getMimeDecoder().decode(icsMatcher.group(1)),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(ics.contains("BEGIN:VTODO"), "The calendar part must be a VTODO: " + ics);
+            assertTrue(ics.contains("SUMMARY:File the report"), "The task subject must be the VTODO summary");
+        }
+    }
+
+    /**
      * A message double for serializer-level tests: fixed subject/class/attachments and a canned
      * result for {@link Message#readEmbeddedMessage}, so nesting scenarios that no public PST
      * fixture provides (journal reports, depth ≥ 2) stay testable. The real resolution path behind
@@ -1060,9 +1181,39 @@ class PstToEmlConverterTest {
             var rtfOnlyWriter = new StringWriter();
             PstToEmlConverter.createSerializer(rtfOnly, defaultOptions(), pstFile, ConversionLog.NOOP)
                     .writeTo(rtfOnlyWriter);
+            // F3: the encapsulated plain text is extracted as the text body, so nothing is left for
+            // a body.rtf attachment to preserve.
             assertTrue(
+                    rtfOnlyWriter.toString().contains("plain body"),
+                    "A \\fromtext-only message must export its encapsulated text as the body");
+            assertFalse(
                     rtfOnlyWriter.toString().contains("body.rtf"),
-                    "With no other body the raw RTF is the only content left and must be kept");
+                    "Once the encapsulated text is extracted the RTF is redundant");
+
+            // Only when the encapsulated text decodes to nothing does the raw RTF remain the last
+            // resort worth keeping.
+            var undecodable = new StubMessage(pstFile, "RTF only, empty text", List.of(), null, "") {
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getHtmlBody() {
+                    return "";
+                }
+
+                @Override
+                public String getRawRtfBody() {
+                    return "{\\rtf1\\ansi\\fromtext}";
+                }
+            };
+            var undecodableWriter = new StringWriter();
+            PstToEmlConverter.createSerializer(undecodable, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(undecodableWriter);
+            assertTrue(
+                    undecodableWriter.toString().contains("body.rtf"),
+                    "With nothing extractable the raw RTF is the only content left and must be kept");
         }
     }
 
@@ -1082,6 +1233,57 @@ class PstToEmlConverterTest {
         assertTrue(sample.contains("Content-Location: http://example.com/logo.png"));
         // "=3D" is the quoted-printable escape of '=': the rewritten meta reads <meta charset="utf-8">.
         assertTrue(sample.contains("charset=3D\"utf-8\""), "The HTML body's meta charset is rewritten to UTF-8");
+    }
+
+    /**
+     * F5 manual-verification companion (real export of dist-list.pst's recurring appointment):
+     * samples/eml/edge/pst_export_recurring_invite.eml mirrors the export shape — a TZID-anchored
+     * series with VTIMEZONE, RRULE and the deleted occurrence as an EXDATE.
+     */
+    @Test
+    void recurringInviteSampleMirrorsExportShape() throws Exception {
+        var sample = java.nio.file.Files.readString(
+                Paths.get("src/test/resources/samples/eml/edge/pst_export_recurring_invite.eml"));
+        assertTrue(sample.contains("name=\"invite.ics\""), "The sample carries the invite part");
+        var ics = new String(
+                java.util.Base64.getMimeDecoder()
+                        .decode(java.util.regex.Pattern.compile(
+                                        "(?s)name=\"invite\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                                .matcher(sample)
+                                .results()
+                                .findFirst()
+                                .orElseThrow()
+                                .group(1)),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(ics.contains("BEGIN:VTIMEZONE"), ics);
+        assertTrue(ics.contains("DTSTART;TZID=MailKit-Local:20160802T080000"), ics);
+        assertTrue(ics.contains("RRULE:FREQ=WEEKLY;INTERVAL=1;WKST=SU;BYDAY=TU"), ics);
+        assertTrue(ics.contains("EXDATE;TZID=MailKit-Local:20160809T080000"), ics);
+    }
+
+    /**
+     * F4 manual-verification companion (real export of aspose-contacts.pst):
+     * samples/eml/edge/pst_export_contact_vcard.eml mirrors the contact export shape — an EML named
+     * by the contact carrying a text/vcard part with the resolved Email1 named property.
+     */
+    @Test
+    void contactVCardSampleMirrorsExportShape() throws Exception {
+        var sample = java.nio.file.Files.readString(
+                Paths.get("src/test/resources/samples/eml/edge/pst_export_contact_vcard.eml"));
+        assertTrue(sample.contains("Subject: Sebastian Wright"));
+        assertTrue(sample.contains("Content-Type: text/vcard; charset=UTF-8; name=\"contact.vcf\""));
+        var vcard = new String(
+                java.util.Base64.getMimeDecoder()
+                        .decode(java.util.regex.Pattern.compile(
+                                        "(?s)name=\"contact\\.vcf\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                                .matcher(sample)
+                                .results()
+                                .findFirst()
+                                .orElseThrow()
+                                .group(1)),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(vcard.contains("FN:Sebastian Wright"), vcard);
+        assertTrue(vcard.contains("EMAIL;TYPE=internet:SebastianWright@dayrep.com"), vcard);
     }
 
     private static int countOccurrences(String haystack, String needle) {

@@ -3,6 +3,7 @@ package com.github.ttereshchenko.mailkit.conversion.pst;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.pst.Attachment;
@@ -66,43 +67,44 @@ class PstConversionTest {
         try (var pstFile = new PstFile(path)) {
             var rootFolder = new Folder(pstFile, 0x122);
             var indicator = new ProgressIndicatorBase();
-            var options = new PstToEmlConverter.Options(
-                    PstToEmlConverter.DuplicateHandling.OVERWRITE,
-                    50,
-                    false,
-                    true,
-                    Message.AddressPreference.PREFER_SMTP,
-                    false,
-                    false,
-                    64L * 1024 * 1024);
             var stats = new PstToEmlConverter.Stats();
             PstToEmlConverter.processFolder(
-                    pstFile, rootFolder.getNid(), tempDir, options, stats, indicator, "", ConversionLog.NOOP);
+                    pstFile, rootFolder.getNid(), tempDir, nonMailOptions(), stats, indicator, "", ConversionLog.NOOP);
 
-            java.util.List<Path> emls = java.nio.file.Files.walk(tempDir)
-                    .filter(pathEntry -> pathEntry.toString().endsWith(".eml"))
-                    .toList();
-            // IPM.Appointment is now on the allow-list, so dist-list.pst's appointments are exported (each
-            // carrying a calendar invite); IPM.DistList items are still filtered out.
+            var emls = readEmls(tempDir);
             org.junit.jupiter.api.Assertions.assertFalse(
                     emls.isEmpty(), "Expected appointment EML files now that IPM.Appointment is allowed");
-            boolean foundInvite = false;
-            for (Path eml : emls) {
-                String content = java.nio.file.Files.readString(eml);
-                // The ICS payload is base64-encoded inside the attachment, so assert on the (unencoded)
-                // calendar content-type and the invite.ics filename rather than the VCALENDAR body.
-                if (content.contains("text/calendar") && content.contains("invite.ics")) {
-                    foundInvite = true;
+
+            // F5: dist-list.pst's "Test appointment" is a weekly Tuesday meeting in US Pacific time
+            // with one deleted occurrence — the invite must carry the full series, anchored to the
+            // event's zone, not a single UTC occurrence.
+            String invite = null;
+            String distList = null;
+            for (var content : emls) {
+                if (content.contains("invite.ics") && invite == null) {
+                    var decoded = decodeBase64Part(content, "name=\"invite.ics\"");
+                    if (decoded != null) {
+                        invite = new String(decoded, java.nio.charset.StandardCharsets.UTF_8);
+                    }
+                }
+                if (content.contains("Subject: test dist list")) {
+                    distList = content;
                 }
             }
-            org.junit.jupiter.api.Assertions.assertTrue(
-                    foundInvite, "Expected at least one exported appointment to carry an invite.ics");
+            assertNotNull(invite, "Expected at least one exported appointment to carry an invite.ics");
+            assertTrue(invite.contains("RRULE:FREQ=WEEKLY;INTERVAL=1;WKST=SU;BYDAY=TU"), invite);
+            assertTrue(invite.contains("BEGIN:VTIMEZONE"), invite);
+            assertTrue(invite.contains("DTSTART;TZID=MailKit-Local:20160802T080000"), invite);
+            assertTrue(invite.contains("EXDATE;TZID=MailKit-Local:20160809T080000"), invite);
+
+            // F4: with the non-mail option on, the IPM.DistList item exports with its resolved
+            // members as the body.
+            assertNotNull(distList, "The distribution list must export when non-mail items are enabled");
+            assertTrue(distList.contains("contact1@rjohnson.id.au"), distList);
+            assertTrue(distList.contains("dist1@rjohnson.id.au"), distList);
+            assertTrue(distList.contains("dist2@rjohnson.id.au"), distList);
         } finally {
-            try (var stream = java.nio.file.Files.walk(tempDir)) {
-                stream.sorted(java.util.Comparator.reverseOrder())
-                        .map(Path::toFile)
-                        .forEach(java.io.File::delete);
-            }
+            deleteRecursively(tempDir);
         }
     }
 
@@ -117,14 +119,164 @@ class PstConversionTest {
         }
     }
 
+    /**
+     * T5: the fixture named for its body types must actually assert body fidelity — two HTML
+     * messages export as multipart/alternative with the HTML part, the RTF-bodied message keeps its
+     * genuine RTF as a body.rtf attachment, and every message carries its plain text.
+     */
     @Test
     void testVariousBodyTypesPst() throws Exception {
         Path path = Paths.get("src/test/resources/samples/pst/testPST_variousBodyTypes.pst");
+        Path tempDir = java.nio.file.Files.createTempDirectory("pst_body_types");
         try (var pstFile = new PstFile(path)) {
-            var rootFolder = new Folder(pstFile, 0x122);
-            assertNotNull(rootFolder);
-            assertDoesNotThrow(rootFolder::getSubFolders);
-            assertDoesNotThrow(rootFolder::getMessages);
+            var stats = PstToEmlConverter.convert(
+                    pstFile, tempDir, defaultEmlOptions(), new ProgressIndicatorBase(), ConversionLog.NOOP);
+            assertEquals(4, stats.converted(), "All four body-type messages must convert");
+
+            var emls = readEmls(tempDir);
+            var htmlParts = 0;
+            var rtfAttachments = 0;
+            var originalHtmlBody = 0;
+            for (var eml : emls) {
+                if (eml.contains("Content-Type: text/html")) {
+                    htmlParts++;
+                }
+                if (eml.contains("name=\"body.rtf\"") && eml.contains("application/rtf")) {
+                    rtfAttachments++;
+                }
+                if (eml.contains("This is the original email (html)")) {
+                    originalHtmlBody++;
+                }
+            }
+            assertEquals(2, htmlParts, "The two HTML-bodied messages must export text/html parts");
+            assertEquals(1, rtfAttachments, "The genuine-RTF message must keep its RTF as body.rtf");
+            assertTrue(originalHtmlBody >= 1, "The plain text of the original email must survive");
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
+    /**
+     * T2 (real binary attachments, Aspose Outlook.pst — MIT-licensed sample corpus): exported
+     * attachment parts must decode back to the exact bytes the parser reads from the store, and the
+     * embedded messages must export as message/rfc822 parts.
+     */
+    @Test
+    void testOutlookPstAttachmentBytesRoundTrip() throws Exception {
+        Path path = Paths.get("src/test/resources/samples/pst/aspose-outlook.pst");
+        Path tempDir = java.nio.file.Files.createTempDirectory("pst_outlook");
+        try (var pstFile = new PstFile(path)) {
+            byte[] sunsetBytes = null;
+            byte[] textBytes = null;
+            for (var message : collectMessages(pstFile, new Folder(pstFile, 0x122))) {
+                if ("Multiple attachments".equals(message.getSubject()) && sunsetBytes == null) {
+                    for (Attachment attachment : message.getAttachments()) {
+                        if ("Sunset.jpg".equals(attachment.getLongFilename())) {
+                            sunsetBytes = attachment.getData();
+                        }
+                        if ("text file.txt".equals(attachment.getLongFilename())) {
+                            textBytes = attachment.getData();
+                        }
+                    }
+                }
+            }
+            assertNotNull(sunsetBytes, "The fixture must carry the Sunset.jpg attachment");
+            assertNotNull(textBytes, "The fixture must carry the text attachment");
+            assertEquals(71189, sunsetBytes.length);
+
+            var stats = PstToEmlConverter.convert(
+                    pstFile, tempDir, defaultEmlOptions(), new ProgressIndicatorBase(), ConversionLog.NOOP);
+            assertTrue(stats.converted() > 0, "Outlook.pst must convert messages");
+
+            String attachmentEml = null;
+            var foundEmbedded = false;
+            for (var eml : readEmls(tempDir)) {
+                if (eml.contains("name=\"Sunset.jpg\"") && attachmentEml == null) {
+                    attachmentEml = eml;
+                }
+                if (eml.contains("Content-Type: message/rfc822")) {
+                    foundEmbedded = true;
+                }
+            }
+            assertNotNull(attachmentEml, "An exported EML must carry the jpg attachment");
+            assertTrue(foundEmbedded, "The embedded-MSG messages must export message/rfc822 parts");
+
+            org.junit.jupiter.api.Assertions.assertArrayEquals(
+                    sunsetBytes,
+                    decodeBase64Part(attachmentEml, "name=\"Sunset.jpg\""),
+                    "The jpg must round-trip byte-exactly through the EML");
+            org.junit.jupiter.api.Assertions.assertArrayEquals(
+                    textBytes,
+                    decodeBase64Part(attachmentEml, "name=\"text file.txt\""),
+                    "The text attachment must round-trip byte-exactly through the EML");
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
+    /** T3: end-to-end conversion of a 2013-format OST (4 KiB pages, compressed blocks). */
+    @Test
+    void testOst2013EndToEndConversion() throws Exception {
+        // Shared with the pst-parser suite rather than duplicated: the OST is 16 MB.
+        Path path = Paths.get("pst-parser/src/test/resources/samples/pst/example-2013.ost");
+        Path tempDir = java.nio.file.Files.createTempDirectory("ost_2013");
+        try (var pstFile = new PstFile(path)) {
+            assertEquals(PstFile.Format.UNICODE_2013, pstFile.format());
+            var stats = PstToEmlConverter.convert(
+                    pstFile, tempDir, defaultEmlOptions(), new ProgressIndicatorBase(), ConversionLog.NOOP);
+            assertEquals(3, stats.converted(), "All three OST messages must convert");
+            for (var eml : readEmls(tempDir)) {
+                assertTrue(eml.contains("Subject: "), "Each exported OST message must carry its subject");
+                assertTrue(eml.contains("Date: "), "Each exported OST message must carry a date");
+            }
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
+    /**
+     * F4 (contacts, Aspose SampleContacts.pst — MIT-licensed sample corpus): with the non-mail
+     * option off contacts are skipped but counted; with it on each contact exports as an EML
+     * carrying a vCard.
+     */
+    @Test
+    void testContactsPstExportsVCardsWhenEnabled() throws Exception {
+        Path path = Paths.get("src/test/resources/samples/pst/aspose-contacts.pst");
+
+        Path skippedDir = java.nio.file.Files.createTempDirectory("pst_contacts_skipped");
+        try (var pstFile = new PstFile(path)) {
+            var stats = PstToEmlConverter.convert(
+                    pstFile, skippedDir, defaultEmlOptions(), new ProgressIndicatorBase(), ConversionLog.NOOP);
+            assertEquals(0, stats.converted(), "Contacts must not convert by default");
+            assertEquals(
+                    6,
+                    stats.skippedByClass().get("IPM.Contact"),
+                    "The skip summary must surface what the archive contained: " + stats.skippedByClass());
+        } finally {
+            deleteRecursively(skippedDir);
+        }
+
+        Path tempDir = java.nio.file.Files.createTempDirectory("pst_contacts");
+        try (var pstFile = new PstFile(path)) {
+            var stats = PstToEmlConverter.convert(
+                    pstFile, tempDir, nonMailOptions(), new ProgressIndicatorBase(), ConversionLog.NOOP);
+            assertEquals(6, stats.converted(), "All six contacts must convert with the option on");
+
+            String contactEml = null;
+            for (var eml : readEmls(tempDir)) {
+                if (eml.contains("Subject: Sebastian Wright")) {
+                    contactEml = eml;
+                }
+            }
+            assertNotNull(contactEml, "The contact must export as an EML named by its display name");
+            assertTrue(contactEml.contains("name=\"contact.vcf\""), "The contact must carry a vCard part");
+            assertTrue(contactEml.contains("text/vcard"), "The vCard part must declare text/vcard");
+            var vcard = new String(
+                    decodeBase64Part(contactEml, "name=\"contact.vcf\""), java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(vcard.contains("BEGIN:VCARD"), vcard);
+            assertTrue(vcard.contains("FN:Sebastian Wright"), vcard);
+        } finally {
+            deleteRecursively(tempDir);
         }
     }
 
@@ -747,5 +899,68 @@ class PstConversionTest {
         try (var stream = java.nio.file.Files.walk(dir)) {
             stream.sorted(java.util.Comparator.reverseOrder()).map(Path::toFile).forEach(java.io.File::delete);
         }
+    }
+
+    /** The conversion options most tests use: overwrite, no limit, mail classes only. */
+    private static PstToEmlConverter.Options defaultEmlOptions() {
+        return new PstToEmlConverter.Options(
+                PstToEmlConverter.DuplicateHandling.OVERWRITE,
+                null,
+                false,
+                true,
+                Message.AddressPreference.PREFER_SMTP,
+                false,
+                false,
+                64L * 1024 * 1024);
+    }
+
+    /** Like {@link #defaultEmlOptions()} but with the non-mail item classes enabled. */
+    private static PstToEmlConverter.Options nonMailOptions() {
+        return new PstToEmlConverter.Options(
+                PstToEmlConverter.DuplicateHandling.OVERWRITE,
+                null,
+                false,
+                true,
+                Message.AddressPreference.PREFER_SMTP,
+                false,
+                false,
+                64L * 1024 * 1024,
+                true,
+                false);
+    }
+
+    /** The contents of every {@code .eml} under {@code dir}. */
+    private static java.util.List<String> readEmls(Path dir) throws Exception {
+        var contents = new java.util.ArrayList<String>();
+        try (var stream = java.nio.file.Files.walk(dir)) {
+            for (Path eml :
+                    stream.filter(entry -> entry.toString().endsWith(".eml")).toList()) {
+                contents.add(java.nio.file.Files.readString(eml));
+            }
+        }
+        return contents;
+    }
+
+    /** Every message reachable from {@code folder}, depth first. */
+    private static java.util.List<Message> collectMessages(PstFile pstFile, Folder folder) throws Exception {
+        var messages = new java.util.ArrayList<Message>();
+        for (int nid : folder.getMessages()) {
+            messages.add(new Message(pstFile, nid));
+        }
+        for (Folder subFolder : folder.getSubFolders()) {
+            messages.addAll(collectMessages(pstFile, subFolder));
+        }
+        return messages;
+    }
+
+    /**
+     * Decodes the base64 body of the MIME part whose headers contain {@code marker} (e.g. a
+     * {@code name="..."} parameter), or {@code null} when no such part exists.
+     */
+    private static byte[] decodeBase64Part(String eml, String marker) {
+        var matcher = java.util.regex.Pattern.compile(
+                        "(?s)" + java.util.regex.Pattern.quote(marker) + ".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                .matcher(eml);
+        return matcher.find() ? java.util.Base64.getMimeDecoder().decode(matcher.group(1)) : null;
     }
 }

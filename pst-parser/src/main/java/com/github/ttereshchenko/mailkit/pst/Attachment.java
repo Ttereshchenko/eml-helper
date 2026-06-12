@@ -85,6 +85,18 @@ public class Attachment {
         return value instanceof Integer nodeId ? nodeId : null;
     }
 
+    /**
+     * The raw bytes of an OLE-embedded object (PR_ATTACH_DATA_OBJ, attach method {@code 6} /
+     * {@code afStorage}), or {@code null} when this attachment embeds no OLE object or its subnode
+     * cannot be read. The bytes are the object's storage as persisted by MAPI — opaque to mail
+     * clients but better exported than dropped.
+     *
+     * @throws IOException if the underlying store cannot be read
+     */
+    public byte[] getObjectData() throws IOException {
+        return propertyContext == null ? null : propertyContext.readObjectData(MapiProperties.PR_ATTACH_DATA_BIN);
+    }
+
     /** The attach method (PR_ATTACH_METHOD), or {@code 0} if absent. */
     public int getAttachMethod() {
         return propertyContext.getProperty(MapiProperties.PR_ATTACH_METHOD) instanceof Integer value ? value : 0;

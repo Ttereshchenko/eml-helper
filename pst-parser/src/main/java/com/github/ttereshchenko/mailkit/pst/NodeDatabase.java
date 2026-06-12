@@ -47,6 +47,7 @@ final class NodeDatabase {
     private final long nbtRootOffset;
     private final long maxNodeSize;
     private final long channelSize;
+    private final boolean verifyCrc;
 
     /** LRU cache of raw b-tree pages keyed by file offset; guarded by itself. */
     private final Map<Long, byte[]> pageCache = new LinkedHashMap<>(64, 0.75f, true) {
@@ -67,12 +68,27 @@ final class NodeDatabase {
             long nbtRootOffset,
             long maxNodeSize)
             throws IOException {
+        this(channel, format, encryptionType, bbtRootOffset, nbtRootOffset, maxNodeSize, false);
+    }
+
+    NodeDatabase(
+            FileChannel channel,
+            PstFile.Format format,
+            PstFile.EncryptionType encryptionType,
+            long bbtRootOffset,
+            long nbtRootOffset,
+            long maxNodeSize,
+            boolean verifyCrc)
+            throws IOException {
         this.channel = Objects.requireNonNull(channel, "channel");
         this.format = Objects.requireNonNull(format, "format");
         this.encryptionType = Objects.requireNonNull(encryptionType, "encryptionType");
         this.bbtRootOffset = bbtRootOffset;
         this.nbtRootOffset = nbtRootOffset;
         this.maxNodeSize = maxNodeSize;
+        // The 2013 (4 KiB page) trailer layout is not as well documented as ANSI/Unicode; CRC
+        // verification is limited to the formats whose trailers were validated against real stores.
+        this.verifyCrc = verifyCrc && format != PstFile.Format.UNICODE_2013;
         this.channelSize = channel.size();
 
         // Validate both root pages eagerly so a store with a corrupt or out-of-range b-tree root
@@ -397,7 +413,10 @@ final class NodeDatabase {
             HighEncryption.decode(array, bid);
         }
 
-        if (format == PstFile.Format.UNICODE_2013 && block.inflatedSize() > 0) {
+        // cbInflated == cb means the block is stored uncompressed ([MS-PST] 2013 BBT entry): inflating
+        // it would at best fail twice and at worst "succeed" on payload that happens to start with a
+        // zlib header, silently replacing real content with garbage.
+        if (format == PstFile.Format.UNICODE_2013 && block.inflatedSize() > 0 && block.inflatedSize() != block.size()) {
             try {
                 array = tryDecompress(array, block, false);
             } catch (DataFormatException | RuntimeException firstFailure) {
@@ -419,6 +438,9 @@ final class NodeDatabase {
     private ByteBuffer readBlockBytes(BlockEntry block) throws IOException {
         var buffer = ByteBuffer.allocate(block.size()).order(ByteOrder.LITTLE_ENDIAN);
         readFully(channel, buffer, block.offset());
+        if (verifyCrc) {
+            verifyBlockCrc(block, buffer.array());
+        }
         return buffer;
     }
 
@@ -579,10 +601,51 @@ final class NodeDatabase {
         var buffer = ByteBuffer.allocate(pageSize).order(ByteOrder.LITTLE_ENDIAN);
         readFully(channel, buffer, offset);
         byte[] bytes = buffer.array();
+        if (verifyCrc) {
+            verifyPageCrc(bytes, offset);
+        }
         synchronized (pageCache) {
             pageCache.put(offset, bytes);
         }
         return bytes;
+    }
+
+    /**
+     * Verifies the PAGETRAILER CRC ([MS-PST] §2.2.2.7.1): the CRC covers the page minus its trailer
+     * (496 bytes Unicode / 500 ANSI), and the {@code dwCRC} field sits at 500 (Unicode) or 508
+     * (ANSI — the ANSI trailer orders {@code bid} before {@code dwCRC}). Offsets validated against
+     * real Unicode and ANSI stores.
+     */
+    private void verifyPageCrc(byte[] page, long offset) throws PstException {
+        var ansi = format == PstFile.Format.ANSI;
+        var stored = ByteBuffer.wrap(page).order(ByteOrder.LITTLE_ENDIAN).getInt(ansi ? 508 : 500);
+        var computed = PstCrc.compute(page, 0, ansi ? 500 : 496);
+        if (stored != computed) {
+            throw new PstException("Page CRC mismatch at offset " + offset
+                    + ": the store is corrupted (stored 0x" + Integer.toHexString(stored) + ", computed 0x"
+                    + Integer.toHexString(computed) + ")");
+        }
+    }
+
+    /**
+     * Verifies the BLOCKTRAILER CRC ([MS-PST] §2.2.2.8.1): blocks are stored in 64-byte-aligned
+     * slots with the trailer in the last 16 (Unicode) / 12 (ANSI) bytes; the CRC covers the
+     * {@code cb} data bytes as stored (still encrypted), and {@code dwCRC} sits at trailer offset 4
+     * (Unicode) or 8 (ANSI). Offsets validated against real Unicode and ANSI stores.
+     */
+    private void verifyBlockCrc(BlockEntry block, byte[] data) throws IOException {
+        var ansi = format == PstFile.Format.ANSI;
+        var trailerLength = ansi ? 12 : 16;
+        var slotSize = ((block.size() + trailerLength + 63) / 64) * 64L;
+        var trailer = ByteBuffer.allocate(trailerLength).order(ByteOrder.LITTLE_ENDIAN);
+        readFully(channel, trailer, block.offset() + slotSize - trailerLength);
+        var stored = trailer.getInt(ansi ? 8 : 4);
+        var computed = PstCrc.compute(data, 0, block.size());
+        if (stored != computed) {
+            throw new PstException("Block CRC mismatch for block 0x" + Long.toHexString(block.blockId())
+                    + ": the store is corrupted (stored 0x" + Integer.toHexString(stored) + ", computed 0x"
+                    + Integer.toHexString(computed) + ")");
+        }
     }
 
     private static void validatePageEntries(int numEntries, int entrySize, int trailerOffset, String which)

@@ -872,6 +872,15 @@ public final class EmlSerializer {
                     }
                 }
                 if (breakPos <= 0) {
+                    // No foldable whitespace at all. An unbreakable token longer than the RFC 5322
+                    // §2.1.1 hard limit (e.g. a base64 Thread-Index from a very long conversation)
+                    // must still be folded — its consumers strip folding WSP, and a hard split at
+                    // the limit beats emitting a line strict parsers reject outright.
+                    if (line.length() > MAX_HEADER_LINE_LENGTH) {
+                        output.append(line, 0, MAX_HEADER_LINE_LENGTH).append("\r\n");
+                        line = " " + line.substring(MAX_HEADER_LINE_LENGTH);
+                        continue;
+                    }
                     break;
                 }
                 output.append(line.substring(0, breakPos)).append("\r\n");

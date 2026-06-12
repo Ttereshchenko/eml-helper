@@ -31,15 +31,30 @@ class TableContext {
     private int hidRowIndex;
     private final NodeDatabase nodeDatabase;
     private final NodeEntry node;
+    private final NodeEntry fallbackNode;
     private final Charset charset;
 
     TableContext(byte[] nodeData, NodeDatabase nodeDatabase, NodeEntry node) throws PstException {
-        this(nodeData, nodeDatabase, node, null);
+        this(nodeData, nodeDatabase, node, null, null);
     }
 
     TableContext(byte[] nodeData, NodeDatabase nodeDatabase, NodeEntry node, Charset charset) throws PstException {
+        this(nodeData, nodeDatabase, node, null, charset);
+    }
+
+    /**
+     * @param node the node hosting this TC — for a message-internal table (recipients/attachments)
+     *     this is the table's own subnode entry, whose nested subnode tree ([MS-PST] §2.2.2.8.3.3
+     *     {@code SLENTRY.bidSub}) is where subnode HNIDs inside the TC resolve ([MS-PST] §2.3.3.2)
+     * @param fallbackNode an optional second node whose subnode tree is consulted when {@code node}'s
+     *     does not contain a referenced subnode (compatibility net for writers that flatten the
+     *     table's subnodes into the parent message's tree); may be {@code null}
+     */
+    TableContext(byte[] nodeData, NodeDatabase nodeDatabase, NodeEntry node, NodeEntry fallbackNode, Charset charset)
+            throws PstException {
         this.nodeDatabase = nodeDatabase;
         this.node = node;
+        this.fallbackNode = fallbackNode;
         this.charset = charset;
         if (nodeData == null || nodeData.length < 16) {
             this.heap = null;
@@ -155,15 +170,23 @@ class TableContext {
 
         int entryCount = leafData.length / (keySize + entrySize);
 
-        byte[] rowMatrix = null;
-        if ((hnidRows & 0x1F) != 0 && nodeDatabase != null && node != null && node.subBid() != 0) {
-            try {
-                rowMatrix = nodeDatabase.readSubnodeData(node.subBid(), hnidRows);
-            } catch (IOException exception) {
-                LOG.log(System.Logger.Level.WARNING, "Failed to read table row-matrix subnode", exception);
+        byte[] rowMatrix;
+        if ((hnidRows & 0x1F) != 0) {
+            // The HNID is a subnode NID; a heap lookup on it would dereference an unrelated heap
+            // item and parse it as the row matrix (fabricated rows), so resolve it as a subnode or
+            // surface the loss — never fall back to the heap.
+            rowMatrix = readSubnodeBytes(node, hnidRows);
+            if (rowMatrix == null) {
+                rowMatrix = readSubnodeBytes(fallbackNode, hnidRows);
             }
-        }
-        if (rowMatrix == null) {
+            if (rowMatrix == null) {
+                LOG.log(
+                        System.Logger.Level.WARNING,
+                        () -> "Table row-matrix subnode 0x" + Integer.toHexString(hnidRows) + " not found; "
+                                + entryCount + " row(s) lost");
+                return;
+            }
+        } else {
             rowMatrix = heap.getItem(hnidRows);
         }
 
@@ -176,6 +199,15 @@ class TableContext {
         int rowsPerBlock = blockPayload / rowWidth;
         if (rowsPerBlock == 0) {
             return; // a row wider than a block payload violates the spec
+        }
+        if (entryCount > 0 && rowMatrix.length < rowWidth) {
+            // Smaller than a single row: parsing it would yield garbage cells, so reject loudly.
+            int matrixLength = rowMatrix.length;
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    () -> "Table row matrix is " + matrixLength + " byte(s), smaller than one " + rowWidth
+                            + "-byte row; " + entryCount + " row(s) lost");
+            return;
         }
 
         for (int i = 0; i < entryCount; i++) {
@@ -310,17 +342,38 @@ class TableContext {
     }
 
     private byte[] resolveData(int hnid) {
-        if ((hnid & 0x1F) != 0 && nodeDatabase != null && node != null && node.subBid() != 0) {
-            try {
-                byte[] data = nodeDatabase.readSubnodeData(node.subBid(), hnid);
-                if (data != null) {
-                    return data;
-                }
-            } catch (IOException ignored) {
-                // fall through to the in-heap item
-            }
+        if ((hnid & 0x1F) == 0) {
+            return heap.getItem(hnid);
         }
-        return heap.getItem(hnid);
+        // Subnode NID: resolve against the TC's own subnode tree first ([MS-PST] §2.3.3.2), then the
+        // optional fallback tree; treating an unresolvable NID as a heap id would surface an
+        // unrelated heap item as the cell value.
+        byte[] data = readSubnodeBytes(node, hnid);
+        if (data == null) {
+            data = readSubnodeBytes(fallbackNode, hnid);
+        }
+        if (data == null) {
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    () -> "Table cell subnode 0x" + Integer.toHexString(hnid) + " not found; the cell value is lost");
+        }
+        return data;
+    }
+
+    /** The data of subnode {@code nid} within {@code owner}'s subnode tree, or {@code null}. */
+    private byte[] readSubnodeBytes(NodeEntry owner, int nid) {
+        if (nodeDatabase == null || owner == null || owner.subBid() == 0) {
+            return null;
+        }
+        try {
+            return nodeDatabase.readSubnodeData(owner.subBid(), nid);
+        } catch (IOException exception) {
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    () -> "Failed to read table subnode 0x" + Integer.toHexString(nid),
+                    exception);
+            return null;
+        }
     }
 
     private record ColumnDescriptor(int propertyTag, int valueType, int offset, int size, int existenceBit) {

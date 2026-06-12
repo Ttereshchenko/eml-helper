@@ -3,6 +3,7 @@ package com.github.ttereshchenko.mailkit.conversion.msg;
 import com.github.ttereshchenko.mailkit.conversion.ConversionException;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
+import com.github.ttereshchenko.mailkit.conversion.RtfStripper;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;

@@ -608,4 +608,35 @@ class EmlSerializerTest {
             }
         }
     }
+
+    /**
+     * F8: a synthesized header whose value is one unbreakable token longer than the RFC 5322
+     * §2.1.1 hard limit (e.g. the base64 Thread-Index of a very long conversation) must be
+     * hard-folded rather than emitted as a >998-character line strict parsers reject.
+     */
+    @Test
+    void unbreakableOverlongHeaderValueIsHardFolded() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.setSubject("Long thread");
+        var threadIndex = "A".repeat(1500); // no whitespace anywhere
+        serializer.addCustomHeader("Thread-Index", threadIndex);
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        for (var line : eml.split("\r\n", -1)) {
+            assertTrue(line.length() <= 998, "line exceeds the RFC 5322 hard limit: " + line.length());
+        }
+        // Folding necessarily introduces WSP into the token (that is what makes it legal); the
+        // consumers of such headers strip whitespace, so the value must round-trip modulo WSP.
+        var headerMatcher = java.util.regex.Pattern.compile("Thread-Index:((?:[^\\r\\n]|\\r\\n[ \\t])*)")
+                .matcher(eml);
+        assertTrue(headerMatcher.find(), "the Thread-Index header must be present");
+        assertEquals(
+                threadIndex,
+                headerMatcher.group(1).replaceAll("[ \\t\\r\\n]", ""),
+                "the folded value must round-trip once whitespace is stripped");
+    }
 }

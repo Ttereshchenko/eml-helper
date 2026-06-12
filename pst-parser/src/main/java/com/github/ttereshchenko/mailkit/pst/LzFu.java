@@ -35,9 +35,19 @@ final class LzFu {
         buffer.getInt(); // compressed size (unused; the input array bounds the read loop)
         int uncompressedSize = buffer.getInt();
         int compressionSignature = buffer.getInt();
-        buffer.getInt(); // CRC (not validated)
+        int storedCrc = buffer.getInt();
 
         if (compressionSignature == 0x75465A4C) { // LZFu
+            // The header CRC covers the compressed contents ([MS-OXRTFCP] §2.1.3.1.4, same algorithm
+            // as the PST trailers). A mismatch means the body bytes were corrupted; warn — loudly, so
+            // garbled output is diagnosable — but still decode best-effort rather than drop the body.
+            int computedCrc = PstCrc.compute(data, 16, data.length - 16);
+            if (storedCrc != computedCrc) {
+                LOG.log(
+                        System.Logger.Level.WARNING,
+                        () -> "RTF body CRC mismatch (stored 0x" + Integer.toHexString(storedCrc) + ", computed 0x"
+                                + Integer.toHexString(computedCrc) + "); the decoded body may be corrupted");
+            }
             if (uncompressedSize < 0 || uncompressedSize > MAX_UNCOMPRESSED_SIZE) {
                 LOG.log(
                         System.Logger.Level.WARNING,

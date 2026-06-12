@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added (PST/OST non-mail items, recurrence and integrity)
+
+- Recurring appointments and meetings now export their full series: the calendar invite carries the recurrence rule (daily/weekly/monthly/nth-weekday/yearly, with end-by-date or end-after-count), deleted occurrences as exception dates, and the event's own time zone — so a "every Tuesday at 10:00" meeting stays at 10:00 local time across DST changes instead of drifting by an hour. All-day events are exported as true all-day calendar entries.
+- Contacts, tasks, sticky notes, journal entries and distribution lists can now be converted too (opt-in checkbox in the conversion dialog): contacts become EMLs carrying a vCard (`contact.vcf`) with names, organization, phones and email addresses; tasks carry a VTODO calendar (`task.ics`) with due date and completion state; distribution lists export with their resolved member list as the body.
+- When an archive contains item types the conversion skips, the console now reports a per-class summary (e.g. `IPM.Contact x6`) instead of leaving the omission to be discovered later.
+- OLE-embedded objects (spreadsheets, documents embedded as objects in old messages) are no longer dropped: their raw storage bytes are exported as an `.ole` attachment.
+- A new "Verify on-disk checksums while reading" option validates every page and block checksum of the archive while converting, turning silent bit rot into clearly reported corruption errors; compressed RTF bodies always verify their checksum and report mismatches.
+- A message that claims attachments which cannot be read from a damaged attachment table is now reported and counted as a failure instead of exporting "successfully" without them.
+
+### Fixed (PST/OST conversion accuracy)
+
+- Messages with large recipient or attachment tables (roughly 40+ recipients or 50+ attachments) no longer lose them: the tables' row data was being looked up in the wrong part of the archive's storage tree, silently dropping every recipient and attachment of such messages — mass-distribution mail in particular — and occasionally fabricating a bogus recipient from unrelated data. Both ANSI and Unicode archives are affected and covered.
+- A message whose only body is plain text encapsulated in RTF (`\fromtext`, common for messages written by non-Outlook clients) now exports that text as its readable body instead of an empty message with a `body.rtf` attachment.
+- Uncompressed blocks in 2013-format OST files whose content coincidentally looks zlib-compressed can no longer be "decompressed" into garbage that replaces the real content.
+- Synthesized headers whose value is one unbreakable token longer than the RFC 5322 line limit (e.g. the `Thread-Index` of a very long conversation) are now folded so strict parsers accept the converted message.
+
 ### Added (PST/OST conversion fidelity)
 
 - Converted messages keep more of their Outlook metadata: `Sensitivity` (Personal/Private/Company-Confidential), the conversation-threading `Thread-Topic` and `Thread-Index` headers, and `Reply-To` (resolved from the archive's reply-recipient entries, honouring the configured address preference) are now exported. Attachments keep their `Content-Location`, so converted MHTML web archives stay browsable.

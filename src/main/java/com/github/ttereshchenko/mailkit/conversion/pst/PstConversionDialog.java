@@ -29,6 +29,8 @@ public class PstConversionDialog extends DialogWrapper {
     private final JBCheckBox skipEmptyFoldersCheck;
     private final JBCheckBox recoverDeletedItemsCheck;
     private final JBCheckBox scanOrphansCheck;
+    private final JBCheckBox exportNonMailItemsCheck;
+    private final JBCheckBox verifyCrcCheck;
     private final JBTextField maxNodeSizeField;
     private final JPanel centerPanel;
 
@@ -60,6 +62,8 @@ public class PstConversionDialog extends DialogWrapper {
         skipEmptyFoldersCheck = new JBCheckBox("Skip empty folders", true);
         recoverDeletedItemsCheck = new JBCheckBox("Recover soft-deleted messages (Recoverable Items)", true);
         scanOrphansCheck = new JBCheckBox("Recover orphaned messages (deep NBT scan)", true);
+        exportNonMailItemsCheck = new JBCheckBox("Convert contacts, tasks, notes and distribution lists too", false);
+        verifyCrcCheck = new JBCheckBox("Verify on-disk checksums while reading (detects corruption)", false);
 
         maxNodeSizeField = new JBTextField("64");
         maxNodeSizeField.getEmptyText().setText("Max size in MB (default 64)");
@@ -67,7 +71,8 @@ public class PstConversionDialog extends DialogWrapper {
         var helpLabel = ContextHelpLabel.create(
                 "<b>Supported items:</b> Emails (IPM.Note), Posted notes (IPM.Post), Reports (REPORT.*),<br>"
                         + "Calendar/Meetings (IPM.Appointment, IPM.Schedule.Meeting.*).<br><br>"
-                        + "<i>Other types (Contacts, Tasks, Notes, etc.) are ignored.</i>");
+                        + "<i>Contacts, tasks, sticky notes, journal entries and distribution lists are<br>"
+                        + "converted only when \"Convert contacts, tasks, notes…\" is checked.</i>");
         var helpPanel = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
         helpPanel.add(new com.intellij.ui.components.JBLabel("Which items are converted? "));
         helpPanel.add(helpLabel);
@@ -87,6 +92,8 @@ public class PstConversionDialog extends DialogWrapper {
                 .addComponent(skipEmptyFoldersCheck)
                 .addComponent(recoverDeletedItemsCheck)
                 .addComponent(scanOrphansCheck)
+                .addComponent(exportNonMailItemsCheck)
+                .addComponent(verifyCrcCheck)
                 .addLabeledComponent("Max single attachment size (MB):", maxNodeSizeField)
                 .addComponent(helpPanel)
                 .getPanel();
@@ -178,6 +185,14 @@ public class PstConversionDialog extends DialogWrapper {
 
     public boolean scanOrphans() {
         return scanOrphansCheck.isSelected();
+    }
+
+    public boolean exportNonMailItems() {
+        return exportNonMailItemsCheck.isSelected();
+    }
+
+    public boolean verifyCrc() {
+        return verifyCrcCheck.isSelected();
     }
 
     public long getMaxNodeSize() {

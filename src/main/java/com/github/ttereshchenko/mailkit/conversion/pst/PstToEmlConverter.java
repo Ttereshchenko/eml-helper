@@ -1,8 +1,12 @@
 package com.github.ttereshchenko.mailkit.conversion.pst;
 
+import com.github.ttereshchenko.mailkit.conversion.AppointmentRecurrence;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
 import com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator;
+import com.github.ttereshchenko.mailkit.conversion.RtfStripper;
+import com.github.ttereshchenko.mailkit.conversion.VCardGenerator;
+import com.github.ttereshchenko.mailkit.conversion.WindowsTimeZone;
 import com.github.ttereshchenko.mailkit.pst.Attachment;
 import com.github.ttereshchenko.mailkit.pst.Folder;
 import com.github.ttereshchenko.mailkit.pst.MapiProperties;
@@ -22,6 +26,7 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -29,6 +34,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -66,6 +72,19 @@ public final class PstToEmlConverter {
 
     private static final List<String> ALLOWED_MESSAGE_CLASSES =
             List.of("IPM.Note", "IPM.Post", "REPORT.", "IPM.Schedule.Meeting.", "IPM.Appointment");
+
+    // Non-mail item classes exported only when Options.exportNonMailItems is on: contacts become
+    // EMLs with a vCard, tasks carry a VTODO, sticky notes and journal entries export their text,
+    // and distribution lists list their members.
+    private static final List<String> NON_MAIL_MESSAGE_CLASSES =
+            List.of("IPM.Contact", "IPM.Task", "IPM.StickyNote", "IPM.DistList", "IPM.Activity");
+
+    // Named-property sets ([MS-OXPROPS] §1.3.2) for appointment, task and contact properties.
+    private static final UUID PSETID_APPOINTMENT = UUID.fromString("00062002-0000-0000-C000-000000000046");
+    private static final UUID PSETID_TASK = UUID.fromString("00062003-0000-0000-C000-000000000046");
+    private static final UUID PSETID_ADDRESS = UUID.fromString("00062004-0000-0000-C000-000000000046");
+
+    private static final int ATTACH_OLE = 6; // afStorage: an embedded OLE object
 
     // The LzFu decoder reads RTF as windows-1252, which round-trips all 256 byte values in Java;
     // encoding the decoded string back with it recovers the original RTF bytes.
@@ -115,7 +134,33 @@ public final class PstToEmlConverter {
             Message.AddressPreference addressPreference,
             boolean recoverDeletedItems,
             boolean scanOrphans,
-            long maxNodeSize) {}
+            long maxNodeSize,
+            boolean exportNonMailItems,
+            boolean verifyCrc) {
+
+        /** Mail-only options with CRC verification off — the defaults before those switches existed. */
+        public Options(
+                DuplicateHandling duplicateHandling,
+                Integer limit,
+                boolean useOriginalHeaders,
+                boolean skipEmptyFolders,
+                Message.AddressPreference addressPreference,
+                boolean recoverDeletedItems,
+                boolean scanOrphans,
+                long maxNodeSize) {
+            this(
+                    duplicateHandling,
+                    limit,
+                    useOriginalHeaders,
+                    skipEmptyFolders,
+                    addressPreference,
+                    recoverDeletedItems,
+                    scanOrphans,
+                    maxNodeSize,
+                    false,
+                    false);
+        }
+    }
 
     /** Mutable running totals for a single conversion. */
     public static final class Stats {
@@ -125,6 +170,7 @@ public final class PstToEmlConverter {
         private int failedAttachments;
         private int recoveredDeleted;
         private int recoveredOrphans;
+        private final Map<String, Integer> skippedByClass = new TreeMap<>();
 
         public int converted() {
             return converted;
@@ -148,6 +194,15 @@ public final class PstToEmlConverter {
 
         public int recoveredOrphans() {
             return recoveredOrphans;
+        }
+
+        /** How many items each disallowed message class kept out of the export, keyed by class. */
+        public Map<String, Integer> skippedByClass() {
+            return Collections.unmodifiableMap(skippedByClass);
+        }
+
+        void recordSkipped(String messageClass) {
+            skippedByClass.merge(messageClass, 1, Integer::sum);
         }
     }
 
@@ -193,6 +248,19 @@ public final class PstToEmlConverter {
         if (options.recoverDeletedItems() || options.scanOrphans()) {
             recoverUnreferencedMessages(
                     pstFile, targetDir, options, stats, indicator, log, visited, knownMessages, nameCounters);
+        }
+        if (!stats.skippedByClass().isEmpty()) {
+            // Make it visible what an archive contained beyond mail, so skipped item types are a
+            // conscious choice (the "convert non-mail items" option) rather than silent loss.
+            var classSummaries = new ArrayList<String>();
+            for (var entry : stats.skippedByClass().entrySet()) {
+                classSummaries.add(entry.getKey() + " x" + entry.getValue());
+            }
+            log.info("Skipped by message class: " + String.join(", ", classSummaries)
+                    + (options.exportNonMailItems()
+                            ? ""
+                            : " — enable \"Convert contacts, tasks, notes and distribution lists\" to export"
+                                    + " the supported non-mail types"));
         }
         return stats;
     }
@@ -263,7 +331,8 @@ public final class PstToEmlConverter {
                     continue;
                 }
                 message.setAddressPreference(options.addressPreference());
-                if (!isAllowedMessageClass(message.getMessageClass())) {
+                if (!isAllowedMessageClass(message.getMessageClass(), options.exportNonMailItems())) {
+                    stats.recordSkipped(message.getMessageClass());
                     continue;
                 }
 
@@ -487,7 +556,8 @@ public final class PstToEmlConverter {
                     }
                     message.setAddressPreference(options.addressPreference());
                     String messageClass = message.getMessageClass();
-                    if (!isAllowedMessageClass(messageClass)) {
+                    if (!isAllowedMessageClass(messageClass, options.exportNonMailItems())) {
+                        stats.recordSkipped(messageClass);
                         log.info("Skipping message " + msgNid + " (Class: " + messageClass + " is not allowed)");
                         continue;
                     }
@@ -702,8 +772,23 @@ public final class PstToEmlConverter {
             serializer.addCustomHeader("Reply-To", String.join(", ", replyTo));
         }
 
+        String msgClass = message.getMessageClass();
+
         String plainBody = message.getBody();
         String htmlBody = message.getHtmlBody();
+        if (plainBody.isEmpty() && htmlBody.isEmpty()) {
+            String rawRtf = message.getRawRtfBody();
+            if (rawRtf.contains("\\fromtext")) {
+                // \fromtext RTF encapsulates the plain-text body; when PR_BODY itself is missing
+                // the encapsulated text is the only renderable content, so extract it instead of
+                // exporting an empty message with only a body.rtf attachment.
+                plainBody = RtfStripper.strip(rawRtf);
+            }
+        }
+        if (msgClass != null && msgClass.startsWith("IPM.DistList") && plainBody.isEmpty()) {
+            // A distribution list has no body of its own; its content is the member list.
+            plainBody = formatDistributionListMembers(message);
+        }
         serializer.addBody(plainBody, "text/plain; charset=UTF-8");
         serializer.addBody(htmlBody, "text/html; charset=UTF-8");
         String rtfBody = message.getRtfBody();
@@ -720,7 +805,22 @@ public final class PstToEmlConverter {
             serializer.addAttachment("body.rtf", "application/rtf", rtfBody.getBytes(RTF_CHARSET), null, false);
         }
 
-        String msgClass = message.getMessageClass();
+        if (msgClass != null && msgClass.startsWith("IPM.Contact")) {
+            serializer.addAttachment(
+                    "contact.vcf",
+                    "text/vcard; charset=UTF-8",
+                    buildContactCard(message, pstFile).getBytes(StandardCharsets.UTF_8),
+                    null,
+                    false);
+        }
+        if (msgClass != null && msgClass.startsWith("IPM.Task")) {
+            serializer.addAttachment(
+                    "task.ics",
+                    "text/calendar; charset=UTF-8; method=PUBLISH",
+                    buildTaskTodo(message, pstFile, subject).getBytes(StandardCharsets.UTF_8),
+                    null,
+                    false);
+        }
         if (msgClass != null && msgClass.startsWith("IPM.Note.SMIME")) {
             // The serializer re-encodes the MIME structure, which necessarily invalidates a
             // signed/encrypted envelope; surface that instead of letting the user discover it
@@ -733,10 +833,9 @@ public final class PstToEmlConverter {
         // (IPM.Schedule.Meeting.*); both store the start/end/location named properties below.
         if (msgClass != null
                 && (msgClass.startsWith("IPM.Appointment") || msgClass.startsWith("IPM.Schedule.Meeting"))) {
-            UUID psetidAppointment = UUID.fromString("00062002-0000-0000-C000-000000000046");
-            Integer startId = pstFile.namedPropertyId(psetidAppointment, 0x820D);
-            Integer endId = pstFile.namedPropertyId(psetidAppointment, 0x820E);
-            Integer locId = pstFile.namedPropertyId(psetidAppointment, 0x8208);
+            Integer startId = pstFile.namedPropertyId(PSETID_APPOINTMENT, 0x820D);
+            Integer endId = pstFile.namedPropertyId(PSETID_APPOINTMENT, 0x820E);
+            Integer locId = pstFile.namedPropertyId(PSETID_APPOINTMENT, 0x8208);
 
             Instant start = startId != null && message.getProperty(startId) instanceof Instant instant ? instant : null;
             Instant end = endId != null && message.getProperty(endId) instanceof Instant instant ? instant : null;
@@ -754,7 +853,31 @@ public final class PstToEmlConverter {
                     }
                 }
                 String method = icalMethod(msgClass, !attendees.isEmpty());
-                String ical = ICalendarGenerator.generate(
+
+                // All-day flag, event time zone and recurrence (PidLidAppointmentSubType /
+                // PidLidTimeZoneStruct / PidLidAppointmentRecur): a recurring meeting exports its
+                // full series (RRULE + EXDATEs) anchored to the event's own zone, so the local hour
+                // survives DST changes instead of drifting with a fixed UTC time.
+                Integer allDayId = pstFile.namedPropertyId(PSETID_APPOINTMENT, 0x8215);
+                boolean allDay =
+                        allDayId != null && message.getProperty(allDayId) instanceof Boolean allDayFlag && allDayFlag;
+                Integer timeZoneId = pstFile.namedPropertyId(PSETID_APPOINTMENT, 0x8233);
+                WindowsTimeZone timeZone =
+                        timeZoneId != null && message.getProperty(timeZoneId) instanceof byte[] timeZoneStruct
+                                ? WindowsTimeZone.parse(timeZoneStruct)
+                                : null;
+                AppointmentRecurrence.Pattern recurrence = null;
+                Integer recurrenceId = pstFile.namedPropertyId(PSETID_APPOINTMENT, 0x8216);
+                if (recurrenceId != null && message.getProperty(recurrenceId) instanceof byte[] recurrenceBlob) {
+                    recurrence = AppointmentRecurrence.parse(recurrenceBlob);
+                    if (recurrence == null) {
+                        log.info("Message " + message.getNid() + " has a recurrence pattern this converter"
+                                + " cannot map (malformed or non-Gregorian); the invite carries the first"
+                                + " occurrence only");
+                    }
+                }
+
+                String ical = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
                         method,
                         Date.from(start),
                         end != null ? Date.from(end) : null,
@@ -763,7 +886,10 @@ public final class PstToEmlConverter {
                         fromName,
                         fromEmail,
                         message.getBody(),
-                        attendees);
+                        attendees,
+                        allDay,
+                        timeZone,
+                        recurrence));
                 serializer.addAttachment(
                         "invite.ics",
                         "text/calendar; charset=UTF-8; method=" + method,
@@ -775,7 +901,16 @@ public final class PstToEmlConverter {
 
         long totalAttachmentBytes = 0;
         int attachmentCount = 0;
-        for (Attachment attachment : message.getAttachments()) {
+        List<Attachment> messageAttachments = message.getAttachments();
+        if (messageAttachments.isEmpty() && message.hasAttachments()) {
+            // PR_HASATTACH says there are attachments but the attachment table yielded none —
+            // corruption or an unreadable table. Without this tripwire the message exports
+            // "successfully" with its attachments silently missing.
+            stats.failedAttachments++;
+            log.error("Message " + message.getNid() + " claims attachments (PR_HASATTACH) but none could be"
+                    + " read from its attachment table; they were not exported");
+        }
+        for (Attachment attachment : messageAttachments) {
             if (attachmentCount >= MAX_ATTACHMENT_COUNT) {
                 log.error("Message has more than " + MAX_ATTACHMENT_COUNT
                         + " attachments; remaining attachments were skipped");
@@ -828,6 +963,26 @@ public final class PstToEmlConverter {
             }
 
             byte[] data = attachment.getData();
+            String mimeOverride = null;
+            if (data == null && attachment.getAttachMethod() == ATTACH_OLE) {
+                // An OLE-embedded object (afStorage) has no PT_BINARY content; its storage lives in
+                // a subnode. Mail clients cannot open it directly, but exporting the raw bytes
+                // beats dropping user content on the floor.
+                try {
+                    data = attachment.getObjectData();
+                } catch (IOException exception) {
+                    log.error("Failed to read the OLE object of attachment '" + attachName + "' in message "
+                            + message.getNid() + ": " + describeFailure(exception));
+                }
+                if (data != null) {
+                    if (!attachName.contains(".")) {
+                        attachName = attachName + ".ole";
+                    }
+                    mimeOverride = "application/octet-stream";
+                    log.info("Attachment '" + attachName + "' in message " + message.getNid()
+                            + " is an embedded OLE object; its raw storage bytes were exported");
+                }
+            }
             if (data == null) {
                 int attachMethod = attachment.getAttachMethod();
                 if (attachMethod >= ATTACH_BY_REFERENCE && attachMethod <= ATTACH_BY_REFERENCE_ONLY) {
@@ -860,7 +1015,7 @@ public final class PstToEmlConverter {
                 break;
             }
 
-            String mime = attachment.getMimeTag();
+            String mime = mimeOverride != null ? mimeOverride : attachment.getMimeTag();
             if (mime.isEmpty()) mime = "application/octet-stream";
 
             log.info("Found attachment: " + attachName + " (" + mime + ")");
@@ -890,6 +1045,66 @@ public final class PstToEmlConverter {
                 serializer.addRecipient(recipientType, trimmed, "");
             }
         }
+    }
+
+    /** The plain-text body of an exported distribution list: one member per line. */
+    private static String formatDistributionListMembers(Message message) {
+        var members = message.getDistributionListMembers();
+        if (members.isEmpty()) {
+            return "";
+        }
+        var listing = new StringBuilder("Distribution list members:\r\n");
+        for (Message.Recipient member : members) {
+            var formatted = EmlSerializer.formatAddress(member.name, member.email);
+            if (!formatted.isBlank()) {
+                listing.append("- ").append(formatted).append("\r\n");
+            }
+        }
+        return listing.toString();
+    }
+
+    /** A vCard for an {@code IPM.Contact} item: names, organization, phones and the Email1-3 named properties. */
+    private static String buildContactCard(Message message, PstFile pstFile) {
+        var contact = new VCardGenerator.Contact()
+                .displayName(message.getStringProperty(MapiProperties.PR_DISPLAY_NAME_W))
+                .givenName(message.getStringProperty(MapiProperties.PR_GIVEN_NAME_W))
+                .surname(message.getStringProperty(MapiProperties.PR_SURNAME_W))
+                .company(message.getStringProperty(MapiProperties.PR_COMPANY_NAME_W))
+                .jobTitle(message.getStringProperty(MapiProperties.PR_TITLE_W))
+                .phone("work", message.getStringProperty(MapiProperties.PR_BUSINESS_TELEPHONE_NUMBER_W))
+                .phone("home", message.getStringProperty(MapiProperties.PR_HOME_TELEPHONE_NUMBER_W))
+                .phone("cell", message.getStringProperty(MapiProperties.PR_MOBILE_TELEPHONE_NUMBER_W));
+        // PidLidEmail1EmailAddress / Email2 / Email3 ([MS-OXOCNTC] §2.2.1.2.3).
+        for (int namedId : new int[] {0x8083, 0x8093, 0x80A3}) {
+            Integer propertyId = pstFile.namedPropertyId(PSETID_ADDRESS, namedId);
+            if (propertyId != null) {
+                contact.email(message.getStringProperty(propertyId));
+            }
+        }
+        return VCardGenerator.generate(contact);
+    }
+
+    /** A VTODO for an {@code IPM.Task} item: start/due dates, completion state and percent complete. */
+    private static String buildTaskTodo(Message message, PstFile pstFile, String subject) {
+        Instant start = namedInstant(message, pstFile, 0x8104); // PidLidTaskStartDate
+        Instant due = namedInstant(message, pstFile, 0x8105); // PidLidTaskDueDate
+        Integer percentId = pstFile.namedPropertyId(PSETID_TASK, 0x8102); // PidLidPercentComplete
+        Double percent = percentId != null && message.getProperty(percentId) instanceof Double value ? value : null;
+        Integer completeId = pstFile.namedPropertyId(PSETID_TASK, 0x811C); // PidLidTaskComplete
+        Boolean complete =
+                completeId != null && message.getProperty(completeId) instanceof Boolean value ? value : null;
+        return ICalendarGenerator.generateTodo(
+                subject,
+                message.getBody(),
+                start != null ? Date.from(start) : null,
+                due != null ? Date.from(due) : null,
+                percent,
+                complete);
+    }
+
+    private static Instant namedInstant(Message message, PstFile pstFile, int namedId) {
+        Integer propertyId = pstFile.namedPropertyId(PSETID_TASK, namedId);
+        return propertyId != null && message.getProperty(propertyId) instanceof Instant value ? value : null;
     }
 
     /**
@@ -997,13 +1212,20 @@ public final class PstToEmlConverter {
      * the generic {@code IPM} note, so a malformed item with no class is treated as a plain email
      * (best-effort fidelity) rather than silently dropped. Everything else must match an allowed prefix.
      */
-    private static boolean isAllowedMessageClass(String messageClass) {
+    private static boolean isAllowedMessageClass(String messageClass, boolean exportNonMailItems) {
         if (messageClass == null || messageClass.isEmpty()) {
             return true;
         }
         for (String allowed : ALLOWED_MESSAGE_CLASSES) {
             if (messageClass.startsWith(allowed)) {
                 return true;
+            }
+        }
+        if (exportNonMailItems) {
+            for (String allowed : NON_MAIL_MESSAGE_CLASSES) {
+                if (messageClass.startsWith(allowed)) {
+                    return true;
+                }
             }
         }
         return false;

@@ -324,5 +324,28 @@ public final class MapiProperties {
      */
     public static final int PR_PST_PASSWORD = 0x67FF;
 
+    // Contact Properties ([MS-OXOCNTC]) — used for vCard export of IPM.Contact items.
+
+    /** The contact's given (first) name (PidTagGivenName). EML alternative: vCard N. */
+    public static final int PR_GIVEN_NAME_W = 0x3A06;
+
+    /** The contact's surname (PidTagSurname). EML alternative: vCard N. */
+    public static final int PR_SURNAME_W = 0x3A11;
+
+    /** The contact's company (PidTagCompanyName). EML alternative: vCard ORG. */
+    public static final int PR_COMPANY_NAME_W = 0x3A16;
+
+    /** The contact's job title (PidTagTitle). EML alternative: vCard TITLE. */
+    public static final int PR_TITLE_W = 0x3A17;
+
+    /** The contact's business phone (PidTagBusinessTelephoneNumber). EML alternative: vCard TEL;TYPE=work. */
+    public static final int PR_BUSINESS_TELEPHONE_NUMBER_W = 0x3A08;
+
+    /** The contact's home phone (PidTagHomeTelephoneNumber). EML alternative: vCard TEL;TYPE=home. */
+    public static final int PR_HOME_TELEPHONE_NUMBER_W = 0x3A09;
+
+    /** The contact's mobile phone (PidTagMobileTelephoneNumber). EML alternative: vCard TEL;TYPE=cell. */
+    public static final int PR_MOBILE_TELEPHONE_NUMBER_W = 0x3A1C;
+
     private MapiProperties() {}
 }
