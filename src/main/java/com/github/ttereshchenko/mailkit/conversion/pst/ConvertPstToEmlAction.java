@@ -68,7 +68,9 @@ public final class ConvertPstToEmlAction extends AnAction {
                 dialog.getAddressPreference(),
                 dialog.recoverDeletedItems(),
                 dialog.scanOrphans(),
-                dialog.getMaxNodeSize());
+                dialog.getMaxNodeSize(),
+                dialog.exportNonMailItems(),
+                dialog.verifyCrc());
 
         runConversion(project, source, dialog.getTargetDirectory(), options);
     }
@@ -85,7 +87,7 @@ public final class ConvertPstToEmlAction extends AnAction {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 indicator.setIndeterminate(true);
-                try (var pstFile = new PstFile(source.toNioPath(), options.maxNodeSize())) {
+                try (var pstFile = new PstFile(source.toNioPath(), options.maxNodeSize(), options.verifyCrc())) {
                     var stats = PstToEmlConverter.convert(pstFile, targetDir, options, indicator, log);
                     indicator.setIndeterminate(false);
                     reportSuccess(project, source.getName(), stats, log);

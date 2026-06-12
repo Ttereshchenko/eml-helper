@@ -1,4 +1,4 @@
-package com.github.ttereshchenko.mailkit.conversion.msg;
+package com.github.ttereshchenko.mailkit.conversion;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;

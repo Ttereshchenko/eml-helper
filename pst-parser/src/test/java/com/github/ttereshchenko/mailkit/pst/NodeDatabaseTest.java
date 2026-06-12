@@ -157,4 +157,47 @@ class NodeDatabaseTest {
             Files.deleteIfExists(tempFile);
         }
     }
+
+    @Test
+    void uncompressedBlockWithZlibLookingPayloadIsNotInflated() throws Exception {
+        // F6 regression: a 2013-format block stored uncompressed (cbInflated == cb) whose payload
+        // happens to be a valid zlib stream must be returned raw — the old "> 0" check inflated it
+        // "successfully" and silently replaced the real content with the inflated garbage.
+        Path tempFile = Files.createTempFile("test_uncompressed", ".pst");
+        try {
+            var deflater = new Deflater();
+            deflater.setInput("not the real content".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            deflater.finish();
+            var payload = new byte[256];
+            int payloadSize = deflater.deflate(payload);
+            var raw = java.util.Arrays.copyOf(payload, payloadSize);
+
+            try (RandomAccessFile raf = new RandomAccessFile(tempFile.toFile(), "rw")) {
+                raf.setLength(8192 + payloadSize);
+                ByteBuffer buf = ByteBuffer.allocate(4096).order(ByteOrder.LITTLE_ENDIAN);
+                int trailerOffset = 4056;
+                buf.putShort(trailerOffset, (short) 1); // numEntries
+                buf.put(trailerOffset + 4, (byte) 24); // entrySize
+                buf.put(trailerOffset + 5, (byte) 0); // level = 0 (leaf)
+                buf.putLong(0, 4L); // bid
+                buf.putLong(8, 8192L); // fileOffset
+                buf.putShort(16, (short) payloadSize); // size
+                buf.putInt(24, payloadSize); // inflated size == size: stored uncompressed
+                raf.write(buf.array());
+                raf.seek(8192);
+                raf.write(raw);
+            }
+
+            try (FileChannel channel = FileChannel.open(tempFile, StandardOpenOption.READ)) {
+                var database = new NodeDatabase(
+                        channel, PstFile.Format.UNICODE_2013, PstFile.EncryptionType.NONE, 0, 4096, 64L * 1024 * 1024);
+                assertArrayEquals(
+                        raw,
+                        database.readNodeData(4L),
+                        "An uncompressed block must surface its raw bytes even when they parse as zlib");
+            }
+        } finally {
+            Files.deleteIfExists(tempFile);
+        }
+    }
 }

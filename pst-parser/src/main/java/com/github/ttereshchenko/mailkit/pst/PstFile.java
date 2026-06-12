@@ -115,6 +115,21 @@ public final class PstFile implements AutoCloseable {
      * @throws IOException if the file cannot be read
      */
     public PstFile(Path path, long maxNodeSize) throws IOException, PstException {
+        this(path, maxNodeSize, false);
+    }
+
+    /**
+     * Opens the PST/OST file at the given path, optionally verifying on-disk checksums.
+     *
+     * @param verifyCrc when {@code true}, every b-tree page and block read is checked against its
+     *     trailer CRC ([MS-PST] §5.3) and a mismatch fails with a {@link PstException} — turning
+     *     otherwise-silent bit rot into a detected error. Costs one extra trailer read per block.
+     *     Supported for ANSI and Unicode stores; 2013-format (4 KiB page) stores skip verification.
+     * @throws IllegalArgumentException if {@code maxNodeSize} is below {@link #MIN_MAX_NODE_SIZE}
+     * @throws PstException if the file is not a recognizable PST/OST store
+     * @throws IOException if the file cannot be read
+     */
+    public PstFile(Path path, long maxNodeSize, boolean verifyCrc) throws IOException, PstException {
         Objects.requireNonNull(path, "path");
         if (maxNodeSize < MIN_MAX_NODE_SIZE) {
             throw new IllegalArgumentException(
@@ -148,15 +163,15 @@ public final class PstFile implements AutoCloseable {
                 readFully(channel, brefBuffer, 224);
                 long nbtOffset = brefBuffer.getLong(0);
                 long bbtOffset = brefBuffer.getLong(16);
-                this.nodeDatabase =
-                        new NodeDatabase(channel, this.format, this.encryptionType, bbtOffset, nbtOffset, maxNodeSize);
+                this.nodeDatabase = new NodeDatabase(
+                        channel, this.format, this.encryptionType, bbtOffset, nbtOffset, maxNodeSize, verifyCrc);
             } else {
                 var brefBuffer = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
                 readFully(channel, brefBuffer, 188);
                 long nbtOffset = Integer.toUnsignedLong(brefBuffer.getInt(0));
                 long bbtOffset = Integer.toUnsignedLong(brefBuffer.getInt(8));
-                this.nodeDatabase =
-                        new NodeDatabase(channel, this.format, this.encryptionType, bbtOffset, nbtOffset, maxNodeSize);
+                this.nodeDatabase = new NodeDatabase(
+                        channel, this.format, this.encryptionType, bbtOffset, nbtOffset, maxNodeSize, verifyCrc);
             }
         } catch (Exception failure) {
             this.channel.close();

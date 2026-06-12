@@ -258,6 +258,21 @@ class PropertyContext {
      * block without being materialized; heap-resident data is wrapped as-is. Returns {@code null}
      * if the property is absent or not binary.
      */
+    /**
+     * Materializes the subnode data behind a PT_OBJECT property (whose parsed value is the subnode
+     * NID, see the {@code 0x000D} case above) — e.g. the raw storage of an OLE attachment object.
+     * Returns {@code null} when the property is absent, not a PT_OBJECT NID, or unresolvable.
+     */
+    byte[] readObjectData(int propertyId) throws IOException {
+        if (!(properties.get(propertyId) instanceof Integer subnodeNid)
+                || nodeDatabase == null
+                || node == null
+                || node.subBid() == 0) {
+            return null;
+        }
+        return nodeDatabase.readSubnodeData(node.subBid(), subnodeNid);
+    }
+
     InputStream openBinaryStream(int propertyId) throws IOException {
         var subnodeNid = pendingSubnodeBinaries.get(propertyId);
         if (subnodeNid != null && nodeDatabase != null && node != null && node.subBid() != 0) {

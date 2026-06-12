@@ -1,4 +1,4 @@
-package com.github.ttereshchenko.mailkit.conversion.msg;
+package com.github.ttereshchenko.mailkit.conversion;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -11,7 +11,7 @@ import java.util.regex.Pattern;
  * when an MSG has neither an HTML nor a plain text body; {@link #deEncapsulateHtml} recovers HTML from
  * HTML-encapsulated RTF (MS-OXRTFEX). Neither is a faithful RTF renderer.
  */
-final class RtfStripper {
+public final class RtfStripper {
 
     private static final Charset DEFAULT_RTF_CHARSET = Charset.forName("windows-1252");
     private static final Pattern ANSICPG_PATTERN = Pattern.compile("\\\\ansicpg(\\d+)");
@@ -20,7 +20,7 @@ final class RtfStripper {
 
     private RtfStripper() {}
 
-    static String strip(String rtfText) {
+    public static String strip(String rtfText) {
         Objects.requireNonNull(rtfText, "rtfText");
         if (rtfText.isEmpty()) {
             return "";
@@ -171,11 +171,11 @@ final class RtfStripper {
     }
 
     /** True if the RTF is HTML-encapsulated (RTF-to-HTML, MS-OXRTFEX) rather than ordinary rich text. */
-    static boolean isHtmlEncapsulated(String rtfText) {
+    public static boolean isHtmlEncapsulated(String rtfText) {
         return rtfText != null && rtfText.contains("\\fromhtml");
     }
 
-    static String deEncapsulateHtml(String rtfText) {
+    public static String deEncapsulateHtml(String rtfText) {
         Objects.requireNonNull(rtfText, "rtfText");
         var charset = resolveCharset(rtfText);
         var html = new StringBuilder(rtfText.length());

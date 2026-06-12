@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.function.IntFunction;
 import java.util.regex.Pattern;
 
@@ -40,6 +41,9 @@ public class Message {
 
     /** The {@code \ansicpgN} control word naming the code page of an RTF body's {@code \'hh} escapes. */
     private static final Pattern RTF_ANSI_CODE_PAGE = Pattern.compile("\\\\ansicpg(\\d{1,9})");
+
+    /** PSETID_Address ([MS-OXPROPS] §1.3.2): the property set of the contact/dist-list named properties. */
+    private static final UUID PSETID_ADDRESS = UUID.fromString("00062004-0000-0000-C000-000000000046");
 
     // EntryID provider UIDs ([MS-OXCDATA] §2.2.5): one-off recipients and address-book objects.
     private static final byte[] ONE_OFF_PROVIDER_UID = {
@@ -849,10 +853,16 @@ public class Message {
 
         List<Attachment> attachments = new ArrayList<>();
         try {
-            byte[] tableData = nodeDatabase.readSubnodeData(node.subBid(), NID_ATTACHMENT_TABLE);
+            // The TC's subnode HNIDs (its row matrix once the table outgrows the heap, and any large
+            // cell values) resolve in the attachment-table subnode's OWN tree ([MS-PST] §2.3.3.2), so
+            // the table's entry — not the message node — must host the TableContext; the message's
+            // tree stays available as a compatibility fallback.
+            NodeEntry tableEntry = nodeDatabase.readSubnodeEntry(node.subBid(), NID_ATTACHMENT_TABLE);
+            if (tableEntry == null || tableEntry.dataBid() == 0) return attachments;
+            byte[] tableData = nodeDatabase.readNodeData(tableEntry.dataBid());
             if (tableData == null) return attachments;
 
-            var tableContext = new TableContext(tableData, nodeDatabase, node, getString8Charset());
+            var tableContext = new TableContext(tableData, nodeDatabase, tableEntry, node, getString8Charset());
             for (Map<Integer, Object> row : tableContext.getRows()) {
                 if (!(row.get(MapiProperties.PidTagLtpRowId) instanceof Integer attachNid)) {
                     continue;
@@ -922,10 +932,14 @@ public class Message {
         if (node == null || node.subBid() == 0) return Collections.emptyList();
         List<Recipient> recipients = new ArrayList<>();
         try {
-            byte[] tableData = nodeDatabase.readSubnodeData(node.subBid(), NID_RECIPIENT_TABLE);
+            // See getAttachments: the recipient table's subnode HNIDs resolve in the table entry's
+            // own subnode tree, with the message's tree as the compatibility fallback.
+            NodeEntry tableEntry = nodeDatabase.readSubnodeEntry(node.subBid(), NID_RECIPIENT_TABLE);
+            if (tableEntry == null || tableEntry.dataBid() == 0) return recipients;
+            byte[] tableData = nodeDatabase.readNodeData(tableEntry.dataBid());
             if (tableData == null) return recipients;
 
-            var tableContext = new TableContext(tableData, nodeDatabase, node, getString8Charset());
+            var tableContext = new TableContext(tableData, nodeDatabase, tableEntry, node, getString8Charset());
             recipients = parseRecipients(tableContext.getRows(), addressPreference);
         } catch (IOException | RuntimeException exception) {
             LOG.log(System.Logger.Level.WARNING, () -> "Failed to read recipients for message node " + nid, exception);
@@ -994,6 +1008,41 @@ public class Message {
                 ? value
                 : "";
         return parseReplyRecipients(entries, names, getString8Charset(), addressPreference);
+    }
+
+    /**
+     * The members of a distribution list ({@code IPM.DistList}), resolved from the named
+     * PidLidDistributionListOneOffMembers property (preferred — every member is stored there as a
+     * self-contained one-off ENTRYID) with PidLidDistributionListMembers as the fallback. Entries
+     * that are neither one-off nor address-book ENTRYIDs are skipped; addresses honour this
+     * message's {@link AddressPreference}. Empty for messages that are not distribution lists.
+     */
+    public List<Recipient> getDistributionListMembers() {
+        if (propertyContext == null || pstFile == null) {
+            return List.of();
+        }
+        var members = readEntryIdListMembers(0x8054); // PidLidDistributionListOneOffMembers
+        if (members.isEmpty()) {
+            members = readEntryIdListMembers(0x8055); // PidLidDistributionListMembers
+        }
+        return members;
+    }
+
+    private List<Recipient> readEntryIdListMembers(int namedPropertyId) {
+        Integer propertyId = pstFile.namedPropertyId(PSETID_ADDRESS, namedPropertyId);
+        if (propertyId == null || !(propertyContext.getProperty(propertyId) instanceof List<?> values)) {
+            return List.of();
+        }
+        var members = new ArrayList<Recipient>();
+        for (Object value : values) {
+            if (value instanceof byte[] entryId && entryId.length >= 20) {
+                var member = parseEntryIdRecipient(entryId, "", getString8Charset(), addressPreference);
+                if (member != null) {
+                    members.add(member);
+                }
+            }
+        }
+        return Collections.unmodifiableList(members);
     }
 
     /**
