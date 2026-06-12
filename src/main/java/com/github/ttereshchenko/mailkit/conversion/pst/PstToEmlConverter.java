@@ -2,6 +2,7 @@ package com.github.ttereshchenko.mailkit.conversion.pst;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
+import com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator;
 import com.github.ttereshchenko.mailkit.pst.Attachment;
 import com.github.ttereshchenko.mailkit.pst.Folder;
 import com.github.ttereshchenko.mailkit.pst.MapiProperties;
@@ -12,6 +13,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressIndicator;
 import java.io.IOException;
 import java.io.StringWriter;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -26,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Pure (UI-free) orchestration that walks the IPM subtree of an open {@link PstFile}
@@ -58,6 +61,10 @@ public final class PstToEmlConverter {
 
     private static final List<String> ALLOWED_MESSAGE_CLASSES =
             List.of("IPM.Note", "IPM.Post", "REPORT.", "IPM.Schedule.Meeting.", "IPM.Appointment");
+
+    // The LzFu decoder reads RTF as windows-1252, which round-trips all 256 byte values in Java;
+    // encoding the decoded string back with it recovers the original RTF bytes.
+    private static final Charset RTF_CHARSET = Charset.forName("windows-1252");
 
     // Low 5 bits of a NID encode its type; a normal message node is type 0x04.
     private static final int NID_TYPE_MASK = 0x1F;
@@ -145,19 +152,27 @@ public final class PstToEmlConverter {
         var visited = new HashSet<Integer>();
         var knownMessages = new HashSet<Integer>();
         var nameCounters = new HashMap<Path, Integer>();
-        processFolder(
+        // The root folder (NID 0x122) is an unnamed container: its contents go straight into
+        // targetDir instead of a synthetic "Folder_<nid>" wrapper directory. Marking it visited
+        // keeps the cycle guard intact and the recovery pass classifying its unreferenced children
+        // as soft-deleted rather than orphaned.
+        visited.add(rootFolderNode.nodeId());
+        var rootFolder = new Folder(pstFile, rootFolderNode.nodeId());
+        log.info("Processing folder: Root");
+        processFolderContents(
                 pstFile,
-                rootFolderNode.nodeId(),
+                rootFolder,
                 targetDir,
+                "Root",
                 options,
                 stats,
                 indicator,
-                "Root",
                 log,
                 visited,
                 knownMessages,
                 nameCounters,
-                0);
+                0,
+                false);
 
         if (options.recoverDeletedItems() || options.scanOrphans()) {
             recoverUnreferencedMessages(
@@ -388,6 +403,42 @@ public final class PstToEmlConverter {
             return;
         }
 
+        processFolderContents(
+                pstFile,
+                folder,
+                folderDir,
+                currentPath + "/" + folderName,
+                options,
+                stats,
+                indicator,
+                log,
+                visited,
+                knownMessages,
+                nameCounters,
+                depth,
+                true);
+    }
+
+    /**
+     * Converts the messages of {@code folder} into {@code folderDir} and recurses into its
+     * sub-folders. Factored out of {@link #processFolder} so the root folder's contents can be
+     * written into the user-chosen target directory itself ({@code removeWhenEmpty} false — the
+     * target directory is never deleted) rather than a synthetic wrapper directory.
+     */
+    private static void processFolderContents(
+            PstFile pstFile,
+            Folder folder,
+            Path folderDir,
+            String displayPath,
+            Options options,
+            Stats stats,
+            ProgressIndicator indicator,
+            ConversionLog log,
+            Set<Integer> visited,
+            Set<Integer> knownMessages,
+            Map<Path, Integer> nameCounters,
+            int depth,
+            boolean removeWhenEmpty) {
         try {
             List<Integer> messages = List.of();
             try {
@@ -397,8 +448,7 @@ public final class PstToEmlConverter {
                 // mistake it for a deleted/orphaned node.
                 knownMessages.addAll(messages);
             } catch (Exception exception) {
-                log.error("Failed to list messages in " + currentPath + "/" + folderName + ": "
-                        + describeFailure(exception));
+                log.error("Failed to list messages in " + displayPath + ": " + describeFailure(exception));
                 stats.failedFolders++;
             }
             for (int msgNid : messages) {
@@ -409,7 +459,7 @@ public final class PstToEmlConverter {
                 indicator.checkCanceled();
                 indicator.setText(
                         "Converted " + stats.converted + (options.limit() != null ? " / " + options.limit() : "")
-                                + " messages — current folder: " + currentPath + "/" + folderName);
+                                + " messages — current folder: " + displayPath);
 
                 try {
                     var message = new Message(pstFile, msgNid);
@@ -453,7 +503,7 @@ public final class PstToEmlConverter {
                 } catch (Exception exception) {
                     stats.failedMessages++;
                     // Track failures separately; do not pop notifications per failure to avoid spam.
-                    log.error("Failed to convert message " + msgNid + " in " + currentPath + "/" + folderName + ": "
+                    log.error("Failed to convert message " + msgNid + " in " + displayPath + ": "
                             + describeFailure(exception));
                 }
             }
@@ -462,8 +512,7 @@ public final class PstToEmlConverter {
             try {
                 subFolders = folder.getSubFolders();
             } catch (Exception exception) {
-                log.error("Failed to list subfolders of " + currentPath + "/" + folderName + ": "
-                        + describeFailure(exception));
+                log.error("Failed to list subfolders of " + displayPath + ": " + describeFailure(exception));
                 stats.failedFolders++;
             }
 
@@ -479,7 +528,7 @@ public final class PstToEmlConverter {
                         options,
                         stats,
                         indicator,
-                        currentPath + "/" + folderName,
+                        displayPath,
                         log,
                         visited,
                         knownMessages,
@@ -487,7 +536,7 @@ public final class PstToEmlConverter {
                         depth + 1);
             }
         } finally {
-            if (options.skipEmptyFolders()) {
+            if (removeWhenEmpty && options.skipEmptyFolders()) {
                 try (var stream = Files.list(folderDir)) {
                     if (stream.findAny().isEmpty()) {
                         Files.delete(folderDir);
@@ -522,10 +571,11 @@ public final class PstToEmlConverter {
         }
 
         String subject = message.getSubject();
-        if (subject == null || subject.isBlank()) {
-            subject = "No Subject";
+        // A subject-less message stays subject-less: fabricating a "No Subject" header would alter
+        // message content (the filename fallback in processFolder is a separate concern).
+        if (subject != null && !subject.isBlank()) {
+            serializer.setSubject(subject);
         }
-        serializer.setSubject(subject);
 
         var date = message.getMessageDate();
         if (date != null) {
@@ -542,7 +592,38 @@ public final class PstToEmlConverter {
             serializer.setScl(n.intValue());
         }
 
-        serializer.setSender(message.getSenderName(), message.getSenderEmail());
+        String inReplyTo = message.getStringProperty(MapiProperties.PR_IN_REPLY_TO_ID_W);
+        if (inReplyTo != null && !inReplyTo.isBlank()) {
+            serializer.addCustomHeader("In-Reply-To", inReplyTo.trim());
+        }
+        String references = message.getStringProperty(MapiProperties.PR_INTERNET_REFERENCES_W);
+        if (references != null && !references.isBlank()) {
+            serializer.addCustomHeader("References", references.trim());
+        }
+        if (message.getProperty(MapiProperties.PR_IMPORTANCE) instanceof Number importance) {
+            // MAPI importance: 0 = low, 1 = normal, 2 = high; normal is the default and stays implicit.
+            if (importance.intValue() == 2) {
+                serializer.addCustomHeader("Importance", "High");
+                serializer.addCustomHeader("X-Priority", "1");
+            } else if (importance.intValue() == 0) {
+                serializer.addCustomHeader("Importance", "Low");
+                serializer.addCustomHeader("X-Priority", "5");
+            }
+        }
+
+        var senderName = message.getSenderName();
+        var senderEmail = message.getSenderEmail();
+        var fromName = senderName;
+        var fromEmail = senderEmail;
+        var authorEmail = message.getSentRepresentingEmail();
+        if (!authorEmail.isBlank() && !senderEmail.isBlank() && !authorEmail.equalsIgnoreCase(senderEmail)) {
+            // Sent on behalf of someone else: RFC 5322 §3.6.2 puts the author (sent-representing)
+            // in From: and the actual transmitter in Sender:.
+            fromName = message.getSentRepresentingName();
+            fromEmail = authorEmail;
+            serializer.setTransmitter(senderName, senderEmail);
+        }
+        serializer.setSender(fromName, fromEmail);
 
         var recipients = message.getRecipients();
         for (Message.Recipient recipient : recipients) {
@@ -558,14 +639,20 @@ public final class PstToEmlConverter {
 
         serializer.addBody(message.getBody(), "text/plain; charset=UTF-8");
         serializer.addBody(message.getHtmlBody(), "text/html; charset=UTF-8");
-        serializer.addBody(message.getRtfBody(), "text/rtf; charset=UTF-8");
+        String rtfBody = message.getRtfBody();
+        if (!rtfBody.isEmpty()) {
+            // A genuine RTF body (not encapsulated HTML) is not renderable by mail clients as a
+            // multipart/alternative sibling; preserve it as an application/rtf attachment carrying
+            // its original windows-1252 bytes (the LzFu decode is a lossless 1252 round-trip).
+            serializer.addAttachment("body.rtf", "application/rtf", rtfBody.getBytes(RTF_CHARSET), null, false);
+        }
 
         String msgClass = message.getMessageClass();
-        // Emit a calendar invite for both calendar items (IPM.Appointment) and meeting requests
+        // Emit a calendar invite for both calendar items (IPM.Appointment) and meeting messages
         // (IPM.Schedule.Meeting.*); both store the start/end/location named properties below.
         if (msgClass != null
                 && (msgClass.startsWith("IPM.Appointment") || msgClass.startsWith("IPM.Schedule.Meeting"))) {
-            java.util.UUID psetidAppointment = java.util.UUID.fromString("00062002-0000-0000-C000-000000000046");
+            UUID psetidAppointment = UUID.fromString("00062002-0000-0000-C000-000000000046");
             Integer startId = pstFile.namedPropertyId(psetidAppointment, 0x820D);
             Integer endId = pstFile.namedPropertyId(psetidAppointment, 0x820E);
             Integer locId = pstFile.namedPropertyId(psetidAppointment, 0x8208);
@@ -574,20 +661,35 @@ public final class PstToEmlConverter {
             Instant end = endId != null && message.getProperty(endId) instanceof Instant instant ? instant : null;
             String location = locId != null ? message.getStringProperty(locId) : null;
 
-            String ical = com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator.generate(
-                    start != null ? Date.from(start) : null,
-                    end != null ? Date.from(end) : null,
-                    location,
-                    subject,
-                    message.getSenderName(),
-                    message.getSenderEmail(),
-                    message.getBody());
-            serializer.addAttachment(
-                    "invite.ics",
-                    "text/calendar; method=REQUEST",
-                    ical.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    null,
-                    false);
+            if (start == null) {
+                // Without a real start time the invite would have to fabricate one; matching the
+                // MSG converter's decision, no invite is emitted at all.
+                log.info("Skipping calendar invite for message " + message.getNid() + ": no start time stored");
+            } else {
+                var attendees = new ArrayList<ICalendarGenerator.Attendee>();
+                for (Message.Recipient recipient : recipients) {
+                    if (recipient.email != null && !recipient.email.isBlank()) {
+                        attendees.add(new ICalendarGenerator.Attendee(recipient.name, recipient.email));
+                    }
+                }
+                String method = icalMethod(msgClass, !attendees.isEmpty());
+                String ical = ICalendarGenerator.generate(
+                        method,
+                        Date.from(start),
+                        end != null ? Date.from(end) : null,
+                        location,
+                        subject,
+                        fromName,
+                        fromEmail,
+                        message.getBody(),
+                        attendees);
+                serializer.addAttachment(
+                        "invite.ics",
+                        "text/calendar; charset=UTF-8; method=" + method,
+                        ical.getBytes(StandardCharsets.UTF_8),
+                        null,
+                        false);
+            }
         }
 
         long totalAttachmentBytes = 0;
@@ -618,7 +720,7 @@ public final class PstToEmlConverter {
                                 var embedSerializer = createSerializer(embedMessage, options, pstFile, depth + 1, log);
                                 var stringWriter = new StringWriter();
                                 embedSerializer.writeTo(stringWriter);
-                                if (!attachName.toLowerCase().endsWith(".eml")) attachName += ".eml";
+                                if (!attachName.toLowerCase(Locale.ROOT).endsWith(".eml")) attachName += ".eml";
                                 serializer.addEmbeddedMessage(attachName, stringWriter.toString());
                             }
                         }
@@ -714,6 +816,25 @@ public final class PstToEmlConverter {
             return "Folder_" + nid + "_" + sanitized;
         }
         return sanitized;
+    }
+
+    /**
+     * The iTIP method for a calendar item (RFC 5546): meeting cancellations are {@code CANCEL}s,
+     * responses {@code REPLY}s and requests {@code REQUEST}s — each only when at least one attendee
+     * is available, because those methods are invalid without one and a plain {@code PUBLISH}
+     * renders everywhere. Plain appointments are always {@code PUBLISH}ed.
+     */
+    static String icalMethod(String messageClass, boolean hasAttendees) {
+        if (!hasAttendees || !messageClass.startsWith("IPM.Schedule.Meeting")) {
+            return "PUBLISH";
+        }
+        if (messageClass.startsWith("IPM.Schedule.Meeting.Canceled")) {
+            return "CANCEL";
+        }
+        if (messageClass.startsWith("IPM.Schedule.Meeting.Resp")) {
+            return "REPLY";
+        }
+        return "REQUEST";
     }
 
     /**

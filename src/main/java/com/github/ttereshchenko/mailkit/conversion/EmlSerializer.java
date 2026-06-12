@@ -8,8 +8,8 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -26,6 +26,8 @@ public final class EmlSerializer {
     private String subject;
     private String senderName;
     private String senderEmail;
+    private String transmitterName;
+    private String transmitterEmail;
     private Date date;
     private String messageId;
     private String transportHeaders;
@@ -42,7 +44,8 @@ public final class EmlSerializer {
     private final List<Recipient> recipients = new ArrayList<>();
     private final List<Body> bodies = new ArrayList<>();
     private final List<Attachment> attachments = new ArrayList<>();
-    private final Map<String, List<String>> customHeaders = new HashMap<>();
+    // Insertion-ordered so repeated conversions of the same message emit identical header order.
+    private final Map<String, List<String>> customHeaders = new LinkedHashMap<>();
 
     public EmlSerializer() {}
 
@@ -53,6 +56,16 @@ public final class EmlSerializer {
     public void setSender(String name, String email) {
         this.senderName = name;
         this.senderEmail = email;
+    }
+
+    /**
+     * Sets the actual transmitter when it differs from the author in {@link #setSender}: RFC 5322
+     * §3.6.2 maps an on-behalf-of message to {@code From:} (author) plus {@code Sender:}
+     * (transmitter, this pair).
+     */
+    public void setTransmitter(String name, String email) {
+        this.transmitterName = name;
+        this.transmitterEmail = email;
     }
 
     public void addRecipient(int type, String name, String email) {
@@ -125,6 +138,14 @@ public final class EmlSerializer {
             }
         }
 
+        if (!present.contains("sender")) {
+            var transmitter = formatAddress(transmitterName, transmitterEmail);
+            if (!transmitter.isBlank()) {
+                synthesized.add("Sender");
+                appendHeader(out, "Sender", transmitter);
+            }
+        }
+
         if (!present.contains("to")) {
             var toAddress = joinRecipients(RECIPIENT_TYPE_TO);
             if (toAddress != null && !toAddress.isBlank()) {
@@ -166,10 +187,13 @@ public final class EmlSerializer {
 
         if (!present.contains("message-id") && messageId != null && !messageId.isBlank()) {
             synthesized.add("Message-ID");
-            appendHeader(out, "Message-ID", messageId.trim());
-            if (scl != null) {
-                appendHeader(out, "X-MS-Exchange-Organization-SCL", String.valueOf(scl));
-            }
+            appendHeader(out, "Message-ID", angleBracketed(messageId.trim()));
+        }
+
+        // Independent of Message-ID synthesis — a transport block carrying its own Message-ID must
+        // not suppress the spam-confidence header.
+        if (scl != null && !present.contains("x-ms-exchange-organization-scl")) {
+            appendHeader(out, "X-MS-Exchange-Organization-SCL", String.valueOf(scl));
         }
 
         if (!synthesized.isEmpty()) {
@@ -310,16 +334,32 @@ public final class EmlSerializer {
         return String.join(", ", addresses);
     }
 
+    /** Wraps a Message-ID in the angle brackets RFC 5322 §3.6.4 requires when the stored value lacks them. */
+    private static String angleBracketed(String messageId) {
+        var bracketed = messageId;
+        if (!bracketed.startsWith("<")) {
+            bracketed = "<" + bracketed;
+        }
+        if (!bracketed.endsWith(">")) {
+            bracketed = bracketed + ">";
+        }
+        return bracketed;
+    }
+
     static String quotedPrintableEncode(String text) {
         if (text == null) return "";
-        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         StringBuilder builder = new StringBuilder();
         int lineLen = 0;
-        for (byte b : bytes) {
-            int val = b & 0xFF;
+        for (int index = 0; index < bytes.length; index++) {
+            int val = bytes[index] & 0xFF;
             boolean printable = (val >= 33 && val <= 126 && val != 61) || val == 9 || val == 32;
             if (val == 10 || val == 13) {
-                if (val == 13) continue; // skip CR, handle LF
+                // Every line-break flavour — LF, CRLF (consume the pair) and lone CR — emits a hard
+                // break; silently dropping a lone CR used to join its two lines into one.
+                if (val == 13 && index + 1 < bytes.length && bytes[index + 1] == 10) {
+                    index++;
+                }
 
                 // If line ends with space or tab, we must encode it
                 if (lineLen > 0) {
@@ -431,12 +471,14 @@ public final class EmlSerializer {
         return formatter.format(date);
     }
 
+    // Kept in sync with Message.imceaEncapsulate in the standalone pst-parser library (which cannot
+    // depend on this module); change both together.
     public static String imceaEncapsulate(String addrType, String address) {
         if (address == null || address.isBlank()) return address;
         if (addrType == null || addrType.equalsIgnoreCase("SMTP") || address.contains("@")) return address;
 
         StringBuilder builder = new StringBuilder("IMCEA");
-        builder.append(addrType.toUpperCase()).append("-");
+        builder.append(addrType.toUpperCase(Locale.ROOT)).append("-");
 
         for (int i = 0; i < address.length(); i++) {
             char chr = address.charAt(i);
@@ -448,7 +490,9 @@ public final class EmlSerializer {
                 builder.append(String.format("_x%04X_", (int) chr));
             }
         }
-        builder.append("@example.com");
+        // ".invalid" (RFC 2606) marks the encapsulated address as synthesized — a real Exchange
+        // deployment would use its own accepted domain, which the source store does not record.
+        builder.append("@invalid");
         return builder.toString();
     }
 

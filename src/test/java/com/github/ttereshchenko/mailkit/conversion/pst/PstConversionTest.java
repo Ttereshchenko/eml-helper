@@ -585,6 +585,94 @@ class PstConversionTest {
         }
     }
 
+    // F17 regression: convert() used to wrap everything in a synthetic "Folder_290" directory
+    // (the unnamed root folder, NID 0x122); the root's children now land in the target directory.
+    @Test
+    void convertDoesNotCreateSyntheticRootWrapper() throws Exception {
+        Path path = Paths.get("src/test/resources/samples/pst/tika-testPST.pst");
+        Path tempDir = java.nio.file.Files.createTempDirectory("pst_no_wrapper");
+        try (var pstFile = new PstFile(path)) {
+            var indicator = new ProgressIndicatorBase();
+            var options = new PstToEmlConverter.Options(
+                    PstToEmlConverter.DuplicateHandling.OVERWRITE,
+                    20,
+                    false,
+                    true,
+                    Message.AddressPreference.PREFER_SMTP,
+                    false,
+                    false,
+                    64L * 1024 * 1024);
+            var stats = PstToEmlConverter.convert(pstFile, tempDir, options, indicator, ConversionLog.NOOP);
+            org.junit.jupiter.api.Assertions.assertTrue(stats.converted() > 0, "convert should export messages");
+
+            java.util.List<String> topLevel;
+            try (var stream = java.nio.file.Files.list(tempDir)) {
+                topLevel = stream.map(entry -> entry.getFileName().toString()).toList();
+            }
+            org.junit.jupiter.api.Assertions.assertFalse(
+                    topLevel.stream().anyMatch(name -> name.matches("Folder_\\d+")),
+                    "synthetic root wrapper must be gone: " + topLevel);
+            // The root's real children (tika-testPST's is the French "Début du fichier de données
+            // Outlook") sit directly at the top level.
+            org.junit.jupiter.api.Assertions.assertFalse(
+                    topLevel.isEmpty(), "the root's real children belong at the top level");
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
+    // F2 regression: exported appointments used to carry METHOD:REQUEST with no ATTENDEE — invalid
+    // iTIP that strict clients refuse to render. A plain appointment must be PUBLISHed, with the
+    // Content-Type method parameter matching the document.
+    @Test
+    void appointmentInviteIsPublishedNotRequested() throws Exception {
+        Path path = Paths.get("src/test/resources/samples/pst/dist-list.pst");
+        Path tempDir = java.nio.file.Files.createTempDirectory("pst_publish");
+        try (var pstFile = new PstFile(path)) {
+            var indicator = new ProgressIndicatorBase();
+            var options = new PstToEmlConverter.Options(
+                    PstToEmlConverter.DuplicateHandling.OVERWRITE,
+                    50,
+                    false,
+                    true,
+                    Message.AddressPreference.PREFER_SMTP,
+                    false,
+                    false,
+                    64L * 1024 * 1024);
+            PstToEmlConverter.convert(pstFile, tempDir, options, indicator, ConversionLog.NOOP);
+
+            String inviteEml = null;
+            try (var stream = java.nio.file.Files.walk(tempDir)) {
+                for (Path eml : stream.filter(entry -> entry.toString().endsWith(".eml"))
+                        .toList()) {
+                    String content = java.nio.file.Files.readString(eml);
+                    if (content.contains("invite.ics")) {
+                        inviteEml = content;
+                        break;
+                    }
+                }
+            }
+            assertNotNull(inviteEml, "expected an exported appointment with an invite");
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    inviteEml.contains("text/calendar; charset=UTF-8; method=PUBLISH"), inviteEml);
+
+            var matcher = java.util.regex.Pattern.compile("(?is)text/calendar.*?\\r\\n\\r\\n(.*?)\\r\\n--")
+                    .matcher(inviteEml);
+            org.junit.jupiter.api.Assertions.assertTrue(matcher.find(), inviteEml);
+            String ics = new String(
+                    java.util.Base64.getMimeDecoder().decode(matcher.group(1)),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            org.junit.jupiter.api.Assertions.assertTrue(ics.contains("METHOD:PUBLISH"), ics);
+            org.junit.jupiter.api.Assertions.assertTrue(ics.contains("DTSTART:"), ics);
+            for (var line : ics.split("\r\n")) {
+                org.junit.jupiter.api.Assertions.assertFalse(
+                        line.startsWith("ATTENDEE"), "PUBLISH must not carry attendees: " + ics);
+            }
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
     private static void deleteRecursively(Path dir) throws Exception {
         try (var stream = java.nio.file.Files.walk(dir)) {
             stream.sorted(java.util.Comparator.reverseOrder()).map(Path::toFile).forEach(java.io.File::delete);

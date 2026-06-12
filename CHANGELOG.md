@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed
+
+- PST/OST conversion no longer wraps everything in a synthetic `Folder_290` directory: the archive's real top-level folders now land directly in the chosen target directory.
+- A genuine RTF message body is now preserved as a `body.rtf` attachment (with its original bytes) instead of being emitted as a `text/rtf` body alternative that no mail client can render.
+
+### Fixed
+
+- Messages whose body is stored only as RTF-encapsulated HTML no longer leak RTF header text (font names like "Arial;", "Microsoft Exchange Server;") into the converted HTML body.
+- Calendar invites exported from PST/OST archives are now valid iCalendar scheduling messages: plain appointments are published (`METHOD:PUBLISH`) instead of posing as meeting requests, meeting requests/cancellations/responses carry their attendee list and the matching method, and an appointment with no stored start time no longer gets an invite fabricated at conversion time.
+- Calendar invite text with emoji or other non-Latin characters no longer risks corruption at line-fold points, and a quote or line break in an organizer/attendee name or address can no longer break or inject invite content.
+- Cyrillic, Greek, Hebrew, Turkish, Baltic, Thai, KOI8, DOS-codepage and Mac-codepage PST messages now convert with their actual character set instead of degrading to garbled windows-1252 text; Japanese/Korean/Chinese text now uses the exact Windows codepage variants Outlook wrote (windows-31j, windows-949, windows-950). Folder names and String8 properties now honour the message codepage separately from the HTML body's internet codepage.
+- The spam-confidence header (`X-MS-Exchange-Organization-SCL`) is now written whenever the archive stores one; it used to vanish unless a Message-ID happened to be synthesized at the same time.
+- Exported messages keep their conversation threading: `In-Reply-To` and `References` are written from the archive when the original transport headers are missing, along with `Importance`/`X-Priority` and, for on-behalf-of messages, the correct `From:` (author) plus `Sender:` (actual sender) pair.
+- A message with an empty subject no longer gains a fabricated "No Subject" header in the converted EML (the filename fallback is unchanged).
+- Synthesized addresses for Exchange-only correspondents now end in the reserved `.invalid` domain instead of `@example.com`, so they are recognizable and can never route.
+- Plain-text bodies with classic-Mac (CR-only) line endings no longer have their lines joined together, and leading/trailing whitespace in message bodies survives conversion instead of being trimmed away.
+- Attachments marked hidden in Outlook (typical for inline cid-referenced images) are now correctly grouped with the message body as inline parts.
+- A stored Message-ID without angle brackets is now wrapped in them as RFC 5322 requires.
+
 ## 1.2.0 - 2026-06-10
 
 ### Added

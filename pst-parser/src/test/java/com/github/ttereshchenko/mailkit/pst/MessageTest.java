@@ -1,6 +1,8 @@
 package com.github.ttereshchenko.mailkit.pst;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -8,6 +10,84 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class MessageTest {
+
+    // F1 regression: the RTF header groups (fonttbl/colortbl and non-htmltag {\*\…} destinations)
+    // precede the first \htmlrtf toggle in real Outlook encapsulation; their plain text used to be
+    // appended to the extracted HTML ("Arial;", "Microsoft Exchange Server;", …).
+    @Test
+    void rtfHeaderGroupsDoNotLeakIntoExtractedHtml() {
+        String rtf = "{\\rtf1\\ansi\\ansicpg1252\\fromhtml1 \\deff0{\\fonttbl\n"
+                + "{\\f0\\fswiss\\fcharset0 Arial;}\n"
+                + "{\\f1\\fmodern Courier New;}}\n"
+                + "{\\colortbl\\red0\\green0\\blue0;\\red0\\green0\\blue255;}\n"
+                + "{\\*\\generator Microsoft Exchange Server;}\n"
+                + "{\\*\\formatConverter converted from html;}\n"
+                + "\\uc1\\pard\\plain\\deftab360\n"
+                + "{\\*\\htmltag19 <html>}\n"
+                + "{\\*\\htmltag50 <body>}\n"
+                + "{\\*\\htmltag96 <p>}\n"
+                + "Hello World\\htmlrtf \\par \\htmlrtf0\n"
+                + "{\\*\\htmltag104 </p>}\n"
+                + "{\\*\\htmltag58 </body>}\n"
+                + "{\\*\\htmltag27 </html>}}";
+
+        String html = Message.extractHtmlFromRtf(rtf, "windows-1252");
+
+        assertTrue(html.startsWith("<html>"), "header text must not precede the markup: " + html);
+        assertFalse(html.contains("Arial"), "fonttbl content leaked: " + html);
+        assertFalse(html.contains("Courier New"), "fonttbl content leaked: " + html);
+        assertFalse(html.contains("Microsoft Exchange Server"), "{\\*\\generator} content leaked: " + html);
+        assertFalse(html.contains("converted from html"), "{\\*\\formatConverter} content leaked: " + html);
+        assertTrue(html.contains("<p>Hello World"), "renderable text must survive: " + html);
+    }
+
+    // The "uc" control word declares how many fallback characters follow each unicode escape; they
+    // are alternate representations of the same character and must be skipped, not emitted.
+    @Test
+    void ucControlWordSkipsFallbackCharacters() {
+        String rtf = "{\\rtf1 \\uc2 \\htmlrtf0 <span>\\u8364AB</span>}";
+        assertEquals("<span>" + (char) 8364 + "</span>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    // The RTF's own "ansicpg" control word governs its \'hh escapes and beats the message-level
+    // charset: 0xCF is П in windows-1251 but Ï under the (wrong) windows-1252 the caller passes.
+    @Test
+    void ansiCpgControlWordOverridesCallerCharset() {
+        String rtf = "{\\rtf1\\ansi\\ansicpg1251 \\htmlrtf0 <p>\\'cf</p>}";
+        assertEquals("<p>П</p>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    // F13: PidTagSubject's 0x01 prefix marker ([MS-PST] §2.5.3.1.1) is stripped explicitly rather
+    // than as a side effect of trimming every string property.
+    @Test
+    void stripsSubjectPrefixMarker() {
+        assertEquals("RE: hello", Message.stripSubjectPrefixMarker("\u0001\u0005RE: hello"));
+        assertEquals("plain subject", Message.stripSubjectPrefixMarker("plain subject"));
+        assertEquals("", Message.stripSubjectPrefixMarker("\u0001"));
+        assertEquals("", Message.stripSubjectPrefixMarker(""));
+    }
+
+    // F9: the on-behalf-of (sent-representing) address resolves like the sender — cached SMTP
+    // first, then the legacy DN encapsulated as a recognizable IMCEA address at ".invalid".
+    @Test
+    void resolvesSentRepresentingEmail() {
+        var props = new HashMap<Integer, Object>();
+        assertEquals("", Message.resolveSentRepresentingEmail(props::get, Message.AddressPreference.PREFER_SMTP));
+
+        props.put(MapiProperties.PR_SENT_REPRESENTING_ADDRTYPE_W, "EX");
+        props.put(MapiProperties.PR_SENT_REPRESENTING_EMAIL_ADDRESS_W, "/O=ORG/CN=author");
+        assertEquals(
+                "IMCEAEX-_O_x003D_ORG_CN_x003D_author@invalid",
+                Message.resolveSentRepresentingEmail(props::get, Message.AddressPreference.PREFER_SMTP));
+
+        props.put(MapiProperties.PR_SENT_REPRESENTING_SMTP_ADDRESS_W, "author@example.com");
+        assertEquals(
+                "author@example.com",
+                Message.resolveSentRepresentingEmail(props::get, Message.AddressPreference.PREFER_SMTP));
+        assertEquals(
+                "/O=ORG/CN=author",
+                Message.resolveSentRepresentingEmail(props::get, Message.AddressPreference.PREFER_LEGACY_DN));
+    }
 
     @Test
     void testExtractHtmlFromRtfDecoding() {
@@ -43,7 +123,7 @@ class MessageTest {
         assertEquals("Test User", recipients.get(0).name);
         // EX recipient with no cached SMTP falls back to the legacyDN rather than being dropped.
         assertEquals(
-                "IMCEAEX-_O_x003D_EXCHANGELABS_OU_x003D__x002E__x002E__x002E__x0020__x0028_FYDIBOHF23SPDLT_x0029__CN_x003D__x002E__x002E__x002E_@example.com",
+                "IMCEAEX-_O_x003D_EXCHANGELABS_OU_x003D__x002E__x002E__x002E__x0020__x0028_FYDIBOHF23SPDLT_x0029__CN_x003D__x002E__x002E__x002E_@invalid",
                 recipients.get(0).email);
 
         // Native SMTP recipient: PR_EMAIL_ADDRESS already holds a routable address.
@@ -84,7 +164,7 @@ class MessageTest {
                 MapiProperties.PR_SENDER_EMAIL_ADDRESS_W,
                 "/O=EXCHANGELABS/OU=... (FYDIBOHF23SPDLT)/CN=sender"); // PR_SENDER_EMAIL_ADDRESS
         assertEquals(
-                "IMCEAEX-_O_x003D_EXCHANGELABS_OU_x003D__x002E__x002E__x002E__x0020__x0028_FYDIBOHF23SPDLT_x0029__CN_x003D_sender@example.com",
+                "IMCEAEX-_O_x003D_EXCHANGELABS_OU_x003D__x002E__x002E__x002E__x0020__x0028_FYDIBOHF23SPDLT_x0029__CN_x003D_sender@invalid",
                 Message.resolveSenderEmail(props::get));
 
         // Cached PR_SENDER_SMTP_ADDRESS wins over the legacyDN.
@@ -103,7 +183,7 @@ class MessageTest {
                 MapiProperties.PR_SENT_REPRESENTING_EMAIL_ADDRESS_W,
                 "/O=EXCHANGELABS/OU=... /CN=onbehalf"); // PR_SENT_REPRESENTING_EMAIL_ADDRESS
         assertEquals(
-                "IMCEAEX-_O_x003D_EXCHANGELABS_OU_x003D__x002E__x002E__x002E__x0020__CN_x003D_onbehalf@example.com",
+                "IMCEAEX-_O_x003D_EXCHANGELABS_OU_x003D__x002E__x002E__x002E__x0020__CN_x003D_onbehalf@invalid",
                 Message.resolveSenderEmail(repProps::get));
 
         // Nothing present -> empty string.

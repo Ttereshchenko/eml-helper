@@ -227,7 +227,19 @@ class TableContext {
                         default -> rowProperties.put(column.tagId(), value);
                     }
                 }
-                case 2 -> rowProperties.put(column.tagId(), Short.toUnsignedInt(buffer.getShort()));
+                case 2 -> {
+                    short shortValue = buffer.getShort();
+                    // PT_SHORT (i2) is signed, matching the PC path; other 2-byte cells (e.g. the
+                    // ANSI row-index) keep the raw unsigned interpretation.
+                    rowProperties.put(
+                            column.tagId(),
+                            column.valueType() == 0x0002 ? (int) shortValue : Short.toUnsignedInt(shortValue));
+                }
+                case 16 -> { // PT_CLSID — surfaced as the raw 16 bytes, matching the PC path
+                    var clsid = new byte[16];
+                    buffer.get(clsid);
+                    rowProperties.put(column.tagId(), clsid);
+                }
                 case 1 -> {
                     int value = Byte.toUnsignedInt(buffer.get());
                     rowProperties.put(column.tagId(), column.valueType() == 0x000B ? (Object) (value != 0) : value);
@@ -247,14 +259,17 @@ class TableContext {
             case 0x001F -> { // PT_UNICODE
                 byte[] data = value != 0 ? resolveData(value) : null;
                 if (data != null && data.length > 0) {
-                    rowProperties.put(column.tagId(), new String(data, StandardCharsets.UTF_16LE).trim());
+                    rowProperties.put(
+                            column.tagId(),
+                            PropertyContext.stripTrailingNuls(new String(data, StandardCharsets.UTF_16LE)));
                 }
             }
             case 0x001E -> { // PT_STRING8
                 byte[] data = value != 0 ? resolveData(value) : null;
                 if (data != null && data.length > 0) {
                     var effectiveCharset = charset != null ? charset : StandardCharsets.ISO_8859_1;
-                    rowProperties.put(column.tagId(), new String(data, effectiveCharset).trim());
+                    rowProperties.put(
+                            column.tagId(), PropertyContext.stripTrailingNuls(new String(data, effectiveCharset)));
                 }
             }
             case 0x0102 -> { // PT_BINARY

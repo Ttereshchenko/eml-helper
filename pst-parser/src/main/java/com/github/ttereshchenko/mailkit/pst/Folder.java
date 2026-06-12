@@ -50,7 +50,7 @@ public class Folder {
 
             byte[] data = nodeDatabase.readNodeData(node.dataBid());
             this.propertyContext = new PropertyContext(data, nodeDatabase, node);
-            this.propertyContext.decodeString8(Charset.forName("windows-1252"));
+            this.propertyContext.decodeString8(folderCharset());
 
             if (propertyContext.getProperty(MapiProperties.PR_DISPLAY_NAME_W) instanceof String name) {
                 this.displayName = name;
@@ -61,6 +61,18 @@ public class Folder {
             loadError = exception;
             LOG.log(System.Logger.Level.DEBUG, () -> "Failed to load properties for folder node " + nid, exception);
         }
+    }
+
+    /**
+     * The charset for this folder's PT_STRING8 properties (display name): the folder's own code-page
+     * properties when present, defaulting to windows-1252 (folders rarely carry one).
+     */
+    private Charset folderCharset() {
+        Object codePage = propertyContext.getProperty(MapiProperties.PR_MESSAGE_CODEPAGE);
+        if (codePage == null) {
+            codePage = propertyContext.getProperty(MapiProperties.PR_INTERNET_CPID);
+        }
+        return codePage instanceof Number number ? CodePages.charsetFor(number.intValue()) : CodePages.defaultCharset();
     }
 
     /** This folder's node id. */
