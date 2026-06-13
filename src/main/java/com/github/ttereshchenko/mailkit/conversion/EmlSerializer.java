@@ -2,6 +2,8 @@ package com.github.ttereshchenko.mailkit.conversion;
 
 import java.io.FilterWriter;
 import java.io.IOException;
+import java.io.StringWriter;
+import java.io.UncheckedIOException;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -34,6 +36,10 @@ public final class EmlSerializer {
     private String messageId;
     private String transportHeaders;
     private Integer scl;
+    private String rawEntityContentType;
+    private String rawEntityTransferEncoding;
+    private String rawEntityDisposition;
+    private String rawEntityBody;
 
     public void setScl(Integer scl) {
         this.scl = scl;
@@ -115,6 +121,36 @@ public final class EmlSerializer {
         }
     }
 
+    /**
+     * Replaces the serializer-built MIME structure with a verbatim top-level entity. Used to hoist a
+     * stored S/MIME envelope ([MS-OXOSMIME] §2.2.1: the message's single attachment holds the
+     * complete original MIME content): the supplied Content-Type / Content-Transfer-Encoding /
+     * Content-Disposition become the message's own structural headers and {@code body} is written
+     * unmodified after them. Bodies and attachments added through the regular API are ignored while
+     * a raw entity is set; pass {@code null} header values to omit the respective header.
+     */
+    public void setRawEntity(String contentType, String transferEncoding, String disposition, String body) {
+        this.rawEntityContentType = contentType;
+        this.rawEntityTransferEncoding = transferEncoding;
+        this.rawEntityDisposition = disposition;
+        this.rawEntityBody = body;
+    }
+
+    /** True when any text/html body references the given Content-ID through a {@code cid:} URL. */
+    private boolean htmlBodyReferences(String contentId) {
+        if (contentId == null || contentId.isBlank()) {
+            return false;
+        }
+        var reference = "cid:" + contentId.trim().toLowerCase(Locale.ROOT);
+        for (var body : bodies) {
+            if (body.contentType.contains("text/html")
+                    && body.text.toLowerCase(Locale.ROOT).contains(reference)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void writeTo(Writer writer) throws IOException {
         // Route all output through a newline-tracking wrapper so the multipart boundary delimiter can
         // own its leading CRLF (RFC 2046) without doubling the trailing CRLF that parts already emit.
@@ -132,15 +168,26 @@ public final class EmlSerializer {
         // missing (RFC 5322 §3.6) instead of silently dropping our resolved From/To/Subject/Date.
         var synthesized = new ArrayList<String>();
 
+        var transmitterPromoted = false;
         if (!present.contains("from")) {
             var from = formatAddress(senderName, senderEmail);
-            if (from != null && !from.isBlank()) {
-                synthesized.add("From");
-                appendHeader(out, "From", from);
+            if (from.isBlank()) {
+                // No author at all: promote the transmitter instead of emitting Sender without From
+                // (RFC 5322 §3.6.2 defines Sender only relative to a present From).
+                from = formatAddress(transmitterName, transmitterEmail);
+                transmitterPromoted = !from.isBlank();
             }
+            if (from.isBlank()) {
+                // RFC 5322 §3.6.2 makes From mandatory. Drafts and note-like items (tasks, sticky
+                // notes) often store no sender at all; the explicit placeholder keeps the message
+                // parseable and unmistakably marks the value as synthesized.
+                from = "<undisclosed@invalid>";
+            }
+            synthesized.add("From");
+            appendHeader(out, "From", from);
         }
 
-        if (!present.contains("sender")) {
+        if (!present.contains("sender") && !transmitterPromoted) {
             var transmitter = formatAddress(transmitterName, transmitterEmail);
             if (!transmitter.isBlank()) {
                 synthesized.add("Sender");
@@ -223,6 +270,17 @@ public final class EmlSerializer {
         // so honoring `present` here used to leave the generated message with no MIME-Version at all.
         out.append("MIME-Version: 1.0").append(CRLF);
 
+        if (rawEntityBody != null) {
+            // Raw-entity mode (see setRawEntity): the stored entity's own structural headers replace
+            // the serializer-built MIME tree, and its body is emitted verbatim.
+            appendHeader(out, "Content-Type", rawEntityContentType);
+            appendHeader(out, "Content-Transfer-Encoding", rawEntityTransferEncoding);
+            appendHeader(out, "Content-Disposition", rawEntityDisposition);
+            out.append(CRLF);
+            out.append(rawEntityBody);
+            return;
+        }
+
         bodies.sort((body1, body2) -> {
             int rank1 =
                     body1.contentType.contains("text/plain") ? 1 : (body1.contentType.contains("text/html") ? 3 : 2);
@@ -231,16 +289,20 @@ public final class EmlSerializer {
             return Integer.compare(rank1, rank2);
         });
 
-        // Inline parts (Content-ID / disposition inline) belong with the body in a multipart/related
-        // subtree (RFC 2387) so that cid: references resolve; everything else is a mixed attachment.
+        // Inline parts belong with the body in a multipart/related subtree (RFC 2387) so that cid:
+        // references resolve — but only when an HTML body actually references their Content-ID.
+        // Outlook routinely assigns Content-IDs to attachments no body refers to, and an
+        // unreferenced "inline" part inside multipart/related is neither rendered nor listed by
+        // common clients (perceived data loss). Anything unreferenced is therefore emitted as a
+        // regular mixed attachment (keeping its Content-ID), with its disposition demoted from
+        // inline to attachment so it stays visible.
         var relatedParts = new ArrayList<Attachment>();
         var mixedParts = new ArrayList<Attachment>();
         for (var part : attachments) {
-            if (part.isInline()
-                    || (part.contentId() != null && !part.contentId().isBlank())) {
+            if (htmlBodyReferences(part.contentId())) {
                 relatedParts.add(part);
             } else {
-                mixedParts.add(part);
+                mixedParts.add(part.isInline() ? part.asRegularAttachment() : part);
             }
         }
 
@@ -285,7 +347,7 @@ public final class EmlSerializer {
             writer.append("Content-Type: ").append(body.contentType).append(CRLF);
             writer.append("Content-Transfer-Encoding: quoted-printable").append(CRLF);
             writer.append(CRLF);
-            writer.append(quotedPrintableEncode(body.text));
+            writer.append(quotedPrintableEncode(bodyTextForOutput(body)));
         } else {
             var altBoundary = uniqueBoundary("MAILKIT_ALT_");
             writer.append("Content-Type: multipart/alternative; boundary=\"")
@@ -298,7 +360,7 @@ public final class EmlSerializer {
                 writer.append("Content-Type: ").append(body.contentType).append(CRLF);
                 writer.append("Content-Transfer-Encoding: quoted-printable").append(CRLF);
                 writer.append(CRLF);
-                writer.append(quotedPrintableEncode(body.text));
+                writer.append(quotedPrintableEncode(bodyTextForOutput(body)));
             }
             appendBoundary(writer, altBoundary, true);
         }
@@ -689,7 +751,37 @@ public final class EmlSerializer {
                 builder.append(character);
             }
         }
-        return builder.toString();
+        var token = builder.toString();
+        if (!token.isEmpty() && token.indexOf('@') < 0) {
+            // RFC 5322 §3.6.4 / RFC 2392: a Content-ID is a msg-id and needs an id-right half. The
+            // synthetic domain keeps the value (and its cid: URL form) conformant; matching cid:
+            // references inside the HTML bodies are rewritten by bodyTextForOutput.
+            token = token + "@mailkit.invalid";
+        }
+        return token;
+    }
+
+    /**
+     * The body text to emit: for HTML bodies, {@code cid:} references whose Content-ID was rewritten
+     * by {@link #sanitizeContentId} (a missing {@code @}-domain) are retargeted so they keep
+     * resolving against the emitted {@code Content-ID} headers.
+     */
+    private String bodyTextForOutput(Body body) {
+        if (!body.contentType.contains("text/html")) {
+            return body.text;
+        }
+        var text = body.text;
+        for (var part : attachments) {
+            var original = part.contentId();
+            if (original == null || original.isBlank()) {
+                continue;
+            }
+            var cleaned = sanitizeContentId(original);
+            if (!cleaned.equals(original.trim())) {
+                text = text.replace("cid:" + original.trim(), "cid:" + cleaned);
+            }
+        }
+        return text;
     }
 
     private static void writeFilteredTransportHeaders(Writer writer, String transportHeaders, Set<String> present)
@@ -749,8 +841,12 @@ public final class EmlSerializer {
     }
 
     private static boolean isFilteredHeader(String name) {
+        // All four describe the original top-level entity's structure, which this serializer
+        // re-creates (or, in raw-entity mode, re-emits from the stored entity itself); passing any
+        // of them through verbatim would duplicate or contradict the generated structure.
         return name.equalsIgnoreCase("Content-Type")
                 || name.equalsIgnoreCase("Content-Transfer-Encoding")
+                || name.equalsIgnoreCase("Content-Disposition")
                 || name.equalsIgnoreCase("MIME-Version");
     }
 
@@ -932,6 +1028,12 @@ public final class EmlSerializer {
             String contentId,
             String contentLocation,
             boolean isInline) {
+
+        /** A copy demoted from inline to a regular attachment (Content-ID kept); see writeTo. */
+        Attachment asRegularAttachment() {
+            return new Attachment(filename, mimeType, data, nestedEml, contentId, contentLocation, false);
+        }
+
         String headers() {
             var headers = new StringBuilder();
             // mimeType / contentId / contentLocation come straight from attacker-controlled PST string
@@ -952,7 +1054,12 @@ public final class EmlSerializer {
             }
             headers.append(CRLF);
             if (nestedEml != null) {
-                headers.append("Content-Transfer-Encoding: 8bit").append(CRLF);
+                // RFC 2046 §5.2.1 allows only 7bit/8bit/binary on message/rfc822 (no base64/QP).
+                // 8bit still carries the RFC 5322 §2.1.1 998-octet line limit, so a nested message
+                // containing a longer line is declared binary instead of emitting non-conformant 8bit.
+                headers.append("Content-Transfer-Encoding: ")
+                        .append(hasLineOverLimit(nestedEml) ? "binary" : "8bit")
+                        .append(CRLF);
             } else {
                 headers.append("Content-Transfer-Encoding: base64").append(CRLF);
             }
@@ -974,11 +1081,36 @@ public final class EmlSerializer {
                 }
             }
             if (contentLocation != null && !contentLocation.isBlank()) {
-                headers.append("Content-Location: ")
-                        .append(stripLineBreaks(contentLocation).trim())
-                        .append(CRLF);
+                // Routed through appendHeader (unlike the short sibling headers above) because a
+                // stored Content-Location can be arbitrarily long and must fold within the RFC 5322
+                // §2.1.1 line limit.
+                var locationWriter = new StringWriter();
+                try {
+                    appendHeader(
+                            locationWriter,
+                            "Content-Location",
+                            stripLineBreaks(contentLocation).trim());
+                } catch (IOException impossible) {
+                    throw new UncheckedIOException(impossible);
+                }
+                headers.append(locationWriter);
             }
             return headers.toString();
+        }
+
+        /** True when any line exceeds the RFC 5322 §2.1.1 hard limit of 998 octets (excluding CRLF). */
+        private static boolean hasLineOverLimit(String content) {
+            var lineStart = 0;
+            for (var index = 0; index < content.length(); index++) {
+                var character = content.charAt(index);
+                if (character == '\n' || character == '\r') {
+                    if (index - lineStart > MAX_HEADER_LINE_LENGTH) {
+                        return true;
+                    }
+                    lineStart = index + 1;
+                }
+            }
+            return content.length() - lineStart > MAX_HEADER_LINE_LENGTH;
         }
 
         String encodedBody() {

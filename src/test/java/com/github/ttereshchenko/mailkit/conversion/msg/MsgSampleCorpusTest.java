@@ -161,13 +161,22 @@ class MsgSampleCorpusTest {
         }
     }
 
-    // R5: logsat's S/MIME attachment stores PR_ATTACH_MIME_TAG "multipart/signed"; emitting it raw
-    // with base64 produced a structurally invalid MIME part (no boundary, forbidden CTE).
+    // N2: an IPM.Note.SMIME.MultipartSigned message stores the complete original MIME entity in its
+    // single attachment ([MS-OXOSMIME] §2.2.1). It is hoisted to the top level — original
+    // Content-Type (protocol/micalg/boundary) and signature part intact — instead of being buried
+    // as an unverifiable application/octet-stream attachment.
     @Test
-    void compositeMimeTagAttachmentDowngradesToOctetStream() throws Exception {
+    void clearSignedSmimeEntityIsHoistedToTopLevel() throws Exception {
         var eml = convert("logsat.com_signatures_valid.msg");
-        assertFalse(eml.contains("Content-Type: multipart/signed"), headersOf(eml));
-        assertTrue(eml.contains("Content-Type: application/octet-stream"), headersOf(eml));
+        var headers = unfold(headersOf(eml));
+        assertTrue(
+                headers.contains("Content-Type: multipart/signed;"
+                        + " protocol=\"application/x-pkcs7-signature\"; micalg=SHA1;"
+                        + " boundary=\"----=_NextPart_000_00B1_01C5E184.F3AFBB00\""),
+                headers);
+        assertTrue(bodyOf(eml).contains("------=_NextPart_000_00B1_01C5E184.F3AFBB00"), "original boundary kept");
+        assertTrue(bodyOf(eml).contains("Content-Type: application/x-pkcs7-signature;"), "signature part kept");
+        assertFalse(eml.contains("application/octet-stream"), headersOf(eml));
     }
 
     // R1/R2: PidTagContentFilterSpamConfidenceLevel is stored on this real-world sample; the dead
@@ -177,6 +186,162 @@ class MsgSampleCorpusTest {
     void spamConfidenceLevelExportedFromRealSample() throws Exception {
         var eml = convert("bug66335.msg");
         assertTrue(eml.contains("X-MS-Exchange-Organization-SCL: 1"), headersOf(eml));
+    }
+
+    // N2: an opaque IPM.Note.SMIME envelope (raw PKCS#7 smime.p7m) becomes the message's own
+    // application/pkcs7-mime entity instead of an unverifiable octet-stream attachment. Fixture
+    // source: bbottema/outlook-message-parser (Apache-2.0).
+    @Test
+    void opaqueSmimeEnvelopeBecomesTopLevelEntity() throws Exception {
+        var eml = convert("bbottema_smime_encrypted.msg");
+        var headers = unfold(headersOf(eml));
+        assertTrue(headers.contains("Content-Type: application/pkcs7-mime; name=\"smime.p7m\""), headers);
+        assertTrue(headers.contains("Content-Transfer-Encoding: base64"), headers);
+        assertTrue(headers.contains("Content-Disposition: attachment; filename=\"smime.p7m\""), headers);
+        assertFalse(eml.contains("application/octet-stream"), headers);
+        // The stored envelope's leading BER bytes 30 80 06 09 2A ... base64 to the classic prefix.
+        assertTrue(bodyOf(eml).startsWith("MIAGCSqG"), bodyOf(eml).substring(0, 40));
+    }
+
+    // N2: a second, modern clear-signed sample (Thunderbird, sha-512) keeps its envelope verbatim.
+    @Test
+    void modernClearSignedSmimeEntityIsHoisted() throws Exception {
+        var eml = convert("bbottema_smime_signed.msg");
+        var headers = unfold(headersOf(eml));
+        assertTrue(
+                headers.contains("Content-Type: multipart/signed; protocol=\"application/pkcs7-signature\";"
+                        + " micalg=sha-512; boundary=\"------------ms040609000407030007040103\""),
+                headers);
+        assertFalse(eml.contains("application/octet-stream"), headers);
+    }
+
+    // N6: appointment start/end/location are readable through POI's NameIdChunks named-property
+    // mapping, so the invite carries the real values instead of being dropped.
+    @Test
+    void appointmentExportsCalendarInvite() throws Exception {
+        var eml = convert("msgClassAppointment.msg");
+        var invite = decodedBase64Attachment(eml, "invite.ics");
+        assertTrue(invite.contains("DTSTART:20170228T183000Z"), invite);
+        assertTrue(invite.contains("DTEND:20170228T190000Z"), invite);
+        assertTrue(invite.contains("LOCATION:under lazy dog"), invite);
+        assertTrue(invite.contains("SUMMARY:Quick brown fox"), invite);
+    }
+
+    // N6: a recurring appointment exports its series (PidLidAppointmentRecur -> RRULE). Outlook
+    // stores "daily every weekday" as a weekly BYDAY pattern ([MS-OXOCAL] §2.2.1.44.1), and the
+    // all-day flag turns DTSTART into a VALUE=DATE. Fixture: HiraokaHyperTools/msgreader (Apache-2.0).
+    @Test
+    void recurringAppointmentInviteCarriesRecurrenceRule() throws Exception {
+        var eml = convert("msgreader_A_daily_1.msg");
+        var invite = decodedBase64Attachment(eml, "invite.ics");
+        assertTrue(invite.contains("RRULE:FREQ=WEEKLY;INTERVAL=1;WKST=SU;BYDAY=MO,TU,WE,TH,FR"), invite);
+        assertTrue(invite.contains("DTSTART;VALUE=DATE:20221211"), invite);
+    }
+
+    // N7: contacts gain a contact.vcf and tasks a task.ics VTODO — parity with the PST pipeline.
+    @Test
+    void contactExportsVcard() throws Exception {
+        var eml = convert("msgClassContact.msg");
+        var card = decodedBase64Attachment(eml, "contact.vcf");
+        assertTrue(card.contains("FN:Dr Quick Brown Fox Jr"), card);
+        assertTrue(card.contains("EMAIL;TYPE=internet:quickbrown@gmail.com"), card);
+        assertTrue(card.contains("TEL;TYPE=work:(123) 456-7890"), card);
+        assertTrue(card.contains("ORG:Fence Co"), card);
+    }
+
+    @Test
+    void taskExportsVtodo() throws Exception {
+        var eml = convert("msgClassTask.msg");
+        var todo = decodedBase64Attachment(eml, "task.ics");
+        assertTrue(todo.contains("BEGIN:VTODO"), todo);
+        assertTrue(todo.contains("DTSTART:20170219T000000Z"), todo);
+        assertTrue(todo.contains("DUE:20170310T000000Z"), todo);
+        assertTrue(todo.contains("SUMMARY:Must jump over the lazy dog"), todo);
+    }
+
+    // N3/N5/N10 on a real store: keywords.msg carries no transport headers, so every one of these
+    // headers exists only because the MAPI properties are exported — and the mandatory From falls
+    // back to the explicit placeholder instead of being omitted.
+    @Test
+    void mapiOnlyHeadersExportedFromRealSample() throws Exception {
+        var eml = convert("keywords.msg");
+        var headers = unfold(headersOf(eml));
+        assertTrue(headers.contains("From: <undisclosed@invalid>"), headers);
+        assertTrue(headers.contains("Thread-Topic: Test Keywords"), headers);
+        assertTrue(headers.contains("Thread-Index: "), headers);
+        assertTrue(headers.contains("Keywords: TODO, Currently Important, Currently To Do, Test"), headers);
+    }
+
+    // N3: every parseable corpus sample must emit exactly one From header (RFC 5322 §3.6.2).
+    @Test
+    void everyConvertedSampleHasExactlyOneFromHeader() throws Exception {
+        try (var files = Files.list(SAMPLES)) {
+            var samples = files.filter(path -> path.getFileName().toString().endsWith(".msg"))
+                    .sorted()
+                    .toList();
+            for (var sample : samples) {
+                var out = new ByteArrayOutputStream();
+                try {
+                    MsgToEmlConverter.convert(sample, out, ConversionLog.NOOP);
+                } catch (ConversionException expected) {
+                    continue; // corrupt fuzzer samples are covered elsewhere
+                }
+                var headers = unfold(headersOf(out.toString(StandardCharsets.UTF_8)));
+                var fromCount =
+                        Pattern.compile("(?m)^From:").matcher(headers).results().count();
+                assertTrue(fromCount == 1, sample + " emitted " + fromCount + " From headers:\r\n" + headers);
+            }
+        }
+    }
+
+    // Unicode-format CJK bodies survive the UTF-8 quoted-printable re-encoding. Fixture:
+    // HiraokaHyperTools/msgreader (Apache-2.0).
+    @Test
+    void unicodeCjkBodySurvives() throws Exception {
+        var eml = convert("msgreader_Hello_CJK.msg");
+        var body = bodyOf(eml).replace("=\r\n", ""); // undo quoted-printable soft wraps
+        assertTrue(body.contains("=E4=BD=A0=E5=A5=BD"), "Chinese 你好 lost: " + body);
+        assertTrue(body.contains("=E3=81=93=E3=82=93"), "Japanese こん lost: " + body);
+    }
+
+    // A legacy ANSI CP932 (Shift-JIS) message decodes through the codepage detection and re-encodes
+    // as RFC 2047 UTF-8 ("日本語 Non Un..." is the subject's first encoded-word chunk).
+    @Test
+    void ansiCp932SubjectDecodes() throws Exception {
+        var eml = convert("msgreader_nonUnicodeCP932.msg");
+        assertTrue(unfold(headersOf(eml)).contains("Subject: =?UTF-8?B?5pel5pys6KqeIE5vbiBVbg==?="), headersOf(eml));
+    }
+
+    // A real two-deep nested .msg recurses into message/rfc822 at both levels (the builder-based
+    // depth tests synthesize this; this locks it on a real Outlook artifact).
+    @Test
+    void realTwoLevelNestedMessagesRecurse() throws Exception {
+        var eml = convert("msgreader_msgInMsgInMsg.msg");
+        var occurrences = eml.split("Content-Type: message/rfc822", -1).length - 1;
+        assertTrue(occurrences >= 2, "expected two nested message/rfc822 levels, found " + occurrences);
+    }
+
+    // A never-sent draft (no submit/delivery times, no sender address) still gets the mandatory
+    // RFC 5322 headers, visibly flagged as synthesized.
+    @Test
+    void unsentDraftGetsMandatoryHeaders() throws Exception {
+        var eml = convert("bbottema_unsent_draft.msg");
+        var headers = unfold(headersOf(eml));
+        assertTrue(headers.contains("From: <undisclosed@invalid>"), headers);
+        assertTrue(headers.contains("Date: "), headers);
+        assertTrue(headers.contains("X-MailKit-Synthesized-Headers: From,"), headers);
+    }
+
+    /** Finds the named base64 attachment part and decodes its payload to UTF-8 text. */
+    private static String decodedBase64Attachment(String eml, String filename) {
+        var marker = "filename=\"" + filename + "\"";
+        var markerIndex = eml.indexOf(marker);
+        assertTrue(markerIndex >= 0, "attachment " + filename + " not found:\r\n" + headersOf(eml));
+        var payloadStart = eml.indexOf("\r\n\r\n", markerIndex) + 4;
+        var payloadEnd = eml.indexOf("\r\n--", payloadStart);
+        var base64 = eml.substring(payloadStart, payloadEnd < 0 ? eml.length() : payloadEnd)
+                .replace("\r\n", "");
+        return new String(Base64.getDecoder().decode(base64), StandardCharsets.UTF_8);
     }
 
     private static String unfold(String headers) {

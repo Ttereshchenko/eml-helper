@@ -47,6 +47,24 @@ public final class ICalendarGenerator {
             AppointmentRecurrence.Pattern recurrence) {}
 
     /**
+     * The iTIP method (RFC 5546) matching a MAPI calendar message class: meeting requests,
+     * cancellations and responses map to REQUEST/CANCEL/REPLY; a plain calendar item — or any
+     * meeting message without attendees — is published as-is.
+     */
+    public static String method(String messageClass, boolean hasAttendees) {
+        if (!hasAttendees || !messageClass.startsWith("IPM.Schedule.Meeting")) {
+            return "PUBLISH";
+        }
+        if (messageClass.startsWith("IPM.Schedule.Meeting.Canceled")) {
+            return "CANCEL";
+        }
+        if (messageClass.startsWith("IPM.Schedule.Meeting.Resp")) {
+            return "REPLY";
+        }
+        return "REQUEST";
+    }
+
+    /**
      * Builds a folded VCALENDAR/VEVENT document. {@code startTime} is expected to be non-null (a
      * caller that has no real start time should not emit an invite at all rather than fabricate
      * one); when it is null the DTSTART line is omitted. A null {@code endTime} omits DTEND.

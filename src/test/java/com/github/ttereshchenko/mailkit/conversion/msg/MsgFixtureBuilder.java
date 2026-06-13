@@ -21,11 +21,13 @@ final class MsgFixtureBuilder {
 
     private static final int RECIPIENT_TYPE_TO = 1;
     private static final int RECIPIENT_TYPE_CC = 2;
+    private static final int RECIPIENT_TYPE_BCC = 3;
 
     private static final int FLAG_READABLE_WRITABLE = 0x06;
     private static final int TYPE_UNICODE = 0x001F;
     private static final int TYPE_BINARY = 0x0102;
     private static final int TYPE_LONG = 0x0003;
+    private static final int TYPE_BOOLEAN = 0x000B;
     private static final int TYPE_SYSTIME = 0x0040;
 
     private static final int TAG_SUBJECT = (0x0037 << 16) | TYPE_UNICODE;
@@ -45,6 +47,16 @@ final class MsgFixtureBuilder {
     private static final int TAG_MESSAGE_CLASS = (0x001A << 16) | TYPE_UNICODE;
     private static final int TAG_TRANSPORT_HEADERS = (0x007D << 16) | TYPE_UNICODE;
     private static final int TAG_MESSAGE_DELIVERY_TIME = (0x0E06 << 16) | TYPE_SYSTIME;
+    private static final int TAG_SENT_REPRESENTING_NAME = (0x0042 << 16) | TYPE_UNICODE;
+    private static final int TAG_SENT_REPRESENTING_SMTP_ADDRESS = (0x5D02 << 16) | TYPE_UNICODE;
+    private static final int TAG_IMPORTANCE = (0x0017 << 16) | TYPE_LONG;
+    private static final int TAG_SENSITIVITY = (0x0036 << 16) | TYPE_LONG;
+    private static final int TAG_CONVERSATION_TOPIC = (0x0070 << 16) | TYPE_UNICODE;
+    private static final int TAG_CONVERSATION_INDEX = (0x0071 << 16) | TYPE_BINARY;
+    private static final int TAG_READ_RECEIPT_REQUESTED = (0x0029 << 16) | TYPE_BOOLEAN;
+    private static final int TAG_REPLY_RECIPIENT_ENTRIES = (0x004F << 16) | TYPE_BINARY;
+    private static final int TAG_REPLY_RECIPIENT_NAMES = (0x0050 << 16) | TYPE_UNICODE;
+    private static final int TAG_ATTACH_DISPLAY_NAME = (0x3001 << 16) | TYPE_UNICODE;
 
     private static final int TAG_RECIPIENT_DISPLAY_NAME = (0x3001 << 16) | TYPE_UNICODE;
     private static final int TAG_RECIPIENT_EMAIL_ADDRESS = (0x3003 << 16) | TYPE_UNICODE;
@@ -59,11 +71,13 @@ final class MsgFixtureBuilder {
 
     private static final int ATTACH_METHOD_BY_VALUE = 1;
     private static final int ATTACH_METHOD_EMBEDDED_MESSAGE = 5;
+    private static final int ATTACH_METHOD_OLE = 6;
 
     private final List<VarProperty> varProperties = new ArrayList<>();
     private final List<FixedProperty> fixedProperties = new ArrayList<>();
     private final List<MsgFixtureBuilder> recipientsTo = new ArrayList<>();
     private final List<MsgFixtureBuilder> recipientsCc = new ArrayList<>();
+    private final List<MsgFixtureBuilder> recipientsBcc = new ArrayList<>();
     private final List<AttachmentSpec> attachments = new ArrayList<>();
 
     private MsgFixtureBuilder() {}
@@ -168,6 +182,95 @@ final class MsgFixtureBuilder {
         return this;
     }
 
+    MsgFixtureBuilder recipientBcc(String name, String email) {
+        recipientsBcc.add(buildRecipient(name, email, RECIPIENT_TYPE_BCC));
+        return this;
+    }
+
+    /** PR_SENT_REPRESENTING_NAME + PidTagSentRepresentingSmtpAddress (0x5D02) — the author identity. */
+    MsgFixtureBuilder sentRepresenting(String name, String smtpAddress) {
+        if (name != null) {
+            setUnicode(TAG_SENT_REPRESENTING_NAME, name);
+        }
+        if (smtpAddress != null) {
+            setUnicode(TAG_SENT_REPRESENTING_SMTP_ADDRESS, smtpAddress);
+        }
+        return this;
+    }
+
+    /** PR_IMPORTANCE: 0 = low, 1 = normal, 2 = high. */
+    MsgFixtureBuilder importance(int value) {
+        fixedProperties.add(new FixedProperty(TAG_IMPORTANCE, longBytes(value)));
+        return this;
+    }
+
+    /** PR_SENSITIVITY: 0 = none, 1 = personal, 2 = private, 3 = company-confidential. */
+    MsgFixtureBuilder sensitivity(int value) {
+        fixedProperties.add(new FixedProperty(TAG_SENSITIVITY, longBytes(value)));
+        return this;
+    }
+
+    /** PR_CONVERSATION_TOPIC. */
+    MsgFixtureBuilder conversationTopic(String value) {
+        return setUnicode(TAG_CONVERSATION_TOPIC, value);
+    }
+
+    /** PR_CONVERSATION_INDEX. */
+    MsgFixtureBuilder conversationIndex(byte[] value) {
+        return setBinary(TAG_CONVERSATION_INDEX, value);
+    }
+
+    /** PR_READ_RECEIPT_REQUESTED = true. */
+    MsgFixtureBuilder readReceiptRequested() {
+        fixedProperties.add(new FixedProperty(TAG_READ_RECEIPT_REQUESTED, longBytes(1)));
+        return this;
+    }
+
+    /**
+     * Adds one Reply-To recipient: PR_REPLY_RECIPIENT_ENTRIES carries a one-entry [MS-OXCDATA]
+     * §2.3.3 FLATENTRYLIST with a Unicode one-off ENTRYID, PR_REPLY_RECIPIENT_NAMES the display name.
+     */
+    MsgFixtureBuilder replyTo(String name, String email) {
+        var entryId = oneOffEntryId(name, email);
+        var padding = (4 - ((4 + entryId.length) % 4)) % 4;
+        var list = ByteBuffer.allocate(8 + 4 + entryId.length + padding).order(ByteOrder.LITTLE_ENDIAN);
+        list.putInt(1); // cEntries
+        list.putInt(4 + entryId.length + padding); // cbEntries
+        list.putInt(entryId.length);
+        list.put(entryId);
+        setBinary(TAG_REPLY_RECIPIENT_ENTRIES, list.array());
+        return setUnicode(TAG_REPLY_RECIPIENT_NAMES, name);
+    }
+
+    /** A Unicode one-off ENTRYID ([MS-OXCDATA] §2.2.5.1): flags + provider UID + version/flags + strings. */
+    private static byte[] oneOffEntryId(String name, String email) {
+        var strings = (name + "\0SMTP\0" + email + "\0").getBytes(StandardCharsets.UTF_16LE);
+        var entry = ByteBuffer.allocate(24 + strings.length).order(ByteOrder.LITTLE_ENDIAN);
+        entry.putInt(0); // abFlags
+        entry.put(new byte[] {
+            (byte) 0x81,
+            0x2B,
+            0x1F,
+            (byte) 0xA4,
+            (byte) 0xBE,
+            (byte) 0xA3,
+            0x10,
+            0x19,
+            (byte) 0x9D,
+            0x6E,
+            0x00,
+            (byte) 0xDD,
+            0x01,
+            0x0F,
+            0x54,
+            0x02
+        }); // one-off provider UID
+        entry.putShort((short) 0); // version
+        entry.putShort((short) 0x8000); // flags: Unicode strings
+        entry.put(strings);
+        return entry.array();
+    }
+
     MsgFixtureBuilder messageDate(Date date) {
         fixedProperties.add(new FixedProperty(TAG_MESSAGE_DELIVERY_TIME, fileTime(date)));
         return this;
@@ -194,17 +297,27 @@ final class MsgFixtureBuilder {
     }
 
     MsgFixtureBuilder attachment(String filename, String mime, byte[] data) {
-        attachments.add(new AttachmentSpec(filename, mime, data, null, null));
+        attachments.add(new AttachmentSpec(filename, mime, data, null, null, null, null));
         return this;
     }
 
     MsgFixtureBuilder attachment(String filename, String mime, byte[] data, String contentId) {
-        attachments.add(new AttachmentSpec(filename, mime, data, null, contentId));
+        attachments.add(new AttachmentSpec(filename, mime, data, null, contentId, null, null));
         return this;
     }
 
     MsgFixtureBuilder embeddedAttachment(String filename, MsgFixtureBuilder embedded) {
-        attachments.add(new AttachmentSpec(filename, null, null, embedded, null));
+        attachments.add(new AttachmentSpec(filename, null, null, embedded, null, null, null));
+        return this;
+    }
+
+    /**
+     * An ATTACH_OLE (PR_ATTACH_METHOD 6) attachment: a sub-storage holding an OLE object's CONTENTS
+     * stream — the storage shape POI's {@code isEmbeddedMessage()} cannot tell apart from a real
+     * embedded message.
+     */
+    MsgFixtureBuilder oleAttachment(String displayName, byte[] contents) {
+        attachments.add(new AttachmentSpec(null, null, null, null, null, displayName, contents));
         return this;
     }
 
@@ -243,9 +356,11 @@ final class MsgFixtureBuilder {
     }
 
     private void populateMessage(DirectoryEntry root, int headerSize) throws IOException {
-        var allRecipients = new ArrayList<MsgFixtureBuilder>(recipientsTo.size() + recipientsCc.size());
+        var allRecipients =
+                new ArrayList<MsgFixtureBuilder>(recipientsTo.size() + recipientsCc.size() + recipientsBcc.size());
         allRecipients.addAll(recipientsTo);
         allRecipients.addAll(recipientsCc);
+        allRecipients.addAll(recipientsBcc);
 
         var stream = new ByteArrayOutputStream();
         var header = ByteBuffer.allocate(headerSize).order(ByteOrder.LITTLE_ENDIAN);
@@ -333,19 +448,30 @@ final class MsgFixtureBuilder {
     private record FixedProperty(int tag, byte[] data) {}
 
     private record AttachmentSpec(
-            String filename, String mime, byte[] data, MsgFixtureBuilder embedded, String contentId) {
+            String filename,
+            String mime,
+            byte[] data,
+            MsgFixtureBuilder embedded,
+            String contentId,
+            String displayName,
+            byte[] oleContents) {
 
         void populate(DirectoryEntry directory) throws IOException {
             var stream = new ByteArrayOutputStream();
             var header = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
             stream.write(header.array());
 
-            var method = embedded == null ? ATTACH_METHOD_BY_VALUE : ATTACH_METHOD_EMBEDDED_MESSAGE;
+            var method = embedded != null
+                    ? ATTACH_METHOD_EMBEDDED_MESSAGE
+                    : oleContents != null ? ATTACH_METHOD_OLE : ATTACH_METHOD_BY_VALUE;
             writeFixedEntry(stream, new FixedProperty(TAG_ATTACH_METHOD, longBytes(method)));
 
             var varProps = new ArrayList<VarProperty>();
             if (filename != null) {
                 varProps.add(new VarProperty(TAG_ATTACH_LONG_FILENAME, encodeUtf16(filename)));
+            }
+            if (displayName != null) {
+                varProps.add(new VarProperty(TAG_ATTACH_DISPLAY_NAME, encodeUtf16(displayName)));
             }
             if (mime != null) {
                 varProps.add(new VarProperty(TAG_ATTACH_MIME_TAG, encodeUtf16(mime)));
@@ -369,6 +495,9 @@ final class MsgFixtureBuilder {
             if (embedded != null) {
                 var embeddedDir = directory.createDirectory("__substg1.0_3701000D");
                 embedded.populateMessage(embeddedDir, 24);
+            } else if (oleContents != null) {
+                var oleDir = directory.createDirectory("__substg1.0_3701000D");
+                oleDir.createDocument("CONTENTS", new ByteArrayInputStream(oleContents));
             }
         }
     }

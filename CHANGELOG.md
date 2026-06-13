@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added (MSG conversion fidelity)
+
+- S/MIME messages converted from `.msg` keep their cryptographic envelope verifiable: clear-signed messages export as real `multipart/signed` EMLs with the original signature part intact, and opaque signed/encrypted ones as `application/pkcs7-mime` (`smime.p7m`) messages — previously the envelope was buried as a nameless opaque attachment that no mail client could verify or decrypt.
+- Calendar items and meeting requests in `.msg` files now export an attached `invite.ics` carrying the real start/end times, location, organizer and attendees; recurring series keep their recurrence rule, time zone and all-day flag — the same fidelity the PST/OST conversion already had.
+- Contacts convert with a vCard (`contact.vcf`; names, organization, phones, email addresses) and tasks with a VTODO calendar (`task.ics`; start/due dates and completion state) — parity with the PST/OST conversion.
+- Converted MSGs keep more Outlook metadata: conversation threading (`Thread-Topic`/`Thread-Index`), `Importance`/`X-Priority`, `Sensitivity`, `Reply-To`, categories (exported as the standard `Keywords` header) and read-receipt requests (`Disposition-Notification-To`). Attachments keep their `Content-Location`.
+- "Sent on behalf of" messages keep both identities: the author now appears in `From:` and the actual transmitter in `Sender:` — previously the author was dropped entirely, and one fallback could even attribute the transmitter's display name to the author's address.
+
+### Fixed (MSG conversion accuracy)
+
+- OLE-embedded objects (spreadsheets or documents pasted as objects) are no longer destroyed: they used to be misrouted into the embedded-message path and replaced with an "Error converting nested message" stub; they now export as `.ole` attachments carrying the object's storage.
+- A message with no resolvable sender at all (unsent drafts, keyword-only notes) now emits the mandatory `From:` header with the explicit `undisclosed@invalid` placeholder — flagged in `X-MailKit-Synthesized-Headers` — instead of producing an EML that strict parsers reject.
+- Attachments carrying a Content-ID that no HTML body references are no longer hidden as invisible inline parts of `multipart/related`; they stay visible regular attachments (this applies to PST/OST conversion too). A Content-ID lacking its domain half is completed with a synthetic one, with the HTML's `cid:` references rewritten in step, so it parses as a valid msg-id.
+- An HTML body decoded from a legacy code page no longer keeps a stale `<meta charset=...>` declaration contradicting the UTF-8 re-encoding (the same fix the PST pipeline received).
+- An embedded message whose content carries a line longer than the RFC 5322 limit is now declared `Content-Transfer-Encoding: binary` instead of non-conformant `8bit`, and overlong attachment `Content-Location` values are folded within the line-length limit.
+
 ### Added (PST/OST non-mail items, recurrence and integrity)
 
 - Recurring appointments and meetings now export their full series: the calendar invite carries the recurrence rule (daily/weekly/monthly/nth-weekday/yearly, with end-by-date or end-after-count), deleted occurrences as exception dates, and the event's own time zone — so a "every Tuesday at 10:00" meeting stays at 10:00 local time across DST changes instead of drifting by an hour. All-day events are exported as true all-day calendar entries.
