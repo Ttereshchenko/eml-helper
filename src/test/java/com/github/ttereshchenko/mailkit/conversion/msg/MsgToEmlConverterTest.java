@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.github.ttereshchenko.mailkit.conversion.ConversionException;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
@@ -563,6 +564,349 @@ class MsgToEmlConverterTest {
         var exported = eml.split("@example\\.com", -1).length - 1;
         assertEquals(2048, exported, eml.substring(0, Math.min(eml.length(), 500)));
         assertTrue(errors.stream().anyMatch(message -> message.contains("2050")), errors::toString);
+    }
+
+    // N1: POI's isEmbeddedMessage() is just "has a sub-storage", which also matches an embedded OLE
+    // object (PR_ATTACH_METHOD 6, e.g. a pasted Excel sheet). Routing it through the
+    // embedded-message branch replaced the payload with an error stub; it must instead be
+    // re-wrapped as an OLE2 compound-file attachment.
+    @Test
+    void oleObjectAttachmentIsPreservedNotDestroyed() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("OLE object")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("see the embedded sheet")
+                .oleAttachment("Worksheet", "spreadsheet-cells".getBytes(StandardCharsets.US_ASCII))
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(eml.contains("Error converting nested message"), eml);
+        assertFalse(eml.contains("message/rfc822"), eml);
+        assertTrue(eml.contains("filename=\"Worksheet.ole\""), eml);
+        // The rewrapped storage is an OLE2 compound file: its magic D0 CF 11 E0 A1 B1 1A E1
+        // base64-encodes to this prefix.
+        assertTrue(eml.contains("0M8R4KGxGuE"), eml);
+    }
+
+    // N4: RFC 5322 §3.6.2 — on a delegate send, From carries the author (PR_SENT_REPRESENTING_*)
+    // and Sender the actual transmitter (PR_SENDER_*); previously the author was dropped entirely.
+    @Test
+    void delegateSendSplitsFromAndSender() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Delegate send")
+                .sender("Assistant", null)
+                .senderSmtpAddress("assistant@corp.example")
+                .sentRepresenting("Boss", "boss@corp.example")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("From: \"Boss\" <boss@corp.example>"), eml);
+        assertTrue(eml.contains("Sender: \"Assistant\" <assistant@corp.example>"), eml);
+    }
+
+    // N4: a message carrying only the author's SMTP form (0x5D02) used to pair the transmitter's
+    // display name with the author's address — provably false data.
+    @Test
+    void authorOnlySmtpAddressKeepsAuthorName() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("No cross pairing")
+                .sender("Assistant", null)
+                .sentRepresenting("Boss", "boss@corp.example")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("From: \"Boss\" <boss@corp.example>"), eml);
+        assertFalse(eml.contains("\"Assistant\" <boss@corp.example>"), eml);
+    }
+
+    // N3: RFC 5322 §3.6.2 makes From mandatory; a message with no sender properties at all gets
+    // the explicit placeholder instead of an unparseable From-less message.
+    @Test
+    void messageWithoutAnySenderGetsPlaceholderFrom() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("No sender")
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("From: <undisclosed@invalid>"), eml);
+        assertTrue(eml.contains("X-MailKit-Synthesized-Headers: From,"), eml);
+    }
+
+    @Test
+    void bccRecipientsAreExported() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Bcc")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .recipientBcc("Carol", "carol@example.com")
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Bcc: \"Carol\" <carol@example.com>"), eml);
+        assertTrue(eml.contains("To: \"Bob\" <bob@example.com>"), eml);
+        assertFalse(eml.contains("To: \"Bob\" <bob@example.com>, \"Carol\""), eml);
+    }
+
+    // N5 (parity with the PST pipeline): importance and sensitivity map onto headers.
+    @Test
+    void importanceAndSensitivityAreExported() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Urgent")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .importance(2)
+                .sensitivity(2)
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Importance: High"), eml);
+        assertTrue(eml.contains("X-Priority: 1"), eml);
+        assertTrue(eml.contains("Sensitivity: Private"), eml);
+    }
+
+    @Test
+    void normalImportanceAndSensitivityStayImplicit() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Normal")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .importance(1)
+                .sensitivity(0)
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(eml.contains("Importance:"), eml);
+        assertFalse(eml.contains("X-Priority:"), eml);
+        assertFalse(eml.contains("Sensitivity:"), eml);
+    }
+
+    // N5: PR_CONVERSATION_TOPIC / PR_CONVERSATION_INDEX export as the Thread-* headers Outlook
+    // itself uses, so conversation threading survives the conversion.
+    @Test
+    void threadingHeadersExportedFromConversationProperties() throws Exception {
+        var conversationIndex = new byte[] {1, 2, 3, 4, 5, 6};
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Re: Budget")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .conversationTopic("Budget 2026")
+                .conversationIndex(conversationIndex)
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Thread-Topic: Budget 2026"), eml);
+        assertTrue(eml.contains("Thread-Index: " + Base64.getEncoder().encodeToString(conversationIndex)), eml);
+    }
+
+    // N5: PR_REPLY_RECIPIENT_ENTRIES (a one-off FLATENTRYLIST, the same [MS-OXCDATA] structure a
+    // PST stores) is parsed into a Reply-To header.
+    @Test
+    void replyToRecoveredFromFlatEntryList() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Reply elsewhere")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .replyTo("Support Desk", "support@corp.example")
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Reply-To: \"Support Desk\" <support@corp.example>"), eml);
+    }
+
+    // N13: PR_READ_RECEIPT_REQUESTED maps to Disposition-Notification-To (RFC 8098).
+    @Test
+    void readReceiptRequestMapsToDispositionNotificationTo() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Receipt please")
+                .sender("Alice", null)
+                .senderSmtpAddress("alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .readReceiptRequested()
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Disposition-Notification-To: \"Alice\" <alice@example.com>"), eml);
+    }
+
+    // N11: the HTML body is re-encoded as UTF-8; a surviving <meta charset> declaring the original
+    // codepage would make meta-honoring clients mojibake the part.
+    @Test
+    void htmlMetaCharsetIsRewrittenToUtf8() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Meta")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .htmlBody("<html><head><meta http-equiv=\"Content-Type\""
+                        + " content=\"text/html; charset=windows-1251\"></head><body>ok</body></html>")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(eml.contains("windows-1251"), eml);
+        // quoted-printable escapes '=' as =3D, so charset=UTF-8 appears as charset=3DUTF-8 (soft
+        // line wraps stripped first).
+        assertTrue(eml.replace("=\r\n", "").contains("charset=3DUTF-8"), eml);
+    }
+
+    // N9: Outlook assigns Content-IDs to attachments no body references; such a part must stay a
+    // visible regular attachment instead of an invisible inline member of multipart/related.
+    @Test
+    void unreferencedContentIdAttachmentStaysVisible() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Unreferenced cid")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .htmlBody("<p>no inline images here</p>")
+                .attachment("logo.png", "image/png", new byte[] {1, 2, 3}, "img1@local")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(eml.contains("multipart/related"), eml);
+        assertTrue(eml.contains("Content-Disposition: attachment; filename=\"logo.png\""), eml);
+        assertTrue(eml.contains("Content-ID: <img1@local>"), eml);
+    }
+
+    // N12: a Content-ID without a domain half is not a valid msg-id (RFC 5322 §3.6.4); a synthetic
+    // domain is appended and the HTML cid: reference rewritten in step so it keeps resolving.
+    @Test
+    void contentIdWithoutDomainGetsSyntheticDomain() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Bare cid")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .htmlBody("<img src=\"cid:plainid\">")
+                .attachment("a.png", "image/png", new byte[] {1}, "plainid")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("multipart/related"), eml);
+        assertTrue(eml.contains("Content-ID: <plainid@mailkit.invalid>"), eml);
+        assertTrue(eml.replace("=\r\n", "").contains("cid:plainid@mailkit.invalid"), eml);
+    }
+
+    @Test
+    void zeroByteAttachmentRoundTrips() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Empty attachment")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("body")
+                .attachment("empty.bin", "application/octet-stream", new byte[0])
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Content-Disposition: attachment; filename=\"empty.bin\""), eml);
+    }
+
+    @Test
+    void duplicateAttachmentFilenamesBothSurvive() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Duplicates")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("body")
+                .attachment("data.bin", "application/octet-stream", new byte[] {1})
+                .attachment("data.bin", "application/octet-stream", new byte[] {2})
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        var parts = eml.split("filename=\"data\\.bin\"", -1).length - 1;
+        assertEquals(2, parts, eml);
+    }
+
+    // Pre-1980 FILETIME dates must format correctly (the corpus has none: message_1979.msg's name
+    // refers to a POI property-stream layout, not a date).
+    @Test
+    void pre1980DateIsExported() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Vintage")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageDate(new Date(170_000_000_000L)) // 1975-05-22T14:13:20Z
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Date: Thu, 22 May 1975 14:13:20 +0000"), eml);
+    }
+
+    // Astral-plane (surrogate-pair) characters survive both header encoding and the QP body.
+    @Test
+    void astralPlaneSubjectAndBodySurvive() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Launch 🚀 plan")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("Done 😀")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("=?UTF-8?B?"), eml);
+        assertTrue(eml.replace("=\r\n", "").contains("=F0=9F=98=80"), eml); // 😀 in UTF-8 QP
+        assertTrue(eml.chars().allMatch(chr -> chr <= 0x7F), "EML output must remain ASCII");
+    }
+
+    // RTL Hebrew text survives the UTF-8 QP re-encoding.
+    @Test
+    void rtlHebrewBodySurvives() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("שלום")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("שלום עולם")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.replace("=\r\n", "").contains("=D7=A9=D7=9C=D7=95=D7=9D"), eml); // שלום in UTF-8 QP
+    }
+
+    // No public NDR / read-receipt-report fixture exists anywhere; the synthesized classes must
+    // convert as plain report emails (the MSG pipeline deliberately has no class allow-list).
+    @Test
+    void reportMessageClassesConvertAsPlainEmail() throws Exception {
+        for (var messageClass : new String[] {"REPORT.IPM.Note.NDR", "IPM.Note.IPNRN"}) {
+            var bytes = MsgFixtureBuilder.topLevel()
+                    .subject("Delivery report")
+                    .sender("Postmaster", "postmaster@example.com")
+                    .recipientTo("Bob", "bob@example.com")
+                    .messageClass(messageClass)
+                    .textBody("Delivery has failed to these recipients")
+                    .toBytes();
+
+            var eml = convertString(bytes);
+
+            assertTrue(eml.contains("Delivery has failed to these recipients"), eml);
+            assertTrue(eml.contains("From: \"Postmaster\" <postmaster@example.com>"), eml);
+        }
     }
 
     private String convertString(byte[] input) throws Exception {

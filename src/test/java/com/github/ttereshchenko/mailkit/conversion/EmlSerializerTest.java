@@ -33,12 +33,16 @@ class EmlSerializerTest {
         String eml = writer.toString();
 
         assertTrue(eml.contains("Message-ID: <test-message-id@mailkit.org>"), "Should contain Message-ID");
+        // No HTML body references the Content-ID, so the part must NOT be hidden as an inline
+        // member of multipart/related — it is demoted to a visible regular attachment that keeps
+        // its Content-ID (with the msg-id domain sanitizeContentId supplies).
         assertTrue(
-                eml.contains("Content-Disposition: inline; filename=\"image.png\""), "Should format inline attachment");
-        assertTrue(eml.contains("Content-ID: <inline-img-123>"), "Should contain Content-ID");
-        assertTrue(
+                eml.contains("Content-Disposition: attachment; filename=\"image.png\""),
+                "An unreferenced Content-ID part should stay a visible attachment: " + eml);
+        assertTrue(eml.contains("Content-ID: <inline-img-123@mailkit.invalid>"), "Should keep Content-ID: " + eml);
+        assertFalse(
                 eml.contains("multipart/related"),
-                "Inline (Content-ID) parts should be grouped with the body in multipart/related (RFC 2387)");
+                "Without a cid: reference there is nothing to relate the part to (RFC 2387): " + eml);
     }
 
     @Test
@@ -542,7 +546,7 @@ class EmlSerializerTest {
     @Test
     void relatedPartCarriesRequiredTypeParameter() throws Exception {
         var single = new EmlSerializer();
-        single.addBody("<p>hi</p>", "text/html; charset=UTF-8");
+        single.addBody("<p>hi <img src=\"cid:cid-1\"></p>", "text/html; charset=UTF-8");
         single.addAttachment("img.png", "image/png", new byte[] {1}, "cid-1", true);
         var singleWriter = new StringWriter();
         single.writeTo(singleWriter);
@@ -550,7 +554,7 @@ class EmlSerializerTest {
 
         var alternative = new EmlSerializer();
         alternative.addBody("plain", "text/plain; charset=UTF-8");
-        alternative.addBody("<p>hi</p>", "text/html; charset=UTF-8");
+        alternative.addBody("<p>hi <img src=\"cid:cid-1\"></p>", "text/html; charset=UTF-8");
         alternative.addAttachment("img.png", "image/png", new byte[] {1}, "cid-1", true);
         var alternativeWriter = new StringWriter();
         alternative.writeTo(alternativeWriter);
@@ -638,5 +642,77 @@ class EmlSerializerTest {
                 threadIndex,
                 headerMatcher.group(1).replaceAll("[ \\t\\r\\n]", ""),
                 "the folded value must round-trip once whitespace is stripped");
+    }
+
+    // N3: RFC 5322 §3.6.2 makes From mandatory — a message with no sender at all gets the explicit
+    // placeholder, flagged in X-MailKit-Synthesized-Headers, instead of an unparseable message.
+    @Test
+    void missingFromIsSynthesizedAsPlaceholder() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(eml.contains("From: <undisclosed@invalid>"), eml);
+        assertTrue(eml.contains("X-MailKit-Synthesized-Headers: From, Date"), eml);
+    }
+
+    // N14: Sender without From is malformed (RFC 5322 §3.6.2 defines Sender relative to From) — a
+    // transmitter-only message promotes the transmitter into From instead.
+    @Test
+    void transmitterWithoutSenderIsPromotedToFrom() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.setTransmitter("Agent", "agent@example.com");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(eml.contains("From: \"Agent\" <agent@example.com>"), eml);
+        assertFalse(eml.contains("Sender:"), eml);
+    }
+
+    // N8: rfc2046 §5.2.1 allows only 7bit/8bit/binary on message/rfc822, and 8bit still carries the
+    // rfc5322 §2.1.1 998-octet line limit — a nested message with a longer line must declare binary.
+    @Test
+    void nestedMessageWithOverlongLineDeclaresBinaryCte() throws Exception {
+        var overlong = "Subject: ok\r\n\r\nBody line: " + "Z".repeat(1100) + "\r\n";
+        var withinLimit = "Subject: ok\r\n\r\nshort body\r\n";
+
+        var binarySerializer = new EmlSerializer();
+        binarySerializer.setSender("A", "a@example.com");
+        binarySerializer.addBody("body", "text/plain; charset=UTF-8");
+        binarySerializer.addEmbeddedMessage("inner.eml", overlong);
+        var binaryWriter = new StringWriter();
+        binarySerializer.writeTo(binaryWriter);
+        assertTrue(binaryWriter.toString().contains("Content-Transfer-Encoding: binary"), binaryWriter::toString);
+
+        var eightBitSerializer = new EmlSerializer();
+        eightBitSerializer.setSender("A", "a@example.com");
+        eightBitSerializer.addBody("body", "text/plain; charset=UTF-8");
+        eightBitSerializer.addEmbeddedMessage("inner.eml", withinLimit);
+        var eightBitWriter = new StringWriter();
+        eightBitSerializer.writeTo(eightBitWriter);
+        assertTrue(eightBitWriter.toString().contains("Content-Transfer-Encoding: 8bit"), eightBitWriter::toString);
+    }
+
+    // N14: Content-Location used to be emitted raw; an overlong stored value must fold within the
+    // RFC 5322 §2.1.1 hard limit like every other header.
+    @Test
+    void overlongContentLocationIsFolded() throws Exception {
+        var location = "https://example.com/" + "segment/".repeat(150);
+        var serializer = new EmlSerializer();
+        serializer.setSender("A", "a@example.com");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        serializer.addAttachment("file.bin", "application/octet-stream", new byte[] {1}, null, location, false);
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(eml.contains("Content-Location:"), eml);
+        for (var line : eml.split("\r\n", -1)) {
+            assertTrue(line.length() <= 998, "line exceeds the RFC 5322 hard limit: " + line.length());
+        }
     }
 }

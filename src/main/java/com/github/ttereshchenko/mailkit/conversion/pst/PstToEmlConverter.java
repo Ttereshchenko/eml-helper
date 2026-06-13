@@ -3,6 +3,7 @@ package com.github.ttereshchenko.mailkit.conversion.pst;
 import com.github.ttereshchenko.mailkit.conversion.AppointmentRecurrence;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
+import com.github.ttereshchenko.mailkit.conversion.HtmlMetaCharset;
 import com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator;
 import com.github.ttereshchenko.mailkit.conversion.RtfStripper;
 import com.github.ttereshchenko.mailkit.conversion.VCardGenerator;
@@ -790,7 +791,9 @@ public final class PstToEmlConverter {
             plainBody = formatDistributionListMembers(message);
         }
         serializer.addBody(plainBody, "text/plain; charset=UTF-8");
-        serializer.addBody(htmlBody, "text/html; charset=UTF-8");
+        // The HTML was decoded from its original codepage and is re-emitted as UTF-8; rewrite any
+        // surviving in-document <meta charset=...> so it cannot contradict the MIME charset.
+        serializer.addBody(HtmlMetaCharset.rewriteToUtf8(htmlBody), "text/html; charset=UTF-8");
         String rtfBody = message.getRtfBody();
         if (rtfBody.isEmpty() && plainBody.isEmpty() && htmlBody.isEmpty()) {
             // Encapsulation RTF (\fromtext / \fromhtml) is normally redundant with the decoded
@@ -852,7 +855,7 @@ public final class PstToEmlConverter {
                         attendees.add(new ICalendarGenerator.Attendee(recipient.name, recipient.email));
                     }
                 }
-                String method = icalMethod(msgClass, !attendees.isEmpty());
+                String method = ICalendarGenerator.method(msgClass, !attendees.isEmpty());
 
                 // All-day flag, event time zone and recurrence (PidLidAppointmentSubType /
                 // PidLidTimeZoneStruct / PidLidAppointmentRecur): a recurring meeting exports its
@@ -1193,19 +1196,6 @@ public final class PstToEmlConverter {
      * is available, because those methods are invalid without one and a plain {@code PUBLISH}
      * renders everywhere. Plain appointments are always {@code PUBLISH}ed.
      */
-    static String icalMethod(String messageClass, boolean hasAttendees) {
-        if (!hasAttendees || !messageClass.startsWith("IPM.Schedule.Meeting")) {
-            return "PUBLISH";
-        }
-        if (messageClass.startsWith("IPM.Schedule.Meeting.Canceled")) {
-            return "CANCEL";
-        }
-        if (messageClass.startsWith("IPM.Schedule.Meeting.Resp")) {
-            return "REPLY";
-        }
-        return "REQUEST";
-    }
-
     /**
      * Whether a message with the given {@code PidTagMessageClass} should be exported. Intentionally
      * permits a {@code null} or empty class: [MS-OXCMSG] §2.2.1.3 defines a missing message class as

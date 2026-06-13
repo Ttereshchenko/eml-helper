@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
+import com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator;
 import com.github.ttereshchenko.mailkit.pst.Attachment;
 import com.github.ttereshchenko.mailkit.pst.MapiProperties;
 import com.github.ttereshchenko.mailkit.pst.Message;
@@ -381,12 +382,12 @@ class PstToEmlConverterTest {
     // is available (REQUEST/CANCEL/REPLY are invalid without one).
     @Test
     void icalMethodFollowsMessageClassAndAttendees() {
-        assertEquals("PUBLISH", PstToEmlConverter.icalMethod("IPM.Appointment", true));
-        assertEquals("PUBLISH", PstToEmlConverter.icalMethod("IPM.Appointment", false));
-        assertEquals("PUBLISH", PstToEmlConverter.icalMethod("IPM.Schedule.Meeting.Request", false));
-        assertEquals("REQUEST", PstToEmlConverter.icalMethod("IPM.Schedule.Meeting.Request", true));
-        assertEquals("CANCEL", PstToEmlConverter.icalMethod("IPM.Schedule.Meeting.Canceled", true));
-        assertEquals("REPLY", PstToEmlConverter.icalMethod("IPM.Schedule.Meeting.Resp.Pos", true));
+        assertEquals("PUBLISH", ICalendarGenerator.method("IPM.Appointment", true));
+        assertEquals("PUBLISH", ICalendarGenerator.method("IPM.Appointment", false));
+        assertEquals("PUBLISH", ICalendarGenerator.method("IPM.Schedule.Meeting.Request", false));
+        assertEquals("REQUEST", ICalendarGenerator.method("IPM.Schedule.Meeting.Request", true));
+        assertEquals("CANCEL", ICalendarGenerator.method("IPM.Schedule.Meeting.Canceled", true));
+        assertEquals("REPLY", ICalendarGenerator.method("IPM.Schedule.Meeting.Resp.Pos", true));
     }
 
     // F19: an appointment whose store carries no start time gets no invite at all instead of one

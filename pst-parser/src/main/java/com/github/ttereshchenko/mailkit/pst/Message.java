@@ -1049,9 +1049,10 @@ public class Message {
      * Parses a PR_REPLY_RECIPIENT_ENTRIES FLATENTRYLIST ([MS-OXCDATA] §2.3.3): cEntries and cbEntries
      * (4 bytes each), then per entry a 4-byte size and the ENTRYID bytes, padded to 4-byte alignment.
      * One-off and address-book ENTRYIDs are resolved to addresses; other providers and malformed
-     * entries are skipped. Package-private for testing.
+     * entries are skipped. Public because the same [MS-OXCDATA] structures appear in Outlook MSG
+     * files: the MSG converter feeds the blob it reads through Apache POI into this parser.
      */
-    static List<Recipient> parseReplyRecipients(
+    public static List<Recipient> parseReplyRecipients(
             byte[] flatEntryList, String displayNames, Charset string8Charset, AddressPreference addressPreference) {
         if (flatEntryList == null || flatEntryList.length < 8) {
             return List.of();
