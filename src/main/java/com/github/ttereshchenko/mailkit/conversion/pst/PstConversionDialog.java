@@ -69,8 +69,11 @@ public class PstConversionDialog extends DialogWrapper {
         maxNodeSizeField.getEmptyText().setText("Max size in MB (default 64)");
 
         var helpLabel = ContextHelpLabel.create(
-                "<b>Supported items:</b> Emails (IPM.Note), Posted notes (IPM.Post), Reports (REPORT.*),<br>"
-                        + "Calendar/Meetings (IPM.Appointment, IPM.Schedule.Meeting.*).<br><br>"
+                "<b>Supported items:</b> Emails (IPM.Note), Posted notes (IPM.Post), delivery/read<br>"
+                        + "reports as multipart/report (REPORT.*), S/MIME envelopes, and calendar<br>"
+                        + "items, meeting requests and responses (IPM.Appointment,<br>"
+                        + "IPM.Schedule.Meeting.*). Most other Outlook item types convert as<br>"
+                        + "plain messages.<br><br>"
                         + "<i>Contacts, tasks, sticky notes, journal entries and distribution lists are<br>"
                         + "converted only when \"Convert contacts, tasks, notes…\" is checked.</i>");
         var helpPanel = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));

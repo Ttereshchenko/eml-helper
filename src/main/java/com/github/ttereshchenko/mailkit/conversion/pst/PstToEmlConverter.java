@@ -5,7 +5,9 @@ import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
 import com.github.ttereshchenko.mailkit.conversion.HtmlMetaCharset;
 import com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator;
+import com.github.ttereshchenko.mailkit.conversion.ReportGenerator;
 import com.github.ttereshchenko.mailkit.conversion.RtfStripper;
+import com.github.ttereshchenko.mailkit.conversion.SmimeEntityHoist;
 import com.github.ttereshchenko.mailkit.conversion.VCardGenerator;
 import com.github.ttereshchenko.mailkit.conversion.WindowsTimeZone;
 import com.github.ttereshchenko.mailkit.pst.Attachment;
@@ -71,8 +73,24 @@ public final class PstToEmlConverter {
     private static final long MAX_TOTAL_ATTACHMENT_BYTES = 256L * 1024 * 1024;
     private static final int MAX_ATTACHMENT_COUNT = 1000;
 
-    private static final List<String> ALLOWED_MESSAGE_CLASSES =
-            List.of("IPM.Note", "IPM.Post", "REPORT.", "IPM.Schedule.Meeting.", "IPM.Appointment");
+    private static final List<String> ALLOWED_MESSAGE_CLASSES = List.of(
+            "IPM.Note",
+            "IPM.Post",
+            "REPORT.",
+            "IPM.Schedule.Meeting.",
+            "IPM.Appointment",
+            // Message-like classes exported as a generic EML for parity with the MSG path (which has no
+            // allow-list). Each is a transient/utility item that still lands in a mail folder, so it is
+            // preserved rather than silently dropped; none carries a specialized payload, so each emits
+            // the "no specialized handler" downgrade log. The literal "IPM" (no form found) is an exact
+            // match, not a prefix, so it is accepted in isAllowedMessageClass instead.
+            "IPM.Document",
+            "IPM.OLE.Class",
+            "IPM.Recall",
+            "IPM.Outlook.Recall",
+            "IPM.Remote",
+            "IPM.Report",
+            "IPM.Resend");
 
     // Non-mail item classes exported only when Options.exportNonMailItems is on: contacts become
     // EMLs with a vCard, tasks carry a VTODO, sticky notes and journal entries export their text,
@@ -775,6 +793,25 @@ public final class PstToEmlConverter {
 
         String msgClass = message.getMessageClass();
 
+        // REPORT.* (NDR/DSN and read/non-read receipts) become an RFC 6522 multipart/report so the
+        // structured delivery-status / disposition-notification survives instead of being flattened to
+        // a plain body — reusing the POI-free generator the MSG path adopted.
+        if (msgClass != null && msgClass.startsWith("REPORT.")) {
+            emitReport(message, msgClass, serializer);
+            return serializer;
+        }
+        // IPM.Note.SMIME* / IPM.Note.Secure* keep their complete original MIME envelope in a single
+        // attachment ([MS-OXOSMIME] §2.2.1); hoist it to the top level so the signature/encryption
+        // stays verifiable instead of being demoted to an opaque attachment by the re-encode.
+        if (msgClass != null && (msgClass.startsWith("IPM.Note.SMIME") || msgClass.startsWith("IPM.Note.Secure"))) {
+            if (hoistSmimeEntity(message, serializer, log)) {
+                return serializer;
+            }
+            log.info("Message " + message.getNid() + " is S/MIME (" + msgClass + ") but its envelope could"
+                    + " not be hoisted (not a single stored entity); the converted EML re-encodes the MIME"
+                    + " structure, so the original signature/encryption will not verify");
+        }
+
         String plainBody = message.getBody();
         String htmlBody = message.getHtmlBody();
         if (plainBody.isEmpty() && htmlBody.isEmpty()) {
@@ -817,20 +854,15 @@ public final class PstToEmlConverter {
                     false);
         }
         if (msgClass != null && msgClass.startsWith("IPM.Task")) {
+            // IPM.TaskRequest* is a task-assignment message, not a plain task: emit the matching iTIP
+            // METHOD (REQUEST / REPLY) instead of letting startsWith("IPM.Task") mislabel it PUBLISH.
+            String taskMethod = taskMethod(msgClass);
             serializer.addAttachment(
                     "task.ics",
-                    "text/calendar; charset=UTF-8; method=PUBLISH",
-                    buildTaskTodo(message, pstFile, subject).getBytes(StandardCharsets.UTF_8),
+                    "text/calendar; charset=UTF-8; method=" + taskMethod,
+                    buildTaskTodo(message, pstFile, subject, taskMethod).getBytes(StandardCharsets.UTF_8),
                     null,
                     false);
-        }
-        if (msgClass != null && msgClass.startsWith("IPM.Note.SMIME")) {
-            // The serializer re-encodes the MIME structure, which necessarily invalidates a
-            // signed/encrypted envelope; surface that instead of letting the user discover it
-            // when signature verification fails.
-            log.info("Message " + message.getNid() + " is S/MIME (" + msgClass
-                    + "); the converted EML re-encodes the MIME structure, so the original"
-                    + " signature/encryption envelope will not verify");
         }
         // Emit a calendar invite for both calendar items (IPM.Appointment) and meeting messages
         // (IPM.Schedule.Meeting.*); both store the start/end/location named properties below.
@@ -856,6 +888,21 @@ public final class PstToEmlConverter {
                     }
                 }
                 String method = ICalendarGenerator.method(msgClass, !attendees.isEmpty());
+                String organizerName = fromName;
+                String organizerEmail = fromEmail;
+                List<ICalendarGenerator.Attendee> eventAttendees = attendees;
+                if ("REPLY".equals(method)) {
+                    // RFC 5546 §3.2.3: a meeting-response REPLY flows from the responding ATTENDEE to the
+                    // ORGANIZER and carries that attendee's PARTSTAT. In the stored response the responder
+                    // is the sender and the meeting organizer is the (single) recipient, so the two roles
+                    // swap relative to a REQUEST and the PARTSTAT (ACCEPTED/DECLINED/TENTATIVE) attaches to
+                    // the responding attendee. (attendees is non-empty — method() returns REPLY only then.)
+                    var meetingOrganizer = attendees.get(0);
+                    organizerName = meetingOrganizer.name();
+                    organizerEmail = meetingOrganizer.email();
+                    eventAttendees = List.of(new ICalendarGenerator.Attendee(
+                            fromName, fromEmail, ICalendarGenerator.responsePartStat(msgClass)));
+                }
 
                 // All-day flag, event time zone and recurrence (PidLidAppointmentSubType /
                 // PidLidTimeZoneStruct / PidLidAppointmentRecur): a recurring meeting exports its
@@ -886,10 +933,10 @@ public final class PstToEmlConverter {
                         end != null ? Date.from(end) : null,
                         location,
                         subject,
-                        fromName,
-                        fromEmail,
+                        organizerName,
+                        organizerEmail,
                         message.getBody(),
-                        attendees,
+                        eventAttendees,
                         allDay,
                         timeZone,
                         recurrence));
@@ -900,6 +947,13 @@ public final class PstToEmlConverter {
                         null,
                         false);
             }
+        }
+
+        if (msgClass != null && !hasSpecializedHandler(msgClass)) {
+            // Every other class still exported a generic EML above; surface that downgrade rather than
+            // silently dropping the item's specialized semantics (documents, recall/remote/resend
+            // utility items, journal entries and sticky notes).
+            log.info("No specialized handler for message class " + msgClass + "; exported as a generic message");
         }
 
         long totalAttachmentBytes = 0;
@@ -1087,8 +1141,8 @@ public final class PstToEmlConverter {
         return VCardGenerator.generate(contact);
     }
 
-    /** A VTODO for an {@code IPM.Task} item: start/due dates, completion state and percent complete. */
-    private static String buildTaskTodo(Message message, PstFile pstFile, String subject) {
+    /** A VTODO for an {@code IPM.Task}/{@code IPM.TaskRequest} item: dates, completion state and iTIP method. */
+    private static String buildTaskTodo(Message message, PstFile pstFile, String subject, String method) {
         Instant start = namedInstant(message, pstFile, 0x8104); // PidLidTaskStartDate
         Instant due = namedInstant(message, pstFile, 0x8105); // PidLidTaskDueDate
         Integer percentId = pstFile.namedPropertyId(PSETID_TASK, 0x8102); // PidLidPercentComplete
@@ -1102,12 +1156,110 @@ public final class PstToEmlConverter {
                 start != null ? Date.from(start) : null,
                 due != null ? Date.from(due) : null,
                 percent,
-                complete);
+                complete,
+                method);
     }
 
     private static Instant namedInstant(Message message, PstFile pstFile, int namedId) {
         Integer propertyId = pstFile.namedPropertyId(PSETID_TASK, namedId);
         return propertyId != null && message.getProperty(propertyId) instanceof Instant value ? value : null;
+    }
+
+    /**
+     * Replaces the message body with an RFC 6522 {@code multipart/report} reconstructed from the
+     * report's MAPI properties via the shared {@link ReportGenerator}: a delivery report
+     * ({@code REPORT.*.NDR}/{@code .DR}) yields a {@code message/delivery-status} part (RFC 3464), a
+     * read receipt ({@code .IPNRN}/{@code .IPNNRN}) a {@code message/disposition-notification} part
+     * (RFC 8098). The class suffix selects the branch and supplies the {@code Action} /
+     * {@code disposition-type} that MAPI does not store verbatim.
+     */
+    private static void emitReport(Message message, String messageClass, EmlSerializer serializer) {
+        boolean deliveryReport = messageClass.endsWith(".NDR") || messageClass.endsWith(".DR");
+        String action = messageClass.endsWith(".NDR") ? "failed" : messageClass.endsWith(".DR") ? "delivered" : null;
+        String dispositionType = messageClass.endsWith(".IPNNRN") ? "deleted" : "displayed";
+        var info = new ReportGenerator.ReportInfo(
+                deliveryReport,
+                message.getStringProperty(0x1001), // PidTagReportText
+                message.getStringProperty(0x6820), // PidTagReportingMessageTransferAgent
+                message.getStringProperty(MapiProperties.PR_DISPLAY_TO_W), // final recipient
+                action,
+                message.getStringProperty(0x0C1B), // PidTagSupplementaryInfo (DSN status text)
+                null,
+                message.getStringProperty(0x1046), // PidTagOriginalMessageId of the original
+                dispositionType);
+        var report = ReportGenerator.generate(info);
+        serializer.setRawEntity(report.contentType(), null, null, report.body());
+    }
+
+    /**
+     * Hoists the stored S/MIME envelope of an {@code IPM.Note.SMIME*}/{@code IPM.Note.Secure*} message
+     * to the top level via the shared {@link SmimeEntityHoist} (POI-free, also used by the MSG path).
+     * Returns {@code false} — and the caller falls back to the regular re-encode — when the message
+     * does not consist of exactly one data-bearing attachment holding the envelope.
+     */
+    private static boolean hoistSmimeEntity(Message message, EmlSerializer serializer, ConversionLog log) {
+        var attachments = message.getAttachments();
+        if (attachments.size() != 1) {
+            return false;
+        }
+        var attachment = attachments.get(0);
+        if (attachment.getAttachMethod() == ATTACH_EMBEDDED_MSG) {
+            return false;
+        }
+        byte[] data = attachment.getData();
+        if (data == null || data.length == 0) {
+            return false;
+        }
+        String filename = attachment.getLongFilename();
+        if (filename.isEmpty()) {
+            filename = attachment.getFilename();
+        }
+        var entity = SmimeEntityHoist.hoist(data, filename, attachment.getMimeTag());
+        serializer.setRawEntity(entity.contentType(), entity.transferEncoding(), entity.disposition(), entity.body());
+        if (entity.fromMimeHeaders()) {
+            log.info("S/MIME message " + message.getNid() + ": hoisted the stored MIME entity (" + entity.contentType()
+                    + ")");
+        } else {
+            log.info("S/MIME message " + message.getNid() + ": exported the stored PKCS#7 envelope as the"
+                    + " message body (" + entity.contentType() + ")");
+        }
+        return true;
+    }
+
+    /**
+     * The iTIP method (RFC 5546 §3.4) for a task message class: {@code IPM.TaskRequest} is a
+     * {@code REQUEST}, its {@code .Accept}/{@code .Decline}/{@code .Update} responses are
+     * {@code REPLY}s, and a plain {@code IPM.Task} is {@code PUBLISH}ed. Distinguishing
+     * {@code IPM.TaskRequest*} from {@code IPM.Task} is what stops a task request — which has no dot
+     * after {@code Task} — from being swallowed by a naive {@code startsWith("IPM.Task")}.
+     */
+    private static String taskMethod(String messageClass) {
+        if (messageClass.startsWith("IPM.TaskRequest.Accept")
+                || messageClass.startsWith("IPM.TaskRequest.Decline")
+                || messageClass.startsWith("IPM.TaskRequest.Update")) {
+            return "REPLY";
+        }
+        if (messageClass.startsWith("IPM.TaskRequest")) {
+            return "REQUEST";
+        }
+        return "PUBLISH";
+    }
+
+    /**
+     * Whether a message class produced a specialized artifact above (calendar invite, vCard, VTODO,
+     * distribution-list body, multipart/report or hoisted S/MIME) or is a plain note/post. Anything
+     * else still exported a generic EML, which the caller logs as a downgrade.
+     */
+    private static boolean hasSpecializedHandler(String messageClass) {
+        return messageClass.equals("IPM")
+                || messageClass.startsWith("IPM.Note")
+                || messageClass.startsWith("IPM.Post")
+                || messageClass.startsWith("IPM.Appointment")
+                || messageClass.startsWith("IPM.Schedule.Meeting")
+                || messageClass.startsWith("IPM.Contact")
+                || messageClass.startsWith("IPM.Task")
+                || messageClass.startsWith("IPM.DistList")
+                || messageClass.startsWith("REPORT.");
     }
 
     /**
@@ -1191,19 +1343,14 @@ public final class PstToEmlConverter {
     }
 
     /**
-     * The iTIP method for a calendar item (RFC 5546): meeting cancellations are {@code CANCEL}s,
-     * responses {@code REPLY}s and requests {@code REQUEST}s — each only when at least one attendee
-     * is available, because those methods are invalid without one and a plain {@code PUBLISH}
-     * renders everywhere. Plain appointments are always {@code PUBLISH}ed.
-     */
-    /**
      * Whether a message with the given {@code PidTagMessageClass} should be exported. Intentionally
-     * permits a {@code null} or empty class: [MS-OXCMSG] §2.2.1.3 defines a missing message class as
-     * the generic {@code IPM} note, so a malformed item with no class is treated as a plain email
-     * (best-effort fidelity) rather than silently dropped. Everything else must match an allowed prefix.
+     * permits a {@code null}, empty or literal {@code "IPM"} class: [MS-OXCMSG] §2.2.1.3 defines a
+     * missing message class — and the "no form found" {@code IPM} class — as the generic note, so such
+     * an item is treated as a plain email (best-effort fidelity) rather than silently dropped.
+     * Everything else must match an allowed prefix.
      */
-    private static boolean isAllowedMessageClass(String messageClass, boolean exportNonMailItems) {
-        if (messageClass == null || messageClass.isEmpty()) {
+    static boolean isAllowedMessageClass(String messageClass, boolean exportNonMailItems) {
+        if (messageClass == null || messageClass.isEmpty() || messageClass.equals("IPM")) {
             return true;
         }
         for (String allowed : ALLOWED_MESSAGE_CLASSES) {
