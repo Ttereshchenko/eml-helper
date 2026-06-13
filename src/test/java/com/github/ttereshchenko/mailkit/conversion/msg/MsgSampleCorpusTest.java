@@ -332,6 +332,30 @@ class MsgSampleCorpusTest {
         assertTrue(headers.contains("X-MailKit-Synthesized-Headers: From,"), headers);
     }
 
+    // Regression: DistributionListMembers had ONE_OFF_MUID endianness-swapped (A4 1F 2B 81 …
+    // instead of the correct 81 2B 1F A4 … verbatim byte sequence from [MS-OXCDATA] §2.2.5.1).
+    // With the wrong constant the parser matched zero one-off entries from every real Outlook
+    // distribution list, so populateDistributionList emitted no member listing at all.
+    // Fixture: github.com/Sicos1977/MSGReader corpus (MIT), msgreader_distribution_list.msg —
+    // an IPM.DistList with 3 inline one-off SMTP members stored in PidLidDistributionListOneOffMembers
+    // (0x8054). With the corrected MUID the converter decodes all three and emits the member listing.
+    @Test
+    void distributionListMembersDecodedWithCorrectOneOffMuid() throws Exception {
+        // msgreader_distribution_list.msg: IPM.DistList, 3 one-off SMTP members.
+        var eml = convert("msgreader_distribution_list.msg");
+        var body = bodyOf(eml);
+
+        // The converter synthesizes a plain-text body starting with this sentinel line.
+        assertTrue(body.contains("Distribution list members:"), "member listing header missing:\n" + body);
+
+        // Assert on each real SMTP address decoded from the one-off EntryID blobs.
+        // Order is intentionally not fixed — assert membership, not sequence.
+        assertTrue(body.contains("user1@mail.com"), "user1@mail.com missing from:\n" + body);
+        assertTrue(body.contains("user2@mail.com"), "user2@mail.com missing from:\n" + body);
+        // The IDN address for the unicode member (Punycode-encoded domain).
+        assertTrue(body.contains("xn--auslnder-3za.com"), "IDN domain xn--auslnder-3za.com missing from:\n" + body);
+    }
+
     /** Finds the named base64 attachment part and decodes its payload to UTF-8 text. */
     private static String decodedBase64Attachment(String eml, String filename) {
         var marker = "filename=\"" + filename + "\"";

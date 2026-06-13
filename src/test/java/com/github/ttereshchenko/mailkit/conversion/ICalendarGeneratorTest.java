@@ -2,6 +2,7 @@ package com.github.ttereshchenko.mailkit.conversion;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.ByteBuffer;
@@ -213,5 +214,141 @@ class ICalendarGeneratorTest {
         var completed = ICalendarGenerator.generateTodo("Done", null, null, null, 1.0, true);
         assertTrue(completed.contains("STATUS:COMPLETED"), completed);
         assertTrue(completed.contains("PERCENT-COMPLETE:100"), completed);
+    }
+
+    // -----------------------------------------------------------------------
+    // responsePartStat — maps meeting-response message classes to PARTSTAT
+    // -----------------------------------------------------------------------
+
+    @Test
+    void responsePartStatReturnedForRespPos() {
+        assertEquals(
+                "ACCEPTED",
+                ICalendarGenerator.responsePartStat("IPM.Schedule.Meeting.Resp.Pos"),
+                "Resp.Pos must map to ACCEPTED");
+    }
+
+    @Test
+    void responsePartStatReturnedForRespNeg() {
+        assertEquals(
+                "DECLINED",
+                ICalendarGenerator.responsePartStat("IPM.Schedule.Meeting.Resp.Neg"),
+                "Resp.Neg must map to DECLINED");
+    }
+
+    @Test
+    void responsePartStatReturnedForRespTent() {
+        assertEquals(
+                "TENTATIVE",
+                ICalendarGenerator.responsePartStat("IPM.Schedule.Meeting.Resp.Tent"),
+                "Resp.Tent must map to TENTATIVE");
+    }
+
+    @Test
+    void responsePartStatReturnsNullForNonResponseClass() {
+        assertNull(
+                ICalendarGenerator.responsePartStat("IPM.Schedule.Meeting.Request"),
+                "a REQUEST class must not produce a PARTSTAT");
+        assertNull(
+                ICalendarGenerator.responsePartStat("IPM.Appointment"),
+                "a plain appointment must not produce a PARTSTAT");
+        assertNull(ICalendarGenerator.responsePartStat("IPM.Note"), "IPM.Note must not produce a PARTSTAT");
+    }
+
+    @Test
+    void responsePartStatReturnsNullForNull() {
+        assertNull(ICalendarGenerator.responsePartStat(null), "null message class must return null PARTSTAT");
+    }
+
+    @Test
+    void responsePartStatReturnsNullForUnrecognisedRespSuffix() {
+        // An unknown *.Resp.* variant returns null; the caller omits PARTSTAT and implies NEEDS-ACTION.
+        assertNull(ICalendarGenerator.responsePartStat("IPM.Schedule.Meeting.Resp.Unknown"));
+    }
+
+    // -----------------------------------------------------------------------
+    // generateTodo(method) — explicit iTIP METHOD line
+    // -----------------------------------------------------------------------
+
+    @Test
+    void todoWithRequestMethodEmitsMethodRequest() {
+        var todo = ICalendarGenerator.generateTodo("Assigned task", null, null, null, null, null, "REQUEST");
+
+        assertTrue(todo.contains("METHOD:REQUEST\r\n"), "task request must emit METHOD:REQUEST: " + todo);
+        assertTrue(todo.contains("BEGIN:VTODO"), todo);
+    }
+
+    @Test
+    void todoWithReplyMethodEmitsMethodReply() {
+        var todo = ICalendarGenerator.generateTodo("Task accepted", null, null, null, null, null, "REPLY");
+
+        assertTrue(todo.contains("METHOD:REPLY\r\n"), "task response must emit METHOD:REPLY: " + todo);
+    }
+
+    @Test
+    void todoWithPublishMethodEmitsMethodPublish() {
+        var todo = ICalendarGenerator.generateTodo("Plain task", null, null, null, null, null, "PUBLISH");
+
+        assertTrue(todo.contains("METHOD:PUBLISH\r\n"), "plain task must emit METHOD:PUBLISH: " + todo);
+    }
+
+    @Test
+    void todoSixArgOverloadDefaultsToPublish() {
+        // The 6-arg overload must still produce METHOD:PUBLISH so existing callers are not broken.
+        var todo = ICalendarGenerator.generateTodo("Task", null, null, null, null, null);
+
+        assertTrue(todo.contains("METHOD:PUBLISH\r\n"), "6-arg overload must default to PUBLISH: " + todo);
+    }
+
+    @Test
+    void todoWithNullMethodDefaultsToPublish() {
+        var todo = ICalendarGenerator.generateTodo("Task", null, null, null, null, null, (String) null);
+
+        assertTrue(todo.contains("METHOD:PUBLISH\r\n"), "null method must default to PUBLISH: " + todo);
+    }
+
+    // -----------------------------------------------------------------------
+    // Attendee.partStat — PARTSTAT parameter rendered on ATTENDEE lines
+    // -----------------------------------------------------------------------
+
+    @Test
+    void attendeeWithPartStatRendersPartstatParameter() {
+        var ical = generate("REPLY", List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com", "ACCEPTED")));
+
+        assertTrue(
+                ical.contains("ATTENDEE;CN=\"Bob\";PARTSTAT=ACCEPTED:mailto:bob@example.com"),
+                "ATTENDEE with partStat must include ;PARTSTAT=: " + ical);
+    }
+
+    @Test
+    void attendeeTwoArgConstructorOmitsPartstat() {
+        var ical = generate("REQUEST", List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")));
+
+        assertTrue(ical.contains("ATTENDEE"), ical);
+        assertFalse(
+                ical.contains("PARTSTAT"),
+                "2-arg Attendee constructor must omit ;PARTSTAT= (RFC 5545 §3.2.12 implies NEEDS-ACTION): " + ical);
+    }
+
+    @Test
+    void attendeeWithNullPartStatOmitsPartstat() {
+        var ical = generate("REQUEST", List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com", null)));
+
+        assertFalse(ical.contains("PARTSTAT"), "null partStat must omit ;PARTSTAT=: " + ical);
+    }
+
+    @Test
+    void attendeeDeclinedPartstatRendered() {
+        var ical =
+                generate("REPLY", List.of(new ICalendarGenerator.Attendee("Carol", "carol@example.com", "DECLINED")));
+
+        assertTrue(ical.contains("PARTSTAT=DECLINED"), "DECLINED partStat must appear: " + ical);
+    }
+
+    @Test
+    void attendeeTentativePartstatRendered() {
+        var ical = generate("REPLY", List.of(new ICalendarGenerator.Attendee("Dave", "dave@example.com", "TENTATIVE")));
+
+        assertTrue(ical.contains("PARTSTAT=TENTATIVE"), "TENTATIVE partStat must appear: " + ical);
     }
 }
