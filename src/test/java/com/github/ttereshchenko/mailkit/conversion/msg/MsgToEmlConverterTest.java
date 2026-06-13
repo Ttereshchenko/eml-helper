@@ -889,24 +889,189 @@ class MsgToEmlConverterTest {
         assertTrue(eml.replace("=\r\n", "").contains("=D7=A9=D7=9C=D7=95=D7=9D"), eml); // שלום in UTF-8 QP
     }
 
-    // No public NDR / read-receipt-report fixture exists anywhere; the synthesized classes must
-    // convert as plain report emails (the MSG pipeline deliberately has no class allow-list).
+    // REPORT.* messages are now handled by emitReport and produce a multipart/report body (RFC 6522).
+    // IPM.Note.IPNRN (read receipt stored as a plain note) goes through the normal body path.
     @Test
-    void reportMessageClassesConvertAsPlainEmail() throws Exception {
-        for (var messageClass : new String[] {"REPORT.IPM.Note.NDR", "IPM.Note.IPNRN"}) {
-            var bytes = MsgFixtureBuilder.topLevel()
-                    .subject("Delivery report")
-                    .sender("Postmaster", "postmaster@example.com")
-                    .recipientTo("Bob", "bob@example.com")
-                    .messageClass(messageClass)
-                    .textBody("Delivery has failed to these recipients")
-                    .toBytes();
+    void reportNdrClassProducesMultipartReport() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Undeliverable: Hello")
+                .sender("Postmaster", "postmaster@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("REPORT.IPM.Note.NDR")
+                .reportText("Delivery has failed.")
+                .toBytes();
 
-            var eml = convertString(bytes);
+        var eml = convertString(bytes);
 
-            assertTrue(eml.contains("Delivery has failed to these recipients"), eml);
-            assertTrue(eml.contains("From: \"Postmaster\" <postmaster@example.com>"), eml);
-        }
+        assertTrue(eml.contains("multipart/report"), "NDR must produce multipart/report: " + eml);
+        assertTrue(
+                eml.contains("report-type=delivery-status"),
+                "NDR multipart/report must carry report-type=delivery-status: " + eml);
+        assertTrue(
+                eml.contains("Content-Type: message/delivery-status"),
+                "NDR must include a message/delivery-status part: " + eml);
+        assertTrue(
+                eml.contains("Action: failed"), "NDR must include Action: failed (derived from .NDR suffix): " + eml);
+        assertTrue(eml.contains("From: \"Postmaster\" <postmaster@example.com>"), eml);
+    }
+
+    @Test
+    void reportDrClassProducesMultipartReportWithDeliveredAction() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Delivered: Hello")
+                .sender("Postmaster", "postmaster@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("REPORT.IPM.Note.DR")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("multipart/report"), eml);
+        assertTrue(eml.contains("Action: delivered"), "DR class must produce Action: delivered: " + eml);
+    }
+
+    @Test
+    void reportReadReceiptClassProducesDispositionNotification() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Read: Hello")
+                .sender("Postmaster", "postmaster@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("REPORT.IPM.Note.IPNRN")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("multipart/report"), eml);
+        assertTrue(
+                eml.contains("report-type=disposition-notification"),
+                "read receipt must carry report-type=disposition-notification: " + eml);
+        assertTrue(
+                eml.contains("Content-Type: message/disposition-notification"),
+                "read receipt must include a message/disposition-notification part: " + eml);
+    }
+
+    @Test
+    void readReceiptNoteClassConvertAsPlainEmail() throws Exception {
+        // IPM.Note.IPNRN is NOT a REPORT.* class, so it goes through the normal body path.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Read receipt note")
+                .sender("Postmaster", "postmaster@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("IPM.Note.IPNRN")
+                .textBody("Your message has been read.")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Your message has been read."), eml);
+        assertTrue(eml.contains("From: \"Postmaster\" <postmaster@example.com>"), eml);
+        assertFalse(
+                eml.contains("multipart/report"),
+                "IPM.Note.IPNRN is not a REPORT.* class and must not produce multipart/report: " + eml);
+    }
+
+    // --- Task method fix: IPM.TaskRequest must NOT be mislabeled as a plain PUBLISH task ---
+    // Regression: the old startsWith("IPM.Task") check swallowed IPM.TaskRequest as a plain task.
+    @Test
+    void taskRequestClassProducesMethodRequest() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Please complete this task")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("IPM.TaskRequest")
+                .textBody("Task details")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // The task.ics attachment Content-Type header must carry method=REQUEST, not method=PUBLISH.
+        // The ical body is base64-encoded in the EML, so assertions target the visible Content-Type line.
+        assertTrue(
+                eml.contains("method=REQUEST"),
+                "IPM.TaskRequest must produce method=REQUEST in task.ics Content-Type (regression: was PUBLISH): "
+                        + eml);
+        assertFalse(
+                eml.contains("method=PUBLISH"),
+                "IPM.TaskRequest must NOT produce method=PUBLISH (old startsWith bug): " + eml);
+        assertTrue(eml.contains("task.ics"), "task.ics attachment must be present: " + eml);
+    }
+
+    @Test
+    void plainTaskClassProducesMethodPublish() throws Exception {
+        // Plain IPM.Task (no "Request" suffix) must still produce PUBLISH.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("My task")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("IPM.Task")
+                .textBody("Task details")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // The ical body is base64-encoded; assertions target the visible Content-Type header line.
+        assertTrue(
+                eml.contains("method=PUBLISH"),
+                "plain IPM.Task must produce method=PUBLISH in task.ics Content-Type: " + eml);
+        assertFalse(eml.contains("method=REQUEST"), eml);
+        assertTrue(eml.contains("task.ics"), eml);
+    }
+
+    @Test
+    void taskRequestAcceptProducesMethodReply() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Accepted: task")
+                .sender("Bob", "bob@example.com")
+                .recipientTo("Alice", "alice@example.com")
+                .messageClass("IPM.TaskRequest.Accept")
+                .textBody("Accepted")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("method=REPLY"), "IPM.TaskRequest.Accept must produce method=REPLY: " + eml);
+    }
+
+    @Test
+    void taskRequestDeclineProducesMethodReply() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Declined: task")
+                .sender("Bob", "bob@example.com")
+                .recipientTo("Alice", "alice@example.com")
+                .messageClass("IPM.TaskRequest.Decline")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("method=REPLY"), "IPM.TaskRequest.Decline must produce method=REPLY: " + eml);
+    }
+
+    // --- downgrade log: unrecognized message classes emit an info log entry ---
+    @Test
+    void unknownMessageClassEmitsDowngradeLog() throws Exception {
+        var loggedMessages = new ArrayList<String>();
+        var log = new ConversionLog() {
+            @Override
+            public void info(String message) {
+                loggedMessages.add(message);
+            }
+
+            @Override
+            public void error(String message) {}
+        };
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("IPM.Activity")
+                .textBody("body")
+                .toBytes();
+        var out = new java.io.ByteArrayOutputStream();
+        MsgToEmlConverter.convert(new ByteArrayInputStream(bytes), out, log);
+
+        assertTrue(
+                loggedMessages.stream().anyMatch(message -> message.contains("IPM.Activity")),
+                "an unrecognized message class must trigger an info downgrade log: " + loggedMessages);
     }
 
     private String convertString(byte[] input) throws Exception {

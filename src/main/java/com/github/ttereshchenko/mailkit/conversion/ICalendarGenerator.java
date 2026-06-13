@@ -22,8 +22,17 @@ import java.util.UUID;
  */
 public final class ICalendarGenerator {
 
-    /** A meeting participant exported as an {@code ATTENDEE} property. */
-    public record Attendee(String name, String email) {}
+    /**
+     * A meeting participant exported as an {@code ATTENDEE} property. {@code partStat} is the iTIP
+     * participation status (RFC 5545 §3.2.12) — {@code ACCEPTED}/{@code DECLINED}/{@code TENTATIVE}
+     * on a meeting-response REPLY, or {@code null} when unknown (NEEDS-ACTION is then implied).
+     */
+    public record Attendee(String name, String email, String partStat) {
+        /** A participant whose response status is unknown ({@code PARTSTAT} omitted). */
+        public Attendee(String name, String email) {
+            this(name, email, null);
+        }
+    }
 
     private ICalendarGenerator() {}
 
@@ -62,6 +71,27 @@ public final class ICalendarGenerator {
             return "REPLY";
         }
         return "REQUEST";
+    }
+
+    /**
+     * The iTIP {@code PARTSTAT} (RFC 5545 §3.2.12) a meeting-response message class conveys:
+     * {@code IPM.Schedule.Meeting.Resp.Pos}→ACCEPTED, {@code .Neg}→DECLINED, {@code .Tent}→TENTATIVE.
+     * Returns {@code null} for anything that is not a recognised response (NEEDS-ACTION is implied).
+     */
+    public static String responsePartStat(String messageClass) {
+        if (messageClass == null || !messageClass.startsWith("IPM.Schedule.Meeting.Resp")) {
+            return null;
+        }
+        if (messageClass.startsWith("IPM.Schedule.Meeting.Resp.Pos")) {
+            return "ACCEPTED";
+        }
+        if (messageClass.startsWith("IPM.Schedule.Meeting.Resp.Neg")) {
+            return "DECLINED";
+        }
+        if (messageClass.startsWith("IPM.Schedule.Meeting.Resp.Tent")) {
+            return "TENTATIVE";
+        }
+        return null;
     }
 
     /**
@@ -136,10 +166,10 @@ public final class ICalendarGenerator {
             appendRecurrence(builder, event.recurrence(), event.startTime(), event.allDay(), timeZone, utcFormat);
         }
 
-        appendParticipant(builder, "ORGANIZER", event.organizerName(), event.organizerEmail());
+        appendParticipant(builder, "ORGANIZER", event.organizerName(), event.organizerEmail(), null);
         if (event.attendees() != null && !"PUBLISH".equals(safeMethod)) {
             for (var attendee : event.attendees()) {
-                appendParticipant(builder, "ATTENDEE", attendee.name(), attendee.email());
+                appendParticipant(builder, "ATTENDEE", attendee.name(), attendee.email(), attendee.partStat());
             }
         }
 
@@ -162,8 +192,9 @@ public final class ICalendarGenerator {
     }
 
     /**
-     * Builds a folded VCALENDAR/VTODO document for a task ({@code IPM.Task}). All fields except the
-     * subject may be {@code null}; {@code percentComplete} is clamped to 0–100.
+     * Builds a folded VCALENDAR/VTODO document for a task ({@code IPM.Task}), published as a plain
+     * calendar object. All fields except the subject may be {@code null}; {@code percentComplete} is
+     * clamped to 0–100.
      */
     public static String generateTodo(
             String subject,
@@ -172,14 +203,35 @@ public final class ICalendarGenerator {
             Date dueDate,
             Double percentComplete,
             Boolean complete) {
+        return generateTodo(subject, description, startDate, dueDate, percentComplete, complete, "PUBLISH");
+    }
+
+    /**
+     * Builds a folded VCALENDAR/VTODO document with an explicit iTIP {@code METHOD} (RFC 5546 §3.4):
+     * {@code REQUEST} for an assigned task request ({@code IPM.TaskRequest}), {@code REPLY} for its
+     * accept/decline/update responses, or {@code PUBLISH} for a plain task. All fields except the
+     * subject may be {@code null}; {@code percentComplete} is clamped to 0–100.
+     */
+    public static String generateTodo(
+            String subject,
+            String description,
+            Date startDate,
+            Date dueDate,
+            Double percentComplete,
+            Boolean complete,
+            String method) {
         var utcFormat = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'");
         utcFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
+
+        var safeMethod = method == null || method.isBlank()
+                ? "PUBLISH"
+                : escapeParameterValue(method.trim()).toUpperCase(Locale.ROOT);
 
         var todo = new StringBuilder();
         todo.append("BEGIN:VCALENDAR\r\n");
         todo.append("VERSION:2.0\r\n");
         todo.append("PRODID:-//MailKit//EN\r\n");
-        todo.append("METHOD:PUBLISH\r\n");
+        todo.append("METHOD:").append(safeMethod).append("\r\n");
         todo.append("BEGIN:VTODO\r\n");
         todo.append("UID:").append(UUID.randomUUID()).append("\r\n");
         todo.append("DTSTAMP:").append(utcFormat.format(new Date())).append("\r\n");
@@ -290,11 +342,12 @@ public final class ICalendarGenerator {
 
     /**
      * Appends an {@code ORGANIZER}/{@code ATTENDEE} line with an optional quoted {@code CN=}
-     * parameter. Both values come from attacker-controlled store properties, so the cal-address is
-     * stripped of anything that could terminate the line and the CN of anything that could escape
-     * its quotes.
+     * parameter and an optional {@code PARTSTAT=} (RFC 5545 §3.2.12). Both values come from
+     * attacker-controlled store properties, so the cal-address is stripped of anything that could
+     * terminate the line and the CN/PARTSTAT of anything that could escape their parameter values.
      */
-    private static void appendParticipant(StringBuilder builder, String property, String name, String email) {
+    private static void appendParticipant(
+            StringBuilder builder, String property, String name, String email, String partStat) {
         var safeEmail = sanitizeCalAddress(email);
         if (safeEmail.isEmpty()) {
             return;
@@ -302,6 +355,9 @@ public final class ICalendarGenerator {
         builder.append(property);
         if (name != null && !name.isBlank()) {
             builder.append(";CN=\"").append(escapeParameterValue(name)).append('"');
+        }
+        if (partStat != null && !partStat.isBlank()) {
+            builder.append(";PARTSTAT=").append(escapeParameterValue(partStat));
         }
         builder.append(":mailto:").append(safeEmail).append("\r\n");
     }

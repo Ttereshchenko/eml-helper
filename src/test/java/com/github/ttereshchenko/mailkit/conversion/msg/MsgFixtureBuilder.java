@@ -34,6 +34,7 @@ final class MsgFixtureBuilder {
     private static final int TAG_SENDER_ADDRTYPE = (0x0C1E << 16) | TYPE_UNICODE;
     private static final int TAG_SENDER_SMTP_ADDRESS = (0x5D01 << 16) | TYPE_UNICODE;
     private static final int TAG_DISPLAY_TO = (0x0E04 << 16) | TYPE_UNICODE;
+    private static final int TAG_REPORT_TEXT = (0x1001 << 16) | TYPE_UNICODE;
     private static final int TAG_SPAM_CONFIDENCE_LEVEL = (0x4076 << 16) | TYPE_LONG;
     private static final int TAG_RTF_COMPRESSED = (0x1009 << 16) | TYPE_BINARY;
     private static final int TAG_RECIPIENT_ADDRTYPE = (0x3002 << 16) | TYPE_UNICODE;
@@ -294,6 +295,11 @@ final class MsgFixtureBuilder {
 
     MsgFixtureBuilder transportHeaders(String value) {
         return setUnicode(TAG_TRANSPORT_HEADERS, value);
+    }
+
+    /** PidTagReportText (0x1001) — the human-readable explanation text in an NDR or read receipt. */
+    MsgFixtureBuilder reportText(String value) {
+        return setUnicode(TAG_REPORT_TEXT, value);
     }
 
     MsgFixtureBuilder attachment(String filename, String mime, byte[] data) {

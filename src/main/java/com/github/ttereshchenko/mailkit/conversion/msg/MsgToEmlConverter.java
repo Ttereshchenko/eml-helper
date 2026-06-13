@@ -6,6 +6,7 @@ import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
 import com.github.ttereshchenko.mailkit.conversion.HtmlMetaCharset;
 import com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator;
+import com.github.ttereshchenko.mailkit.conversion.ReportGenerator;
 import com.github.ttereshchenko.mailkit.conversion.RtfStripper;
 import com.github.ttereshchenko.mailkit.conversion.VCardGenerator;
 import com.github.ttereshchenko.mailkit.conversion.WindowsTimeZone;
@@ -228,19 +229,41 @@ public final class MsgToEmlConverter {
 
         var messageClass = readMessageClass(message);
         if (messageClass != null
-                && messageClass.startsWith("IPM.Note.SMIME")
+                && (messageClass.startsWith("IPM.Note.SMIME") || messageClass.startsWith("IPM.Note.Secure"))
                 && hoistSmimeEntity(message, serializer, log)) {
-            // [MS-OXOSMIME] §2.2.1: the single attachment IS the original signed/encrypted MIME
-            // entity, so it becomes the message's own top-level entity and the signature stays
-            // verifiable. Bodies and other content are skipped — they live inside the hoisted entity.
+            // [MS-OXOSMIME] §2.2.1 (and the legacy IPM.Note.Secure classes): the single attachment IS
+            // the original signed/encrypted MIME entity, so it becomes the message's own top-level
+            // entity and the signature stays verifiable. Bodies and other content are skipped — they
+            // live inside the hoisted entity.
             serializer.writeTo(writer);
             return;
         }
 
-        populateBodies(message, serializer, log);
+        // REPORT.* messages (NDR/DSN and read/non-read receipts) become an RFC 6522 multipart/report
+        // so the structured delivery-status / disposition-notification survives instead of being
+        // flattened to a plain body.
+        if (messageClass != null && messageClass.startsWith("REPORT.")) {
+            emitReport(message, messageClass, serializer);
+            serializer.writeTo(writer);
+            return;
+        }
+
+        // A distribution list carries no body of its own: synthesize one listing its members, mirroring
+        // the PST pipeline. Fall back to the regular body pass when no members decode.
+        var distListBody = messageClass != null
+                && messageClass.startsWith("IPM.DistList")
+                && populateDistributionList(message, serializer);
+        if (!distListBody) {
+            populateBodies(message, serializer, log);
+        }
         populateCalendarInvite(message, messageClass, from, serializer, log);
         populateContactCard(message, messageClass, serializer);
         populateTaskTodo(message, messageClass, serializer, log);
+        if (messageClass != null && !hasSpecializedHandler(messageClass)) {
+            // Every other class still exported a generic EML above; make that downgrade visible rather
+            // than silently dropping the item's specialized semantics (journal, document, custom forms).
+            log.info("No specialized handler for message class " + messageClass + "; exported as a generic message");
+        }
 
         populateAttachments(message, depth, serializer, log);
 
@@ -731,16 +754,31 @@ public final class MsgToEmlConverter {
             }
         }
         var method = ICalendarGenerator.method(messageClass, !attendees.isEmpty());
+        var organizerName = organizer.name();
+        var organizerEmail = organizer.email();
+        List<ICalendarGenerator.Attendee> eventAttendees = attendees;
+        if ("REPLY".equals(method)) {
+            // RFC 5546 §3.2.3: a meeting-response REPLY flows from the responding ATTENDEE to the
+            // meeting ORGANIZER, carrying that attendee's PARTSTAT. In the MSG the responder is the
+            // sender (the `organizer` identity here) and the meeting organizer is the recipient, so
+            // the two roles are swapped relative to a REQUEST and the PARTSTAT is attached to the
+            // single responding attendee. (attendees is non-empty — method() returns REPLY only then.)
+            var meetingOrganizer = attendees.get(0);
+            organizerName = meetingOrganizer.name();
+            organizerEmail = meetingOrganizer.email();
+            eventAttendees = List.of(new ICalendarGenerator.Attendee(
+                    organizer.name(), organizer.email(), ICalendarGenerator.responsePartStat(messageClass)));
+        }
         var ical = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
                 method,
                 start,
                 end,
                 location,
                 safeString(safeSubject(message)),
-                organizer.name(),
-                organizer.email(),
+                organizerName,
+                organizerEmail,
                 readBody(message::getTextBody, "plain text", log),
-                attendees,
+                eventAttendees,
                 allDay,
                 timeZone,
                 recurrence));
@@ -778,12 +816,17 @@ public final class MsgToEmlConverter {
                 false);
     }
 
-    /** A VTODO for an {@code IPM.Task} item: start/due dates, completion state and percent complete. */
+    /**
+     * A VTODO for a task item: start/due dates, completion state and percent complete. A plain
+     * {@code IPM.Task} is published; an assigned {@code IPM.TaskRequest} (or its accept/decline/update
+     * response) carries the matching iTIP {@code METHOD} instead of being mislabeled as a plain task.
+     */
     private static void populateTaskTodo(
             MAPIMessage message, String messageClass, EmlSerializer serializer, ConversionLog log) {
         if (messageClass == null || !messageClass.startsWith("IPM.Task")) {
             return;
         }
+        var method = taskMethod(messageClass);
         var start = readNamedTime(message, PSETID_TASK, 0x8104); // PidLidTaskStartDate
         var due = readNamedTime(message, PSETID_TASK, 0x8105); // PidLidTaskDueDate
         var percent = readNamedDouble(message, PSETID_TASK, 0x8102); // PidLidPercentComplete
@@ -794,13 +837,129 @@ public final class MsgToEmlConverter {
                 start,
                 due,
                 percent,
-                complete);
+                complete,
+                method);
         serializer.addAttachment(
                 "task.ics",
-                "text/calendar; charset=UTF-8; method=PUBLISH",
+                "text/calendar; charset=UTF-8; method=" + method,
                 todo.getBytes(StandardCharsets.UTF_8),
                 null,
                 false);
+    }
+
+    /**
+     * The iTIP method (RFC 5546 §3.4) for a task message class: {@code IPM.TaskRequest} is a
+     * {@code REQUEST}, its {@code .Accept}/{@code .Decline}/{@code .Update} responses are
+     * {@code REPLY}s, and a plain {@code IPM.Task} is {@code PUBLISH}ed. Distinguishing
+     * {@code IPM.TaskRequest*} from {@code IPM.Task} here is what stops a task request — which has no
+     * dot after {@code Task} — from being swallowed by a naive {@code startsWith("IPM.Task")} and
+     * exported as a plain published task.
+     */
+    private static String taskMethod(String messageClass) {
+        if (messageClass.startsWith("IPM.TaskRequest.Accept")
+                || messageClass.startsWith("IPM.TaskRequest.Decline")
+                || messageClass.startsWith("IPM.TaskRequest.Update")) {
+            return "REPLY";
+        }
+        if (messageClass.startsWith("IPM.TaskRequest")) {
+            return "REQUEST";
+        }
+        return "PUBLISH";
+    }
+
+    /**
+     * All byte-chunk values stored under a named property — a {@code PT_MV_BINARY} property arrives in
+     * POI as multiple {@link ByteChunk}s sharing one property id (the binary analogue of how
+     * {@link #readNamedStrings} collects multiple {@link StringChunk}s), so the single-valued
+     * {@link #readNamedBytes} would silently drop all but the first value.
+     */
+    private static byte[][] readNamedMultiBytes(MAPIMessage message, ClassID propertySet, long lid) {
+        var propertyId = namedPropertyId(message, propertySet, null, lid);
+        var mainChunks = message.getMainChunks();
+        if (propertyId < 0 || mainChunks == null) {
+            return new byte[0][];
+        }
+        var values = new ArrayList<byte[]>();
+        for (var entry : mainChunks.getAll().entrySet()) {
+            if (entry.getKey().id != propertyId) {
+                continue;
+            }
+            for (var chunk : entry.getValue()) {
+                if (chunk instanceof ByteChunk byteChunk && byteChunk.getValue() != null) {
+                    values.add(byteChunk.getValue());
+                }
+            }
+        }
+        return values.toArray(new byte[0][]);
+    }
+
+    /**
+     * Synthesizes the plain-text body of an {@code IPM.DistList}: one member per line, mirroring the
+     * PST pipeline's {@code formatDistributionListMembers}. Members are decoded from
+     * {@code PidLidDistributionListOneOffMembers} (which carries inline addresses), falling back to
+     * {@code PidLidDistributionListMembers}. Returns {@code false} when nothing decodes, so the caller
+     * falls back to the regular body pass.
+     */
+    private static boolean populateDistributionList(MAPIMessage message, EmlSerializer serializer) {
+        var blobs = readNamedMultiBytes(message, PSETID_ADDRESS, 0x8054); // PidLidDistributionListOneOffMembers
+        if (blobs.length == 0) {
+            blobs = readNamedMultiBytes(message, PSETID_ADDRESS, 0x8055); // PidLidDistributionListMembers
+        }
+        var members = DistributionListMembers.parse(blobs);
+        if (members.isEmpty()) {
+            return false;
+        }
+        var listing = new StringBuilder("Distribution list members:\r\n");
+        for (var member : members) {
+            var formatted = EmlSerializer.formatAddress(member.name(), member.email());
+            if (!formatted.isBlank()) {
+                listing.append("- ").append(formatted).append("\r\n");
+            }
+        }
+        serializer.addBody(listing.toString(), "text/plain; charset=UTF-8");
+        return true;
+    }
+
+    /**
+     * Replaces the message body with an RFC 6522 {@code multipart/report} reconstructed from the
+     * report's MAPI properties: a delivery report ({@code REPORT.*.NDR}/{@code .DR}) yields a
+     * {@code message/delivery-status} part (RFC 3464), a read receipt ({@code .IPNRN}/{@code .IPNNRN})
+     * a {@code message/disposition-notification} part (RFC 8098). The class suffix selects the branch
+     * and supplies {@code Action}/{@code Disposition}, which MAPI does not store verbatim.
+     */
+    private static void emitReport(MAPIMessage message, String messageClass, EmlSerializer serializer) {
+        var deliveryReport = messageClass.endsWith(".NDR") || messageClass.endsWith(".DR");
+        var action = messageClass.endsWith(".NDR") ? "failed" : messageClass.endsWith(".DR") ? "delivered" : null;
+        var dispositionType = messageClass.endsWith(".IPNNRN") ? "deleted" : "displayed";
+        var info = new ReportGenerator.ReportInfo(
+                deliveryReport,
+                readMainStringById(message, 0x1001), // PidTagReportText
+                readMainStringById(message, 0x6820), // PidTagReportingMessageTransferAgent
+                readMainStringById(message, 0x0E04), // PidTagDisplayTo (final recipient)
+                action,
+                readMainStringById(message, 0x0C1B), // PidTagSupplementaryInfo (DSN status text)
+                null,
+                readMainStringById(message, 0x1046), // PidTagInternetMessageId of the original
+                dispositionType);
+        var report = ReportGenerator.generate(info);
+        serializer.setRawEntity(report.contentType(), null, null, report.body());
+    }
+
+    /**
+     * Whether a message class produced a specialized artifact above (S/MIME hoist, calendar invite,
+     * vCard, VTODO, distribution-list body or report) or is a plain note/post. Anything else still
+     * exported a generic EML, which the caller logs as a downgrade.
+     */
+    private static boolean hasSpecializedHandler(String messageClass) {
+        return messageClass.equals("IPM")
+                || messageClass.startsWith("IPM.Note")
+                || messageClass.startsWith("IPM.Post")
+                || messageClass.startsWith("IPM.Appointment")
+                || messageClass.startsWith("IPM.Schedule.Meeting")
+                || messageClass.startsWith("IPM.Contact")
+                || messageClass.startsWith("IPM.Task")
+                || messageClass.startsWith("IPM.DistList")
+                || messageClass.startsWith("REPORT.");
     }
 
     /**
