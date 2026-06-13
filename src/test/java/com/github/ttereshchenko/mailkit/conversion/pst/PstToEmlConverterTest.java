@@ -14,11 +14,14 @@ import com.github.ttereshchenko.mailkit.pst.NodeEntry;
 import com.github.ttereshchenko.mailkit.pst.PstFile;
 import java.io.StringWriter;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
@@ -1285,6 +1288,845 @@ class PstToEmlConverterTest {
                 java.nio.charset.StandardCharsets.UTF_8);
         assertTrue(vcard.contains("FN:Sebastian Wright"), vcard);
         assertTrue(vcard.contains("EMAIL;TYPE=internet:SebastianWright@dayrep.com"), vcard);
+    }
+
+    // -----------------------------------------------------------------------
+    // REPORT.*  →  RFC 6522 multipart/report
+    // -----------------------------------------------------------------------
+
+    /**
+     * REPORT.IPM.Note.NDR must emit a top-level {@code multipart/report;
+     * report-type=delivery-status} containing a {@code message/delivery-status} part with
+     * {@code Action: failed}, a {@code Status:} field, a {@code Final-Recipient:} field, a
+     * {@code Reporting-MTA:} field, and the human-readable report text.
+     */
+    @Test
+    void ndrReportEmitsMultipartDeliveryStatus() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "REPORT.IPM.Note.NDR";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Undeliverable: Hello";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getStringProperty(int propertyId) {
+                    return switch (propertyId) {
+                        case 0x1001 -> "Your message could not be delivered."; // PidTagReportText
+                        case 0x6820 -> "mail.relay.example.com"; // PidTagReportingMessageTransferAgent
+                        case MapiProperties.PR_DISPLAY_TO_W -> "bob@example.com"; // final recipient
+                        case 0x0C1B -> "5.1.1"; // PidTagSupplementaryInfo (status)
+                        default -> null;
+                    };
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("Content-Type: multipart/report"), "top-level must be multipart/report: " + eml);
+            assertTrue(eml.contains("report-type=delivery-status"), "report-type must be delivery-status: " + eml);
+            assertTrue(
+                    eml.contains("Content-Type: message/delivery-status"),
+                    "must contain a delivery-status part: " + eml);
+            assertTrue(eml.contains("Action: failed"), "Action must be 'failed' for NDR: " + eml);
+            assertTrue(eml.contains("Status: 5.1.1"), "Status field must survive: " + eml);
+            assertTrue(
+                    eml.contains("Final-Recipient: rfc822; bob@example.com"),
+                    "Final-Recipient must be present: " + eml);
+            assertTrue(
+                    eml.contains("Reporting-MTA: dns; mail.relay.example.com"),
+                    "Reporting-MTA must be present: " + eml);
+            assertTrue(
+                    eml.contains("Your message could not be delivered."),
+                    "human-readable text must appear in the first part: " + eml);
+        }
+    }
+
+    /**
+     * REPORT.IPM.Note.IPNRN (read receipt) must emit {@code report-type=disposition-notification},
+     * a {@code message/disposition-notification} part, a {@code Disposition: ... displayed} line,
+     * and the {@code Original-Message-ID}.
+     */
+    @Test
+    void readReceiptReportEmitsDispositionNotification() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "REPORT.IPM.Note.IPNRN";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Read: Hello";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getStringProperty(int propertyId) {
+                    return switch (propertyId) {
+                        case 0x1001 -> "This is a read receipt."; // PidTagReportText
+                        case MapiProperties.PR_DISPLAY_TO_W -> "alice@example.com"; // final recipient
+                        case 0x1046 -> "<original-msg-id@example.com>"; // PidTagOriginalMessageId
+                        default -> null;
+                    };
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("report-type=disposition-notification"),
+                    "report-type must be disposition-notification: " + eml);
+            assertTrue(
+                    eml.contains("Content-Type: message/disposition-notification"),
+                    "must contain a disposition-notification part: " + eml);
+            assertTrue(eml.contains("displayed"), "Disposition must carry 'displayed' for IPNRN: " + eml);
+            assertTrue(
+                    eml.contains("Original-Message-ID: <original-msg-id@example.com>"),
+                    "Original-Message-ID must be present: " + eml);
+        }
+    }
+
+    /**
+     * REPORT.IPM.Note.IPNNRN (non-read receipt / deleted) must carry {@code Disposition: ...
+     * deleted} instead of displayed.
+     */
+    @Test
+    void nonReadReceiptReportEmitsDeletedDisposition() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "REPORT.IPM.Note.IPNNRN";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Not Read: Hello";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getStringProperty(int propertyId) {
+                    return switch (propertyId) {
+                        case MapiProperties.PR_DISPLAY_TO_W -> "alice@example.com";
+                        case 0x1046 -> "<original-msg-id@example.com>";
+                        default -> null;
+                    };
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("report-type=disposition-notification"),
+                    "report-type must be disposition-notification: " + eml);
+            assertTrue(eml.contains("deleted"), "Disposition must carry 'deleted' for IPNNRN: " + eml);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // S/MIME hoist
+    // -----------------------------------------------------------------------
+
+    /**
+     * A clear-signed message ({@code IPM.Note.SMIME.MultipartSigned}) with a single attachment
+     * whose bytes are a full MIME entity starting with {@code Content-Type: multipart/signed} is
+     * hoisted verbatim: the top-level Content-Type of the exported EML must be that
+     * {@code multipart/signed} value.
+     */
+    @Test
+    void clearSignedSmimeIsHoistedFromSingleAttachment() throws Exception {
+        var mimeEntity = "Content-Type: multipart/signed; protocol=\"application/pkcs7-signature\";"
+                + " micalg=sha-256; boundary=\"sig\"\r\n"
+                + "Content-Transfer-Encoding: 7bit\r\n"
+                + "\r\n"
+                + "signed body text\r\n"
+                + "--sig--\r\n";
+        var entityBytes = mimeEntity.getBytes(StandardCharsets.ISO_8859_1);
+
+        var smimeAttachment = new Attachment() {
+            @Override
+            public String getLongFilename() {
+                return "smime.p7m";
+            }
+
+            @Override
+            public String getFilename() {
+                return "";
+            }
+
+            @Override
+            public String getMimeTag() {
+                return "multipart/signed";
+            }
+
+            @Override
+            public int getAttachMethod() {
+                return 1; // afByValue
+            }
+
+            @Override
+            public byte[] getData() {
+                return entityBytes;
+            }
+
+            @Override
+            public String getContentId() {
+                return null;
+            }
+
+            @Override
+            public String getContentLocation() {
+                return null;
+            }
+
+            @Override
+            public boolean isInline() {
+                return false;
+            }
+        };
+
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note.SMIME.MultipartSigned";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Signed message";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of(smimeAttachment);
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("Content-Type: multipart/signed"),
+                    "top-level Content-Type must be the hoisted multipart/signed: " + eml);
+            assertTrue(
+                    eml.contains("protocol=\"application/pkcs7-signature\""),
+                    "protocol parameter must survive: " + eml);
+            assertTrue(eml.contains("signed body text"), "hoisted body must be present in the output: " + eml);
+        }
+    }
+
+    /**
+     * An opaque S/MIME message ({@code IPM.Note.Secure}) with a single attachment whose bytes are
+     * not parseable as MIME headers is exported as a {@code application/pkcs7-mime} base64
+     * top-level entity with the appropriate Content-Disposition.
+     */
+    @Test
+    void opaqueSmimeIsExportedAsBase64PkcsEntity() throws Exception {
+        var opaqueBytes = new byte[] {0x30, 0x45, 0x02, 0x01, 0x00, 0x09, 0x10, 0x20};
+
+        var smimeAttachment = new Attachment() {
+            @Override
+            public String getLongFilename() {
+                return "smime.p7m";
+            }
+
+            @Override
+            public String getFilename() {
+                return "";
+            }
+
+            @Override
+            public String getMimeTag() {
+                return "application/pkcs7-mime";
+            }
+
+            @Override
+            public int getAttachMethod() {
+                return 1; // afByValue
+            }
+
+            @Override
+            public byte[] getData() {
+                return opaqueBytes;
+            }
+
+            @Override
+            public String getContentId() {
+                return null;
+            }
+
+            @Override
+            public String getContentLocation() {
+                return null;
+            }
+
+            @Override
+            public boolean isInline() {
+                return false;
+            }
+        };
+
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note.Secure";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Encrypted message";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of(smimeAttachment);
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("Content-Type: application/pkcs7-mime"),
+                    "top-level must be application/pkcs7-mime: " + eml);
+            assertTrue(eml.contains("name=\"smime.p7m\""), "name parameter must be present: " + eml);
+            assertTrue(eml.contains("Content-Transfer-Encoding: base64"), "opaque blob must be base64: " + eml);
+            assertTrue(
+                    eml.contains("Content-Disposition: attachment; filename=\"smime.p7m\""),
+                    "Content-Disposition must name the file: " + eml);
+            assertTrue(
+                    eml.contains(Base64.getEncoder().encodeToString(opaqueBytes)),
+                    "base64 of the blob must be present: " + eml);
+        }
+    }
+
+    /**
+     * When an S/MIME message class has TWO attachments the hoist cannot determine which is the
+     * envelope, so it falls back to normal re-encoding: the output contains a regular text/plain
+     * body and the log records that the entity could not be hoisted.
+     */
+    @Test
+    void smimeWithTwoAttachmentsFallsBackToNormalReencodeAndLogs() throws Exception {
+        var twoAttachments = List.<Attachment>of(
+                new Attachment() {
+                    @Override
+                    public String getLongFilename() {
+                        return "part1.dat";
+                    }
+
+                    @Override
+                    public String getFilename() {
+                        return "";
+                    }
+
+                    @Override
+                    public String getMimeTag() {
+                        return "application/octet-stream";
+                    }
+
+                    @Override
+                    public int getAttachMethod() {
+                        return 1;
+                    }
+
+                    @Override
+                    public byte[] getData() {
+                        return new byte[] {1, 2, 3};
+                    }
+
+                    @Override
+                    public String getContentId() {
+                        return null;
+                    }
+
+                    @Override
+                    public String getContentLocation() {
+                        return null;
+                    }
+
+                    @Override
+                    public boolean isInline() {
+                        return false;
+                    }
+                },
+                new Attachment() {
+                    @Override
+                    public String getLongFilename() {
+                        return "part2.dat";
+                    }
+
+                    @Override
+                    public String getFilename() {
+                        return "";
+                    }
+
+                    @Override
+                    public String getMimeTag() {
+                        return "application/octet-stream";
+                    }
+
+                    @Override
+                    public int getAttachMethod() {
+                        return 1;
+                    }
+
+                    @Override
+                    public byte[] getData() {
+                        return new byte[] {4, 5, 6};
+                    }
+
+                    @Override
+                    public String getContentId() {
+                        return null;
+                    }
+
+                    @Override
+                    public String getContentLocation() {
+                        return null;
+                    }
+
+                    @Override
+                    public boolean isInline() {
+                        return false;
+                    }
+                });
+
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(pstFile, "Two-attachment signed", twoAttachments, null, "") {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note.SMIME.MultipartSigned";
+                }
+            };
+
+            var log = new RecordingLog();
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(
+                            message, defaultOptions(), pstFile, 0, log, new PstToEmlConverter.Stats())
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("text/plain"), "fallback must produce a normal text/plain body: " + eml);
+            assertFalse(
+                    eml.contains("Content-Type: multipart/signed"), "must not be hoisted with two attachments: " + eml);
+            assertTrue(
+                    log.infos.stream()
+                            .anyMatch(info -> info.contains("could not be hoisted")
+                                    || info.contains("S/MIME") && info.contains("not be hoisted")),
+                    () -> "Expected a 'could not be hoisted' log entry, got: " + log.infos);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Meeting-response PARTSTAT
+    // -----------------------------------------------------------------------
+
+    /**
+     * An {@code IPM.Schedule.Meeting.Resp.Pos} (accepted) message must emit an invite.ics with
+     * {@code METHOD:REPLY}, the organizer carrying the recipient email (role-swapped), and the
+     * responding attendee with {@code PARTSTAT=ACCEPTED}.
+     */
+    @Test
+    void meetingResponseAcceptedCarriesPartstatAccepted() throws Exception {
+        var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
+        try (var pstFile = new PstFile(distListPst)) {
+            var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
+            org.junit.jupiter.api.Assertions.assertNotNull(
+                    startId, "dist-list.pst must define the appointment start named property");
+
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Schedule.Meeting.Resp.Pos";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Accepted: Sync";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Bob";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "bob@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // The organizer is the (single) recipient on a meeting response.
+                    return List.of(new Recipient(1, "Alice", "alice@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    if (propertyId == startId) {
+                        return Instant.parse("2026-07-01T15:00:00Z");
+                    }
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("name=\"invite.ics\""), "invite.ics must be present: " + eml);
+            var icsMatcher = Pattern.compile("(?s)name=\"invite\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                    .matcher(eml);
+            assertTrue(icsMatcher.find(), "invite.ics must be base64-encoded: " + eml);
+            var ics = new String(Base64.getMimeDecoder().decode(icsMatcher.group(1)), StandardCharsets.UTF_8);
+
+            assertTrue(ics.contains("METHOD:REPLY"), "method must be REPLY: " + ics);
+            assertTrue(
+                    ics.contains("alice@example.com"), "organizer (role-swapped from recipient) must be alice: " + ics);
+            assertTrue(ics.contains("bob@example.com"), "responding attendee must be bob: " + ics);
+            assertTrue(ics.contains("PARTSTAT=ACCEPTED"), "PARTSTAT must be ACCEPTED for Resp.Pos: " + ics);
+        }
+    }
+
+    /**
+     * An {@code IPM.Schedule.Meeting.Resp.Neg} (declined) message must carry {@code PARTSTAT=DECLINED}.
+     */
+    @Test
+    void meetingResponseDeclinedCarriesPartstatDeclined() throws Exception {
+        var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
+        try (var pstFile = new PstFile(distListPst)) {
+            var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
+            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Schedule.Meeting.Resp.Neg";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Declined: Sync";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Bob";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "bob@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of(new Recipient(1, "Alice", "alice@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    if (propertyId == startId) {
+                        return Instant.parse("2026-07-01T15:00:00Z");
+                    }
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            var icsMatcher = Pattern.compile("(?s)name=\"invite\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                    .matcher(eml);
+            assertTrue(icsMatcher.find(), "invite.ics must be present");
+            var ics = new String(Base64.getMimeDecoder().decode(icsMatcher.group(1)), StandardCharsets.UTF_8);
+
+            assertTrue(ics.contains("METHOD:REPLY"), "method must be REPLY: " + ics);
+            assertTrue(ics.contains("PARTSTAT=DECLINED"), "PARTSTAT must be DECLINED for Resp.Neg: " + ics);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // TaskRequest METHOD
+    // -----------------------------------------------------------------------
+
+    /**
+     * An {@code IPM.TaskRequest} must produce a {@code task.ics} with {@code METHOD:REQUEST} in
+     * both the part header ({@code text/calendar; charset=UTF-8; method=REQUEST}) and the iCal body.
+     */
+    @Test
+    void taskRequestCarriesMethodRequest() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var task = new StubMessage(pstFile, "Review Q2 budget", List.of(), null, "") {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.TaskRequest";
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(
+                            task, defaultOptions(), pstFile, 0, ConversionLog.NOOP, new PstToEmlConverter.Stats())
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("text/calendar; charset=UTF-8; method=REQUEST"),
+                    "part content-type must carry method=REQUEST: " + eml);
+            var icsMatcher = Pattern.compile("(?s)name=\"task\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                    .matcher(eml);
+            assertTrue(icsMatcher.find(), "task.ics must be present");
+            var ics = new String(Base64.getMimeDecoder().decode(icsMatcher.group(1)), StandardCharsets.UTF_8);
+            assertTrue(ics.contains("METHOD:REQUEST"), "iCal body must contain METHOD:REQUEST: " + ics);
+        }
+    }
+
+    /**
+     * An {@code IPM.TaskRequest.Accept} (task accepted) must carry {@code METHOD:REPLY}.
+     */
+    @Test
+    void taskRequestAcceptCarriesMethodReply() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var task = new StubMessage(pstFile, "RE: Review Q2 budget", List.of(), null, "") {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.TaskRequest.Accept";
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(
+                            task, defaultOptions(), pstFile, 0, ConversionLog.NOOP, new PstToEmlConverter.Stats())
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("method=REPLY"), "part content-type must carry method=REPLY: " + eml);
+            var icsMatcher = Pattern.compile("(?s)name=\"task\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                    .matcher(eml);
+            assertTrue(icsMatcher.find(), "task.ics must be present");
+            var ics = new String(Base64.getMimeDecoder().decode(icsMatcher.group(1)), StandardCharsets.UTF_8);
+            assertTrue(ics.contains("METHOD:REPLY"), "iCal body must contain METHOD:REPLY: " + ics);
+        }
+    }
+
+    /**
+     * A plain {@code IPM.Task} (not a request/response) must carry {@code METHOD:PUBLISH}
+     * (regression guard — the gate-bug would have made startsWith("IPM.Task") swallow TaskRequest).
+     */
+    @Test
+    void plainTaskCarriesMethodPublish() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var task = new StubMessage(pstFile, "File the report", List.of(), null, "") {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Task";
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(
+                            task, defaultOptions(), pstFile, 0, ConversionLog.NOOP, new PstToEmlConverter.Stats())
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("method=PUBLISH"), "part content-type must carry method=PUBLISH for IPM.Task: " + eml);
+            var icsMatcher = Pattern.compile("(?s)name=\"task\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                    .matcher(eml);
+            assertTrue(icsMatcher.find(), "task.ics must be present");
+            var ics = new String(Base64.getMimeDecoder().decode(icsMatcher.group(1)), StandardCharsets.UTF_8);
+            assertTrue(ics.contains("METHOD:PUBLISH"), "iCal body must contain METHOD:PUBLISH: " + ics);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Allow-list gate (isAllowedMessageClass)
+    // -----------------------------------------------------------------------
+
+    /**
+     * The allow-list gate must accept all expanded mail-like classes regardless of exportNonMailItems.
+     */
+    @Test
+    void allowListAcceptsMsgLikeClasses() {
+        for (var cls : List.of(
+                "IPM.Document",
+                "IPM.Report",
+                "IPM.Recall.Report",
+                "IPM.Outlook.Recall",
+                "IPM.Remote",
+                "IPM.Resend",
+                "IPM.OLE.Class",
+                "IPM",
+                "IPM.Note")) {
+            assertTrue(
+                    PstToEmlConverter.isAllowedMessageClass(cls, false),
+                    "must be allowed without exportNonMailItems: " + cls);
+        }
+    }
+
+    /**
+     * Non-mail item classes (IPM.Contact, IPM.Activity) are blocked by default and allowed only
+     * when exportNonMailItems is true. An entirely unknown class is always blocked.
+     */
+    @Test
+    void allowListBlocksNonMailClassesUnlessExportNonMailEnabled() {
+        assertFalse(
+                PstToEmlConverter.isAllowedMessageClass("IPM.Contact", false),
+                "IPM.Contact must be blocked by default");
+        assertFalse(
+                PstToEmlConverter.isAllowedMessageClass("IPM.Activity", false),
+                "IPM.Activity must be blocked by default");
+        assertFalse(
+                PstToEmlConverter.isAllowedMessageClass("IPM.UnknownGarbage", false), "unknown class must be blocked");
+        assertFalse(
+                PstToEmlConverter.isAllowedMessageClass("IPM.UnknownGarbage", true),
+                "unknown class must be blocked even with exportNonMailItems");
+
+        assertTrue(
+                PstToEmlConverter.isAllowedMessageClass("IPM.Contact", true),
+                "IPM.Contact must be allowed when exportNonMailItems is true");
+        assertTrue(
+                PstToEmlConverter.isAllowedMessageClass("IPM.Activity", true),
+                "IPM.Activity must be allowed when exportNonMailItems is true");
+    }
+
+    // -----------------------------------------------------------------------
+    // Downgrade log
+    // -----------------------------------------------------------------------
+
+    /**
+     * A message of class {@code IPM.Document} (allowed but has no specialized handler) must log
+     * "No specialized handler for message class IPM.Document" when passed through createSerializer.
+     */
+    @Test
+    void genericMessageClassLogsDowngradeNote() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(pstFile, "Some document", List.of(), null, "") {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Document";
+                }
+            };
+
+            var log = new RecordingLog();
+            PstToEmlConverter.createSerializer(
+                            message, defaultOptions(), pstFile, 0, log, new PstToEmlConverter.Stats())
+                    .writeTo(new StringWriter());
+
+            assertTrue(
+                    log.infos.stream()
+                            .anyMatch(info -> info.contains("No specialized handler for message class IPM.Document")),
+                    () -> "Expected a downgrade note for IPM.Document, got: " + log.infos);
+        }
     }
 
     private static int countOccurrences(String haystack, String needle) {

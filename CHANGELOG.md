@@ -27,6 +27,14 @@
 - A new "Verify on-disk checksums while reading" option validates every page and block checksum of the archive while converting, turning silent bit rot into clearly reported corruption errors; compressed RTF bodies always verify their checksum and report mismatches.
 - A message that claims attachments which cannot be read from a damaged attachment table is now reported and counted as a failure instead of exporting "successfully" without them.
 
+### Added (PST/OST message-class coverage)
+
+- Delivery-status notifications and read receipts (non-delivery / delivery reports and read / non-read receipts) now convert into a proper `multipart/report` message — the machine-readable delivery-status / disposition-notification survives instead of being flattened into a plain text body, the same way the MSG conversion already handles them.
+- S/MIME messages converted from `.pst`/`.ost` keep their cryptographic envelope verifiable: clear-signed messages export as real `multipart/signed` EMLs with the original signature intact, and opaque signed/encrypted ones as `application/pkcs7-mime` (`smime.p7m`) — previously the converter re-encoded the structure and silently broke the signature.
+- Meeting responses now record the attendee's answer: an accept / decline / tentative reply exports an `invite.ics` carrying the matching participation status and the correct organizer/attendee roles, instead of a generic invite.
+- Task-assignment requests and their accept / decline / update responses now carry the correct calendar method (request / reply) instead of being mislabeled as a plain published task.
+- More Outlook item types now convert instead of being silently skipped: documents, recall reports and recall requests, remote-mail headers, resend items, item-status reports and recurrence-exception items are exported as plain messages (with a console note that no specialized handler applied), so the PST/OST conversion drops nothing the MSG conversion would keep.
+
 ### Fixed (PST/OST conversion accuracy)
 
 - Messages with large recipient or attachment tables (roughly 40+ recipients or 50+ attachments) no longer lose them: the tables' row data was being looked up in the wrong part of the archive's storage tree, silently dropping every recipient and attachment of such messages — mass-distribution mail in particular — and occasionally fabricating a bogus recipient from unrelated data. Both ANSI and Unicode archives are affected and covered.

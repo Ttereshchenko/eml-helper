@@ -8,6 +8,7 @@ import com.github.ttereshchenko.mailkit.conversion.HtmlMetaCharset;
 import com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator;
 import com.github.ttereshchenko.mailkit.conversion.ReportGenerator;
 import com.github.ttereshchenko.mailkit.conversion.RtfStripper;
+import com.github.ttereshchenko.mailkit.conversion.SmimeEntityHoist;
 import com.github.ttereshchenko.mailkit.conversion.VCardGenerator;
 import com.github.ttereshchenko.mailkit.conversion.WindowsTimeZone;
 import com.github.ttereshchenko.mailkit.pst.Message;
@@ -617,8 +618,10 @@ public final class MsgToEmlConverter {
      * attachment — a clear-signed message as a full MIME entity (headers + multipart/signed body),
      * an opaque signed/encrypted one as a raw PKCS#7 blob ({@code smime.p7m}). Re-encoding either
      * through the regular body/attachment pipeline demotes the envelope to an opaque attachment and
-     * makes the signature unverifiable. Returns {@code false} (the caller falls back to the regular
-     * pipeline) when the message does not consist of exactly one data-bearing attachment.
+     * makes the signature unverifiable. The byte-to-entity reasoning lives in the POI-free
+     * {@link SmimeEntityHoist} shared with the PST path; this method only supplies the single
+     * data-bearing attachment POI exposes. Returns {@code false} (the caller falls back to the
+     * regular pipeline) when the message does not consist of exactly one such attachment.
      */
     private static boolean hoistSmimeEntity(MAPIMessage message, EmlSerializer serializer, ConversionLog log) {
         var raw = message.getAttachmentFiles();
@@ -633,77 +636,16 @@ public final class MsgToEmlConverter {
                 || dataChunk.getValue().length == 0) {
             return false;
         }
-        var data = dataChunk.getValue();
-        // ISO-8859-1 maps bytes 1:1 to chars, so a 7bit-canonicalized envelope (the S/MIME norm,
-        // RFC 8551 §3.1.1) round-trips byte-identically through the UTF-8 output writer.
-        var entity = new String(data, StandardCharsets.ISO_8859_1);
-        var headerEnd = entityHeaderEnd(entity);
-        if (headerEnd > 0) {
-            var headerBlock = entity.substring(0, headerEnd);
-            var contentType = entityHeaderValue(headerBlock, "Content-Type");
-            if (contentType != null && !contentType.isBlank()) {
-                var transferEncoding = entityHeaderValue(headerBlock, "Content-Transfer-Encoding");
-                var bodyStart = headerEnd + (entity.startsWith("\r\n\r\n", headerEnd) ? 4 : 2);
-                var body = normalizeToCrlf(entity.substring(Math.min(bodyStart, entity.length())));
-                serializer.setRawEntity(contentType, transferEncoding, null, body);
-                log.info("S/MIME message: hoisted the stored MIME entity (" + contentType + ")");
-                return true;
-            }
+        var entity = SmimeEntityHoist.hoist(
+                dataChunk.getValue(), pickFilename(chunks), chunkValue(chunks.getAttachMimeTag()));
+        serializer.setRawEntity(entity.contentType(), entity.transferEncoding(), entity.disposition(), entity.body());
+        if (entity.fromMimeHeaders()) {
+            log.info("S/MIME message: hoisted the stored MIME entity (" + entity.contentType() + ")");
+        } else {
+            log.info("S/MIME message: exported the stored PKCS#7 envelope as the message body (" + entity.contentType()
+                    + ")");
         }
-        // No parseable entity headers: an opaque PKCS#7 blob becomes the message's own entity.
-        var filename = pickFilename(chunks);
-        filename = EmlSerializer.sanitizeFilename(filename == null || filename.isBlank() ? "smime.p7m" : filename);
-        var mimeTag = chunkValue(chunks.getAttachMimeTag());
-        var contentType = (mimeTag == null || mimeTag.isBlank() ? "application/pkcs7-mime" : mimeTag.trim())
-                + "; name=\"" + filename + "\"";
-        serializer.setRawEntity(
-                contentType,
-                "base64",
-                "attachment; filename=\"" + filename + "\"",
-                EmlSerializer.encodeBase64Wrapped(data));
-        log.info("S/MIME message: exported the stored PKCS#7 envelope as the message body (" + contentType + ")");
         return true;
-    }
-
-    /** The end offset (exclusive) of a leading RFC 5322 header block, or -1 when the data has none. */
-    private static int entityHeaderEnd(String entity) {
-        var firstLineEnd = entity.indexOf('\n');
-        if (firstLineEnd < 0) {
-            return -1;
-        }
-        var firstLine = entity.substring(0, firstLineEnd).stripTrailing();
-        var colon = firstLine.indexOf(':');
-        if (colon <= 0) {
-            return -1;
-        }
-        for (var index = 0; index < colon; index++) {
-            var character = firstLine.charAt(index);
-            if (character <= ' ' || character > '~') {
-                return -1; // not a printable-ASCII header field name: raw binary, not a MIME entity
-            }
-        }
-        var crlfEnd = entity.indexOf("\r\n\r\n");
-        var lfEnd = entity.indexOf("\n\n");
-        if (crlfEnd < 0) {
-            return lfEnd;
-        }
-        return lfEnd < 0 ? crlfEnd : Math.min(crlfEnd, lfEnd);
-    }
-
-    /** The unfolded value of the named header inside a raw header block, or {@code null}. */
-    private static String entityHeaderValue(String headerBlock, String name) {
-        var unfolded = headerBlock.replace("\r\n", "\n").replaceAll("\n[ \t]+", " ");
-        for (var line : unfolded.split("\n")) {
-            var colon = line.indexOf(':');
-            if (colon > 0 && line.substring(0, colon).trim().equalsIgnoreCase(name)) {
-                return line.substring(colon + 1).trim();
-            }
-        }
-        return null;
-    }
-
-    private static String normalizeToCrlf(String text) {
-        return text.replace("\r\n", "\n").replace('\r', '\n').replace("\n", "\r\n");
     }
 
     /**
