@@ -1,5 +1,6 @@
 package com.github.ttereshchenko.mailkit.pst;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -93,18 +94,45 @@ class PropertyContextTest {
                 "String8 bytes should be decoded using the provided charset");
     }
 
+    /**
+     * [MS-PST] §2.3.3.4.2 (MV Properties with Variable-size Base Type): the record is {@code ulCount}
+     * followed by exactly {@code ulCount} {@code rgulDataOffsets} (the start of each item, relative to
+     * the record start). There is NO terminating {@code rgulDataOffsets[ulCount]} entry — the length of
+     * the last item is the total size of the MV property data record minus its start offset, and
+     * {@code rgDataItems} is byte-aligned (no trailing/inter-item padding). So the final element MUST run
+     * to {@code data.length}; clipping it to a supposed {@code rgulDataOffsets[count]} or to skip
+     * "padding" would corrupt the last value.
+     */
     @Test
     void parsesVariableWidthMultiValueProperties() {
-        // PT_MV_UNICODE blob: count=2, offsets {12, 16}, "ab" + "c" in UTF-16LE.
-        var blob = ByteBuffer.allocate(18).order(ByteOrder.LITTLE_ENDIAN);
-        blob.putInt(0, 2);
-        blob.putInt(4, 12);
-        blob.putInt(8, 16);
-        blob.put(12, "ab".getBytes(StandardCharsets.UTF_16LE));
-        blob.put(16, "c".getBytes(StandardCharsets.UTF_16LE));
+        // PT_MV_UNICODE blob: count=2, offsets {12, 16}, "ab" + "c" in UTF-16LE; record size 18.
+        var unicodeBlob = ByteBuffer.allocate(18).order(ByteOrder.LITTLE_ENDIAN);
+        unicodeBlob.putInt(0, 2);
+        unicodeBlob.putInt(4, 12);
+        unicodeBlob.putInt(8, 16);
+        unicodeBlob.put(12, "ab".getBytes(StandardCharsets.UTF_16LE));
+        unicodeBlob.put(16, "c".getBytes(StandardCharsets.UTF_16LE));
 
-        Object parsed = PropertyContext.parseMultiValue(0x101F, blob.array(), StandardCharsets.ISO_8859_1);
-        assertEquals(List.of("ab", "c"), parsed);
+        Object parsedUnicode =
+                PropertyContext.parseMultiValue(0x101F, unicodeBlob.array(), StandardCharsets.ISO_8859_1);
+        assertEquals(List.of("ab", "c"), parsedUnicode);
+
+        // PT_MV_BINARY blob whose LAST element ends at the record boundary with no terminating offset
+        // entry: count=2, offsets {12, 15}, item0 = {0x01,0x02,0x03} [12,15), item1 = {0xFF,0x00,0x00}
+        // [15,18). The 0x00 bytes are real payload (the byte-aligned spec layout has no padding), so
+        // the last value must be the full 3 bytes — the regression would drop the trailing 0x00s.
+        var binaryBlob = ByteBuffer.allocate(18).order(ByteOrder.LITTLE_ENDIAN);
+        binaryBlob.putInt(0, 2);
+        binaryBlob.putInt(4, 12);
+        binaryBlob.putInt(8, 15);
+        binaryBlob.put(12, new byte[] {0x01, 0x02, 0x03});
+        binaryBlob.put(15, new byte[] {(byte) 0xFF, 0x00, 0x00});
+
+        @SuppressWarnings("unchecked")
+        var parsedBinary = (List<byte[]>) PropertyContext.parseMultiValue(0x1102, binaryBlob.array(), null);
+        assertEquals(2, parsedBinary.size());
+        assertArrayEquals(new byte[] {0x01, 0x02, 0x03}, parsedBinary.get(0));
+        assertArrayEquals(new byte[] {(byte) 0xFF, 0x00, 0x00}, parsedBinary.get(1));
     }
 
     @Test

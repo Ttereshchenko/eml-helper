@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.text.Normalizer;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
@@ -69,7 +70,9 @@ public class ScramAuthClient implements AuthClient {
 
     @Override
     public byte[] initial() {
-        clientFirstBare = "n=" + saslNormalize(credentials.username()) + ",r=" + clientNonce;
+        // rfc5802 §5.1: the username is SASLprep-normalized, then the gs2 '='/',' escaping is
+        // applied to the result.
+        clientFirstBare = "n=" + escapeUsername(saslPrep(credentials.username())) + ",r=" + clientNonce;
         var clientFirstMessage = "n,," + clientFirstBare;
         phase = Phase.AWAITING_SERVER_FIRST;
         return clientFirstMessage.getBytes(StandardCharsets.UTF_8);
@@ -105,6 +108,9 @@ public class ScramAuthClient implements AuthClient {
         var iterations = parseIterationCount(iterCountText);
 
         var passwordChars = credentials.password().get();
+        // rfc5802 §5.1 / rfc4013: the salted password is derived from the SASLprep-normalized
+        // password, not the raw bytes. For an ASCII password this is the identical char[].
+        var preparedPassword = saslPrep(new String(passwordChars)).toCharArray();
         byte[] saltedPassword;
         byte[] clientKey;
         byte[] storedKey;
@@ -113,7 +119,7 @@ public class ScramAuthClient implements AuthClient {
         byte[] serverKey;
         byte[] serverSig;
         try {
-            saltedPassword = pbkdf2(passwordChars, salt, iterations);
+            saltedPassword = pbkdf2(preparedPassword, salt, iterations);
             clientKey = hmac(saltedPassword, "Client Key".getBytes(StandardCharsets.UTF_8));
             storedKey = hash(clientKey);
             var clientFinalWithoutProof = "c=biws,r=" + combinedNonce;
@@ -129,6 +135,7 @@ public class ScramAuthClient implements AuthClient {
             return clientFinal.getBytes(StandardCharsets.UTF_8);
         } finally {
             Arrays.fill(passwordChars, '\0');
+            Arrays.fill(preparedPassword, '\0');
         }
     }
 
@@ -160,8 +167,116 @@ public class ScramAuthClient implements AuthClient {
         return map;
     }
 
-    private static String saslNormalize(String username) {
-        // SCRAM uses SASLprep — we approximate by escaping = and , per RFC 5802 §5.1.
+    /**
+     * Applies the SASLprep stringprep profile (rfc4013) that SCRAM requires for both the username
+     * and the password (rfc5802 §5.1 "the characters ... are normalized using SASLprep"; rfc5802 §3
+     * "Note that ... the client ... applies SASLprep"). rfc4013 layers on the stringprep framework
+     * (rfc3454):
+     *
+     * <ul>
+     *   <li><b>Mapping</b> (rfc4013 §2.1): the rfc3454 Table C.1.2 "non-ASCII space" characters are
+     *       mapped to a regular SPACE (U+0020), and the rfc3454 Table B.1 "commonly mapped to
+     *       nothing" characters (soft hyphen U+00AD, zero-width and other format controls) are
+     *       deleted.
+     *   <li><b>Normalization</b> (rfc4013 §2.2): the result is put into Unicode Normalization Form
+     *       KC (NFKC).
+     * </ul>
+     *
+     * <p>Mapping precedes normalization, per the stringprep ordering in rfc3454 §7. We do not
+     * implement the prohibition (rfc4013 §2.3) or bidi (§2.4) checks: their only effect on a valid
+     * credential is to reject it, so omitting them never changes the bytes computed for a credential
+     * the server would accept — and rejecting locally would just turn a server-side failure into a
+     * client-side one. A pure-ASCII string is unaffected by every step here, so existing ASCII
+     * credentials remain byte-identical.
+     *
+     * <p>This is SEPARATE from SCRAM's own {@code =}/{@code ,} escaping of the username in the gs2
+     * header (rfc5802 §5.1), which {@link #escapeUsername(String)} applies afterwards.
+     */
+    static String saslPrep(String value) {
+        if (value.isEmpty() || isAscii(value)) {
+            return value;
+        }
+        var mapped = new StringBuilder(value.length());
+        value.codePoints().forEach(codePoint -> {
+            if (isMappedToSpace(codePoint)) {
+                mapped.append(' ');
+            } else if (isMappedToNothing(codePoint)) {
+                // dropped
+            } else {
+                mapped.appendCodePoint(codePoint);
+            }
+        });
+        return Normalizer.normalize(mapped, Normalizer.Form.NFKC);
+    }
+
+    private static boolean isAscii(String value) {
+        for (var index = 0; index < value.length(); index++) {
+            if (value.charAt(index) > 0x7F) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** rfc3454 Table C.1.2: characters treated as a SPACE by SASLprep's mapping step. */
+    private static boolean isMappedToSpace(int codePoint) {
+        return switch (codePoint) {
+            case 0x00A0,
+                    0x1680,
+                    0x2000,
+                    0x2001,
+                    0x2002,
+                    0x2003,
+                    0x2004,
+                    0x2005,
+                    0x2006,
+                    0x2007,
+                    0x2008,
+                    0x2009,
+                    0x200A,
+                    0x200B,
+                    0x202F,
+                    0x205F,
+                    0x3000 -> true;
+            default -> false;
+        };
+    }
+
+    /** rfc3454 Table B.1: characters deleted by SASLprep's mapping step (mapped to nothing). */
+    private static boolean isMappedToNothing(int codePoint) {
+        return switch (codePoint) {
+            case 0x00AD,
+                    0x034F,
+                    0x1806,
+                    0x180B,
+                    0x180C,
+                    0x180D,
+                    0x200C,
+                    0x200D,
+                    0x2060,
+                    0xFE00,
+                    0xFE01,
+                    0xFE02,
+                    0xFE03,
+                    0xFE04,
+                    0xFE05,
+                    0xFE06,
+                    0xFE07,
+                    0xFE08,
+                    0xFE09,
+                    0xFE0A,
+                    0xFE0B,
+                    0xFE0C,
+                    0xFE0D,
+                    0xFE0E,
+                    0xFE0F,
+                    0xFEFF -> true;
+            default -> false;
+        };
+    }
+
+    /** SCRAM gs2 username escaping (rfc5802 §5.1) — distinct from {@link #saslPrep(String)}. */
+    private static String escapeUsername(String username) {
         return username.replace("=", "=3D").replace(",", "=2C");
     }
 

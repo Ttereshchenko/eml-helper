@@ -39,7 +39,8 @@ class SmtpClientScramWireTest {
     private enum ServerFinalPlacement {
         IN_334,
         IN_235,
-        TAMPERED_IN_334
+        TAMPERED_IN_334,
+        BARE_235
     }
 
     @Test
@@ -50,6 +51,14 @@ class SmtpClientScramWireTest {
     @Test
     void scramSha256CompletesWhenServerFinalRidesInThe235Reply() throws Exception {
         runScramScenario(ServerFinalPlacement.IN_235);
+    }
+
+    // A (non-conformant but real) server may complete SCRAM with a bare 235 carrying no server-final
+    // for the client to consume. The 235 is the server's authoritative success, so the client must
+    // accept it rather than fail a login the server accepted.
+    @Test
+    void scramSha256AcceptsBare235WithoutServerFinal() throws Exception {
+        runScramScenario(ServerFinalPlacement.BARE_235);
     }
 
     @Test
@@ -179,6 +188,8 @@ class SmtpClientScramWireTest {
                         writeLine(output, "235 2.7.0 authenticated");
                     }
                     case IN_235 -> writeLine(output, "235 " + base64(serverFinal));
+                    // No server-final at all: the server just accepts with a bare 235.
+                    case BARE_235 -> writeLine(output, "235 2.7.0 authenticated");
                 }
 
                 expectPrefix(reader.readLine(), "MAIL FROM:");

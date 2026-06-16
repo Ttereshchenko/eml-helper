@@ -32,6 +32,7 @@
           <li><strong>Batch Sending:</strong> Select several EML files and send them in one go — a shared envelope, per-file progress right in the dialog, and a choice to continue or stop when a message fails.</li>
           <li><strong>Advanced SMTP Features:</strong> ESMTP extensions, XCLIENT, HAProxy PROXY v1/v2, and per-send envelope overrides.</li>
           <li><strong>Save Overrides to Profile:</strong> Tweak the host, port, or envelope right in the Send dialog and optionally write the new values back to the selected profile — perfect for switching environments.</li>
+          <li><strong>Envelope and Bcc Safety:</strong> The Send dialog accepts display-name addresses and comma-separated recipient lists, and strips a <code>Bcc:</code> header from the transmitted message — warning you first — so blind recipients are never disclosed to the other recipients.</li>
           <li><strong>Profile Management:</strong> PasswordSafe-backed profiles manage everything from Security/TLS to Relay framing. Live tool-window transcript keeps you informed.</li>
         </ul>
 

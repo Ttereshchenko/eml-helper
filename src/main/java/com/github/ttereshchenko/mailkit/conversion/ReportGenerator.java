@@ -135,21 +135,50 @@ public final class ReportGenerator {
                 : "This is a return receipt for a message you sent.";
     }
 
-    /** {@code message/delivery-status}: per-message fields, a blank line, then per-recipient fields (rfc3464 §2.1). */
+    /**
+     * {@code message/delivery-status}: per-message fields, a blank line, then per-recipient fields (rfc3464 §2.1).
+     *
+     * <p>The fields {@code Reporting-MTA} (rfc3464 §2.2.2), {@code Final-Recipient} (§2.3.1/§2.3.2),
+     * {@code Action} (§2.3.3) and {@code Status} (§2.3.4) are MANDATORY; a delivery-status block that
+     * drops any of them is structurally invalid. A sparse Outlook NDR often supplies none of them, so
+     * each mandatory field is defaulted rather than omitted. The chosen defaults are deterministic
+     * (other converters depend on this exact output):
+     *
+     * <ul>
+     *   <li>{@code Reporting-MTA: dns; unknown} — an {@code mta-name-type} of {@code dns} with the
+     *       sentinel host {@code unknown} when no reporting host is known.
+     *   <li>{@code Final-Recipient: rfc822; unknown} — an {@code address-type} of {@code rfc822} with
+     *       the sentinel address {@code unknown} when no recipient is known.
+     *   <li>{@code Action: failed} — the conservative {@code action-value} (rfc3464 §2.3.3) for a
+     *       report Outlook materialised as an NDR.
+     *   <li>{@code Status: 5.0.0} — "other or undefined permanent failure" (rfc3463 §3) when no
+     *       finer status code is available.
+     * </ul>
+     *
+     * <p>{@code Diagnostic-Code} stays genuinely optional (rfc3464 §2.3.6) and is still omitted when blank.
+     */
     private static void appendDeliveryStatus(StringBuilder body, ReportInfo info) {
         body.append("Content-Type: message/delivery-status").append(CRLF);
         body.append(CRLF);
 
-        // Per-message fields (rfc3464 §2.2). Reporting-MTA carries an mta-name-type prefix.
-        appendField(body, "Reporting-MTA", prefixed("dns", info.reportingMta()));
+        // Per-message fields (rfc3464 §2.2). Reporting-MTA is mandatory (§2.2.2); default its
+        // mta-name-type to dns and the host to "unknown" when no reporting host is present.
+        appendField(body, "Reporting-MTA", defaulted(prefixed("dns", info.reportingMta()), "dns; unknown"));
         body.append(CRLF);
 
-        // Per-recipient fields (rfc3464 §2.3): Final-Recipient / Action / Status / Diagnostic-Code.
-        appendField(body, "Final-Recipient", prefixed("rfc822", info.finalRecipient()));
-        appendField(body, "Action", lower(info.action()));
-        appendField(body, "Status", clean(info.status()));
+        // Per-recipient fields (rfc3464 §2.3). Final-Recipient (§2.3.1/§2.3.2), Action (§2.3.3) and
+        // Status (§2.3.4) are mandatory and are defaulted when absent; Diagnostic-Code (§2.3.6) stays
+        // optional and is dropped when blank.
+        appendField(body, "Final-Recipient", defaulted(prefixed("rfc822", info.finalRecipient()), "rfc822; unknown"));
+        appendField(body, "Action", defaulted(lower(info.action()), "failed"));
+        appendField(body, "Status", defaulted(clean(info.status()), "5.0.0"));
         appendField(body, "Diagnostic-Code", prefixed("smtp", info.diagnosticCode()));
         body.append(CRLF);
+    }
+
+    /** Returns {@code value} when it carries content, otherwise the supplied mandatory-field default. */
+    private static String defaulted(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     /** {@code message/disposition-notification}: Final-Recipient / Original-Message-ID / Disposition (rfc8098 §3). */
@@ -158,7 +187,10 @@ public final class ReportGenerator {
         body.append(CRLF);
 
         appendField(body, "Reporting-UA", "MailKit");
-        appendField(body, "Final-Recipient", prefixed("rfc822", info.finalRecipient()));
+        // Final-Recipient is mandatory in an MDN (rfc8098 §3.1 makes final-recipient-field REQUIRED,
+        // unlike the optional original-recipient/original-message-id fields), so default it the same
+        // way the DSN path defaults its mandatory per-recipient fields rather than dropping it.
+        appendField(body, "Final-Recipient", defaulted(prefixed("rfc822", info.finalRecipient()), "rfc822; unknown"));
         appendField(body, "Original-Message-ID", clean(info.originalMessageId()));
         appendField(body, "Disposition", disposition(info.dispositionType()));
         body.append(CRLF);
@@ -210,26 +242,78 @@ public final class ReportGenerator {
     }
 
     /**
-     * Folds a header field at 78 characters per rfc5322 §2.1.1, inserting a CRLF + space before a
-     * whitespace-delimited token that would overflow. Never splits inside a token, so a long
-     * Diagnostic-Code stays intact even when no fold opportunity exists.
+     * Folds a header field at 78 characters per rfc5322 §2.2.3 without altering the value's
+     * significant whitespace. The line is split into alternating tokens (non-whitespace runs) and the
+     * single-space separators between them; when appending the next token would overflow 78
+     * characters, the preceding separator is rewritten as CRLF + SPACE (a legal fold point that
+     * unfolds back to a space). Runs of internal whitespace are emitted verbatim — never collapsed —
+     * so an aligned or doubled-space {@code Diagnostic-Code} survives intact, and a token that offers
+     * no fold opportunity is left whole rather than broken mid-token.
      */
     private static void appendFolded(StringBuilder body, String headerLine) {
-        var tokens = headerLine.split(" ");
         var lineLength = 0;
-        for (var index = 0; index < tokens.length; index++) {
-            var token = tokens[index];
-            if (index == 0) {
-                body.append(token);
-                lineLength = token.length();
-            } else if (lineLength + 1 + token.length() > 78) {
-                body.append(CRLF).append(' ').append(token);
-                lineLength = 1 + token.length();
+        var index = 0;
+        var firstToken = true;
+        while (index < headerLine.length()) {
+            if (headerLine.charAt(index) == ' ') {
+                // Preserve the whitespace run verbatim, but treat exactly one space of it as the
+                // foldable token separator (rfc5322 §2.2.3 unfolds CRLF+WSP back to that WSP). The
+                // separator and the token that follows are emitted together so the fold decision uses
+                // the next token's full width.
+                var whitespaceStart = index;
+                while (index < headerLine.length() && headerLine.charAt(index) == ' ') {
+                    index++;
+                }
+                var tokenStart = index;
+                while (index < headerLine.length() && headerLine.charAt(index) != ' ') {
+                    index++;
+                }
+                var token = headerLine.substring(tokenStart, index);
+                var extraWhitespace = headerLine.substring(whitespaceStart + 1, tokenStart);
+                if (!firstToken && lineLength + 1 + token.length() > 78) {
+                    body.append(CRLF).append(' ');
+                    lineLength = 1;
+                } else {
+                    body.append(' ');
+                    lineLength += 1;
+                }
+                body.append(extraWhitespace);
+                lineLength += extraWhitespace.length();
+                lineLength = appendToken(body, token, lineLength);
+                firstToken = false;
             } else {
-                body.append(' ').append(token);
-                lineLength += 1 + token.length();
+                var tokenStart = index;
+                while (index < headerLine.length() && headerLine.charAt(index) != ' ') {
+                    index++;
+                }
+                var token = headerLine.substring(tokenStart, index);
+                lineLength = appendToken(body, token, lineLength);
+                firstToken = false;
             }
         }
         body.append(CRLF);
+    }
+
+    /** RFC 5322 §2.1.1 hard line limit (998 octets, excluding the trailing CRLF). */
+    private static final int MAX_LINE_OCTETS = 998;
+
+    /**
+     * Appends a whitespace-free token, hard-splitting it with {@code CRLF + SPACE} when it would push
+     * the line past the rfc5322 §2.1.1 998-octet hard limit. The status fields here are ASCII, so an
+     * octet is a char; a token with no internal whitespace offers no natural fold point, so a hard
+     * split (its consumers strip folding WSP) beats emitting a line strict parsers reject. Returns the
+     * new running line length.
+     */
+    private static int appendToken(StringBuilder body, String token, int lineLength) {
+        var length = lineLength;
+        var start = 0;
+        while (token.length() - start > MAX_LINE_OCTETS - length) {
+            var chunk = Math.max(1, MAX_LINE_OCTETS - length);
+            body.append(token, start, start + chunk).append(CRLF).append(' ');
+            start += chunk;
+            length = 1;
+        }
+        body.append(token, start, token.length());
+        return length + (token.length() - start);
     }
 }

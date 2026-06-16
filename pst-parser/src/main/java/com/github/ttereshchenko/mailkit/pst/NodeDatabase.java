@@ -148,8 +148,17 @@ final class NodeDatabase {
                 int inflatedSize = (format == PstFile.Format.UNICODE_2013) ? buffer.getInt(entryOffset + 24) : 0;
                 // The leaf BREF file offset is otherwise unchecked; validate it (a negative ANSI
                 // offset would throw IllegalArgumentException at channel.read) before the block is
-                // ever read.
-                if (fileOffset < 0 || fileOffset + size > channelSize) {
+                // ever read. When CRC verification is on the BLOCKTRAILER in the 64-byte-aligned slot
+                // is also read ([MS-PST] §2.2.2.8), so validate the whole slot then — failing fast here
+                // with a clear message beats an opaque EOF inside verifyBlockCrc. When CRC is off only
+                // the cb data bytes are read, so the bound stays at `size` to avoid rejecting a store
+                // whose final block's slot padding is not present on disk.
+                long requiredEnd = fileOffset + size;
+                if (verifyCrc) {
+                    int trailerLength = format == PstFile.Format.ANSI ? 12 : 16;
+                    requiredEnd = fileOffset + (((long) size + trailerLength + 63) / 64) * 64L;
+                }
+                if (fileOffset < 0 || requiredEnd > channelSize) {
                     throw new PstException("Block BREF offset out of range: offset=" + fileOffset + " size=" + size);
                 }
                 return new BlockEntry(entryBid, fileOffset, size, refCount, inflatedSize);

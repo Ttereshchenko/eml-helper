@@ -5,13 +5,14 @@ import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfile;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfileService;
 import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.ui.Messages;
+import com.intellij.openapi.util.JDOMUtil;
 import com.intellij.ui.ToolbarDecorator;
 import com.intellij.ui.table.JBTable;
 import com.intellij.util.ui.FormBuilder;
+import com.intellij.util.xmlb.XmlSerializer;
 import java.awt.BorderLayout;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
@@ -217,37 +218,16 @@ public final class SmtpSettingsConfigurable implements Configurable {
         tableModel.fireTableDataChanged();
     }
 
+    /**
+     * Two profiles are equal when their serialized state is identical. The profile is persisted with
+     * {@code XmlSerializer} (it is a {@link com.intellij.openapi.components.PersistentStateComponent}
+     * bean), so comparing the serialized forms covers every persisted field — TLS verify flags / cert
+     * paths, ehloHost, timeout, authzId, auth-optional flags, all ESMTP toggles, transport / IP family,
+     * PROXY and XCLIENT — and stays correct as fields are added, instead of a hand-maintained subset
+     * that silently misses an edited field and discards the change.
+     */
     private static boolean profileEquals(SmtpProfile left, SmtpProfile right) {
-        return left.identifier.equals(right.identifier)
-                && left.name.equals(right.name)
-                && left.host.equals(right.host)
-                && left.port == right.port
-                && left.protocol == right.protocol
-                && left.tlsMode == right.tlsMode
-                && left.authMechanism == right.authMechanism
-                && left.username.equals(right.username)
-                && left.allowPlaintextAuth == right.allowPlaintextAuth
-                && left.isDefault == right.isDefault
-                && defaultHeadersEqual(left.defaultHeaders, right.defaultHeaders);
-    }
-
-    private static boolean defaultHeadersEqual(
-            List<SmtpProfile.DefaultHeader> left, List<SmtpProfile.DefaultHeader> right) {
-        if (left == null || right == null) {
-            return left == right;
-        }
-        if (left.size() != right.size()) {
-            return false;
-        }
-        for (var index = 0; index < left.size(); index++) {
-            var leftEntry = left.get(index);
-            var rightEntry = right.get(index);
-            if (!Objects.equals(leftEntry.name, rightEntry.name)
-                    || !Objects.equals(leftEntry.value, rightEntry.value)) {
-                return false;
-            }
-        }
-        return true;
+        return JDOMUtil.areElementsEqual(XmlSerializer.serialize(left), XmlSerializer.serialize(right));
     }
 
     static final class SmtpProfileTableModel extends AbstractTableModel {

@@ -35,6 +35,7 @@ final class MsgFixtureBuilder {
     private static final int TAG_SENDER_SMTP_ADDRESS = (0x5D01 << 16) | TYPE_UNICODE;
     private static final int TAG_DISPLAY_TO = (0x0E04 << 16) | TYPE_UNICODE;
     private static final int TAG_REPORT_TEXT = (0x1001 << 16) | TYPE_UNICODE;
+    private static final int TAG_SUPPLEMENTARY_INFO = (0x0C1B << 16) | TYPE_UNICODE;
     private static final int TAG_SPAM_CONFIDENCE_LEVEL = (0x4076 << 16) | TYPE_LONG;
     private static final int TAG_RTF_COMPRESSED = (0x1009 << 16) | TYPE_BINARY;
     private static final int TAG_RECIPIENT_ADDRTYPE = (0x3002 << 16) | TYPE_UNICODE;
@@ -74,12 +75,21 @@ final class MsgFixtureBuilder {
     private static final int ATTACH_METHOD_EMBEDDED_MESSAGE = 5;
     private static final int ATTACH_METHOD_OLE = 6;
 
+    // PSETID_Appointment ({00062002-0000-0000-C000-000000000046}) in raw little-endian registry-GUID
+    // byte order, the layout POI's NameIdChunks reads from the __nameid GUID stream.
+    private static final byte[] PSETID_APPOINTMENT_GUID = {
+        0x02, 0x20, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, (byte) 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46
+    };
+    private static final int NAMED_BASE_TAG = 0x8000;
+
     private final List<VarProperty> varProperties = new ArrayList<>();
     private final List<FixedProperty> fixedProperties = new ArrayList<>();
     private final List<MsgFixtureBuilder> recipientsTo = new ArrayList<>();
     private final List<MsgFixtureBuilder> recipientsCc = new ArrayList<>();
     private final List<MsgFixtureBuilder> recipientsBcc = new ArrayList<>();
+    private final List<MsgFixtureBuilder> recipientsOrdered = new ArrayList<>();
     private final List<AttachmentSpec> attachments = new ArrayList<>();
+    private final List<NamedNumericProperty> namedProperties = new ArrayList<>();
 
     private MsgFixtureBuilder() {}
 
@@ -185,6 +195,18 @@ final class MsgFixtureBuilder {
 
     MsgFixtureBuilder recipientBcc(String name, String email) {
         recipientsBcc.add(buildRecipient(name, email, RECIPIENT_TYPE_BCC));
+        return this;
+    }
+
+    /**
+     * Appends a recipient of an explicit type to a single ordered list that, when non-empty, replaces
+     * the To/Cc/Bcc grouping in the recipient table — so a fixture can place a Cc (or Bcc) recipient
+     * BEFORE the To recipient, which {@link #recipientTo}/{@link #recipientCc}/{@link #recipientBcc}
+     * (always emitted To-then-Cc-then-Bcc) cannot express. {@code recipientType} is an
+     * {@code EmlSerializer.RECIPIENT_TYPE_*} value.
+     */
+    MsgFixtureBuilder recipientOrdered(String name, String email, int recipientType) {
+        recipientsOrdered.add(buildRecipient(name, email, recipientType));
         return this;
     }
 
@@ -302,6 +324,25 @@ final class MsgFixtureBuilder {
         return setUnicode(TAG_REPORT_TEXT, value);
     }
 
+    /** PidTagSupplementaryInfo (0x0C1B) — the free-form transport diagnostic text on an NDR. */
+    MsgFixtureBuilder supplementaryInfo(String value) {
+        return setUnicode(TAG_SUPPLEMENTARY_INFO, value);
+    }
+
+    /**
+     * PidLidAppointmentStartWhole / PidLidAppointmentEndWhole (PSETID_Appointment 0x820D / 0x820E,
+     * PT_SYSTIME) written through a synthesized {@code __nameid} mapping so the converter's named-
+     * property lookup ({@link org.apache.poi.hsmf.datatypes.NameIdChunks#getPropertyTag}) resolves
+     * them — the minimum needed to drive the calendar-invite path without a vendored fixture.
+     */
+    MsgFixtureBuilder appointmentStartEnd(Date start, Date end) {
+        namedProperties.add(new NamedNumericProperty(0x820D, TYPE_SYSTIME, fileTime(start)));
+        if (end != null) {
+            namedProperties.add(new NamedNumericProperty(0x820E, TYPE_SYSTIME, fileTime(end)));
+        }
+        return this;
+    }
+
     MsgFixtureBuilder attachment(String filename, String mime, byte[] data) {
         attachments.add(new AttachmentSpec(filename, mime, data, null, null, null, null));
         return this;
@@ -362,11 +403,26 @@ final class MsgFixtureBuilder {
     }
 
     private void populateMessage(DirectoryEntry root, int headerSize) throws IOException {
-        var allRecipients =
-                new ArrayList<MsgFixtureBuilder>(recipientsTo.size() + recipientsCc.size() + recipientsBcc.size());
-        allRecipients.addAll(recipientsTo);
-        allRecipients.addAll(recipientsCc);
-        allRecipients.addAll(recipientsBcc);
+        // Each numeric named property is stored under tag (0x8000 + index) with its PT_ type; the
+        // __nameid mapping below points the converter's NameIdChunks lookup at that same index.
+        for (var propertyIndex = 0; propertyIndex < namedProperties.size(); propertyIndex++) {
+            var named = namedProperties.get(propertyIndex);
+            var tag = ((NAMED_BASE_TAG + propertyIndex) << 16) | named.ptType;
+            if (named.ptType == TYPE_BINARY || named.ptType == TYPE_UNICODE) {
+                varProperties.add(new VarProperty(tag, named.value));
+            } else {
+                fixedProperties.add(new FixedProperty(tag, named.value));
+            }
+        }
+
+        var allRecipients = new ArrayList<MsgFixtureBuilder>();
+        if (!recipientsOrdered.isEmpty()) {
+            allRecipients.addAll(recipientsOrdered);
+        } else {
+            allRecipients.addAll(recipientsTo);
+            allRecipients.addAll(recipientsCc);
+            allRecipients.addAll(recipientsBcc);
+        }
 
         var stream = new ByteArrayOutputStream();
         var header = ByteBuffer.allocate(headerSize).order(ByteOrder.LITTLE_ENDIAN);
@@ -399,6 +455,53 @@ final class MsgFixtureBuilder {
         for (var index = 0; index < attachments.size(); index++) {
             var directory = root.createDirectory(String.format("__attach_version1.0_#%08X", index));
             attachments.get(index).populate(directory);
+        }
+
+        if (!namedProperties.isEmpty()) {
+            writeNameIdMapping(root);
+        }
+    }
+
+    /**
+     * Writes the {@code __nameid_version1.0} streams for the numeric named properties: the GUID
+     * stream (the property-set GUID), the entry stream (one 8-byte record per property), and the
+     * hashed match-chunk streams POI's {@code NameIdChunks#getPropertyTag} cross-references. Only
+     * numeric ({@code propertyKind == 0}, PSETID_Appointment) named properties are supported — enough
+     * to drive the calendar-invite path. The match-chunk stream id and the per-record layout mirror
+     * POI's reader exactly (guidIndex 3 = the first GUID in the GUID stream).
+     */
+    private void writeNameIdMapping(DirectoryEntry root) throws IOException {
+        var nameId = root.createDirectory("__nameid_version1.0");
+        var guidIndex = 3; // first custom GUID in the GUID stream
+        var entryStream = new ByteArrayOutputStream();
+        // matchChunks: stream id (0x1000 + (id ^ (guidIndex<<1)) % 0x1F) -> its 8-byte records.
+        var matchChunks = new java.util.LinkedHashMap<Integer, ByteArrayOutputStream>();
+        for (var propertyIndex = 0; propertyIndex < namedProperties.size(); propertyIndex++) {
+            var propertyId = namedProperties.get(propertyIndex).id;
+            var entry = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
+            entry.putInt(propertyId); // nameOffset == numeric id (propertyKind 0)
+            entry.putShort((short) (guidIndex << 1)); // low bit 0 => numeric named property
+            entry.putShort((short) propertyIndex);
+            entryStream.write(entry.array());
+
+            var streamId = 0x1000 + ((propertyId ^ (guidIndex << 1)) % 0x1F);
+            var match = matchChunks.computeIfAbsent(streamId, ignored -> new ByteArrayOutputStream());
+            var record = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
+            record.putInt(propertyId); // nameCRC == numeric id (propertyKind 0)
+            record.putShort((short) (guidIndex << 1));
+            record.putShort((short) propertyIndex);
+            match.write(record.array());
+        }
+        nameId.createDocument(substgName(0x00020102), new ByteArrayInputStream(PSETID_APPOINTMENT_GUID));
+        nameId.createDocument(substgName(0x00030102), new ByteArrayInputStream(entryStream.toByteArray()));
+        // The string stream (0x0004) holds names for string-kind properties; it is empty here (all
+        // properties are numeric) but POI's reader returns 0 from getPropertyTag unless it is present.
+        nameId.createDocument(substgName(0x00040102), new ByteArrayInputStream(new byte[0]));
+        for (var matchChunk : matchChunks.entrySet()) {
+            var tag = (matchChunk.getKey() << 16) | TYPE_BINARY;
+            nameId.createDocument(
+                    substgName(tag),
+                    new ByteArrayInputStream(matchChunk.getValue().toByteArray()));
         }
     }
 
@@ -452,6 +555,9 @@ final class MsgFixtureBuilder {
     private record VarProperty(int tag, byte[] data) {}
 
     private record FixedProperty(int tag, byte[] data) {}
+
+    /** A numeric named property (PSETID_Appointment): its named id, its PT_ type, and its value bytes. */
+    private record NamedNumericProperty(int id, int ptType, byte[] value) {}
 
     private record AttachmentSpec(
             String filename,

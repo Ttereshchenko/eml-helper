@@ -92,4 +92,30 @@ class SmtpEnvelopeTest {
                 IllegalArgumentException.class,
                 () -> SmtpEnvelope.of("from@example.com", ("to@exa" + (char) 0x07 + "mple.com")));
     }
+
+    @Test
+    void rejectsNotifyNeverCombinedWithOtherValues() {
+        // rfc3461 §4.1: notify-esmtp-value = "NEVER" / 1#notify-list-element — NEVER is exclusive, so
+        // NOTIFY=NEVER,FAILURE is invalid and a conformant server rejects it with a 501.
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new SmtpEnvelope.Recipient(
+                        "to@example.com", List.of(SmtpEnvelope.DsnNotify.NEVER, SmtpEnvelope.DsnNotify.FAILURE), null));
+    }
+
+    @Test
+    void acceptsNotifyNeverAlone() {
+        var recipient = assertDoesNotThrow(
+                () -> new SmtpEnvelope.Recipient("to@example.com", List.of(SmtpEnvelope.DsnNotify.NEVER), null));
+        assertEquals(List.of(SmtpEnvelope.DsnNotify.NEVER), recipient.notifyOn());
+    }
+
+    @Test
+    void acceptsCombinedNonNeverNotifyValues() {
+        var recipient = assertDoesNotThrow(() -> new SmtpEnvelope.Recipient(
+                "to@example.com",
+                List.of(SmtpEnvelope.DsnNotify.SUCCESS, SmtpEnvelope.DsnNotify.FAILURE, SmtpEnvelope.DsnNotify.DELAY),
+                null));
+        assertEquals(3, recipient.notifyOn().size());
+    }
 }

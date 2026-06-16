@@ -34,16 +34,16 @@ public final class OauthBearerAuthClient implements AuthClient {
             var builder = new StringBuilder();
             builder.append("n,");
             if (!credentials.username().isBlank()) {
-                builder.append("a=").append(credentials.username());
+                builder.append("a=").append(requireNoKvsep(credentials.username(), "username"));
             }
             builder.append(",").append(CTRL_A);
             var host = credentials.authExtra().get("host");
             if (host != null && !host.isBlank()) {
-                builder.append("host=").append(host).append(CTRL_A);
+                builder.append("host=").append(requireNoKvsep(host, "host")).append(CTRL_A);
             }
             var port = credentials.authExtra().get("port");
             if (port != null && !port.isBlank()) {
-                builder.append("port=").append(port).append(CTRL_A);
+                builder.append("port=").append(requireNoKvsep(port, "port")).append(CTRL_A);
             }
             builder.append("auth=Bearer ").append(token).append(CTRL_A).append(CTRL_A);
             complete = true;
@@ -55,11 +55,30 @@ public final class OauthBearerAuthClient implements AuthClient {
 
     @Override
     public byte[] respond(byte[] challenge) {
-        return new byte[0];
+        // rfc7628 §3.2.3: after a failed initial response the server sends its base64 JSON error as
+        // a continuation; the client acknowledges with a SINGLE %x01 (CTRL-A) octet — NOT an empty
+        // line — so the server can then emit the final SASL/SMTP failure. (XOAUTH2, a separate
+        // Google mechanism, uses an empty response here instead — see Xoauth2AuthClient.)
+        return new byte[] {0x01};
     }
 
     @Override
     public boolean isComplete() {
         return complete;
+    }
+
+    /**
+     * Rejects a gs2 field value carrying the SASL key/value separator ({@code %x01}) or a CR/LF
+     * (rfc7628 §3.1: a {@code value} must not contain {@code kvsep}). Without this an injected
+     * {@code %x01} would forge extra SASL fields inside the (base64-wrapped) blob.
+     */
+    private static String requireNoKvsep(String value, String field) {
+        for (var index = 0; index < value.length(); index++) {
+            var character = value.charAt(index);
+            if (character == CTRL_A || character == '\r' || character == '\n') {
+                throw new IllegalArgumentException("OAUTHBEARER " + field + " must not contain control characters");
+            }
+        }
+        return value;
     }
 }

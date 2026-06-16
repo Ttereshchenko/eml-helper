@@ -30,6 +30,29 @@ class SmtpClientReplyParsingTest {
     }
 
     @Test
+    void transientBannerIsClassifiedAsTransientNotProtocolViolation() throws Exception {
+        // rfc5321 §4.2.1/§3.1: a 4yz greeting (e.g. 421) is a transient condition, not a protocol
+        // violation — callers can retry rather than treat the server as broken.
+        try (var server =
+                FakeSmtpServer.builder().banner("421 service not available").start()) {
+            var failure = sendExpectingFailure(server);
+            assertEquals(SmtpException.Kind.TRANSIENT, failure.kind());
+            assertEquals(Phase.BANNER, failure.phase());
+        }
+    }
+
+    @Test
+    void transientEhloReplyIsClassifiedAsTransient() throws Exception {
+        try (var server = FakeSmtpServer.builder()
+                .banner("220 fake.local ready")
+                .expect("EHLO ", "421 try again later")
+                .start()) {
+            var failure = sendExpectingFailure(server);
+            assertEquals(SmtpException.Kind.TRANSIENT, failure.kind());
+        }
+    }
+
+    @Test
     void multiLineReplyWithMismatchedCodesIsAProtocolViolation() throws Exception {
         try (var server = FakeSmtpServer.builder().banner("250-one", "550 two").start()) {
             var failure = sendExpectingFailure(server);
@@ -53,6 +76,38 @@ class SmtpClientReplyParsingTest {
             var failure = sendExpectingFailure(server);
             assertEquals(SmtpException.Kind.PROTOCOL_VIOLATION, failure.kind());
             assertTrue(failure.getMessage().contains("non-numeric"), failure.getMessage());
+        }
+    }
+
+    @Test
+    void replyCodeAboveFiveHundredNinetyNineIsAProtocolViolation() throws Exception {
+        // rfc5321 §4.2: reply codes are three digits in the 2xx–5xx range. A 6xx code parses as a
+        // number but is impossible; the old code accepted it silently via Integer.parseInt.
+        try (var server = FakeSmtpServer.builder().banner("600 impossible").start()) {
+            var failure = sendExpectingFailure(server);
+            assertEquals(SmtpException.Kind.PROTOCOL_VIOLATION, failure.kind());
+            assertTrue(failure.getMessage().contains("out of range"), failure.getMessage());
+        }
+    }
+
+    @Test
+    void negativeReplyCodeIsAProtocolViolation() throws Exception {
+        // "-50 ..." parses to -50 via Integer.parseInt(substring(0,3)); rfc5321 §4.2 forbids it.
+        try (var server = FakeSmtpServer.builder().banner("-50 negative").start()) {
+            var failure = sendExpectingFailure(server);
+            assertEquals(SmtpException.Kind.PROTOCOL_VIOLATION, failure.kind());
+            assertTrue(failure.getMessage().contains("out of range"), failure.getMessage());
+        }
+    }
+
+    @Test
+    void replyCodeBelowTwoHundredIsAProtocolViolation() throws Exception {
+        // 1yz codes are reserved and never sent by a server in this client's transaction model
+        // (rfc5321 §4.2); a 100 banner must be rejected rather than accepted as a positive reply.
+        try (var server = FakeSmtpServer.builder().banner("100 too low").start()) {
+            var failure = sendExpectingFailure(server);
+            assertEquals(SmtpException.Kind.PROTOCOL_VIOLATION, failure.kind());
+            assertTrue(failure.getMessage().contains("out of range"), failure.getMessage());
         }
     }
 

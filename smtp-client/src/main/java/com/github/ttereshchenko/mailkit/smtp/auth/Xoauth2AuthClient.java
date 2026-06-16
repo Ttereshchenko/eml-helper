@@ -30,7 +30,8 @@ public final class Xoauth2AuthClient implements AuthClient {
         var token = new String(tokenChars);
         try {
             complete = true;
-            var payload = "user=" + credentials.username() + CTRL_A + "auth=Bearer " + token + CTRL_A + CTRL_A;
+            var payload = "user=" + requireNoKvsep(credentials.username()) + CTRL_A + "auth=Bearer " + token + CTRL_A
+                    + CTRL_A;
             return payload.getBytes(StandardCharsets.UTF_8);
         } finally {
             Arrays.fill(tokenChars, '\0');
@@ -47,5 +48,20 @@ public final class Xoauth2AuthClient implements AuthClient {
     @Override
     public boolean isComplete() {
         return complete;
+    }
+
+    /**
+     * Rejects a username carrying the field separator ({@code %x01}) or a CR/LF: the blob's fields are
+     * {@code %x01}-delimited, so an injected separator would forge extra fields inside the
+     * (base64-wrapped) credential.
+     */
+    private static String requireNoKvsep(String value) {
+        for (var index = 0; index < value.length(); index++) {
+            var character = value.charAt(index);
+            if (character == CTRL_A || character == '\r' || character == '\n') {
+                throw new IllegalArgumentException("XOAUTH2 username must not contain control characters");
+            }
+        }
+        return value;
     }
 }

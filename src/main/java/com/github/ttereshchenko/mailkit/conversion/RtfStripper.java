@@ -128,7 +128,7 @@ public final class RtfStripper {
                             // keep the current skip count
                         }
                     }
-                    var replacement = controlReplacement(name, hadParam);
+                    var replacement = controlReplacement(name);
                     if (skipDepth == 0 && replacement != null) {
                         output.append(replacement);
                     }
@@ -138,6 +138,21 @@ public final class RtfStripper {
                     index = end;
                     if (index < source.length() && source.charAt(index) == ' ') {
                         index++;
+                    }
+                    // \binN introduces exactly N bytes of raw binary picture data (RTF spec /
+                    // [MS-OXRTFCP] §2.1.3.1.5): those bytes are NOT RTF and must be consumed wholesale,
+                    // otherwise they leak into the plain-text fallback and can also contain stray
+                    // backslashes/braces that desynchronise the parser. A negative or unparsable count
+                    // is treated as zero.
+                    if (name.equals("bin") && hadParam) {
+                        try {
+                            var binaryLength = Integer.parseInt(source.substring(paramStart, end));
+                            if (binaryLength > 0) {
+                                index = Math.min(source.length(), index + binaryLength);
+                            }
+                        } catch (NumberFormatException ignored) {
+                            // no countable binary payload — skip nothing
+                        }
                     }
                     continue;
                 }
@@ -446,7 +461,7 @@ public final class RtfStripper {
         return index;
     }
 
-    private static String controlReplacement(String name, boolean hadParam) {
+    private static String controlReplacement(String name) {
         return switch (name) {
             // \pard is deliberately absent: it resets paragraph *formatting* and produces no break.
             case "par", "line" -> "\n";

@@ -28,12 +28,16 @@ public final class LoginAuthClient implements AuthClient {
     public byte[] respond(byte[] challenge) {
         Objects.requireNonNull(challenge, "challenge");
         round++;
+        // Prepare the username/password with SASLprep for parity with how a server normalizes a
+        // non-ASCII credential; saslPrep is a no-op for ASCII so ASCII credentials are byte-identical.
         return switch (round) {
-            case 1 -> credentials.username().getBytes(StandardCharsets.UTF_8);
+            case 1 -> ScramAuthClient.saslPrep(credentials.username()).getBytes(StandardCharsets.UTF_8);
             case 2 -> {
                 var chars = credentials.password().get();
-                var bytes = toBytes(chars);
+                var prepared = ScramAuthClient.saslPrep(new String(chars)).toCharArray();
                 Arrays.fill(chars, '\0');
+                var bytes = toBytes(prepared);
+                Arrays.fill(prepared, '\0');
                 yield bytes;
             }
             default -> throw new IllegalStateException("unexpected LOGIN round: " + round);

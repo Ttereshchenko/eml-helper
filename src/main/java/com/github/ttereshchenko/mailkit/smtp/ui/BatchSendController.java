@@ -10,12 +10,12 @@ import com.github.ttereshchenko.mailkit.smtp.SmtpException;
 import com.github.ttereshchenko.mailkit.smtp.SmtpTranscript;
 import com.github.ttereshchenko.mailkit.smtp.audit.SmtpAuditEntry;
 import com.github.ttereshchenko.mailkit.smtp.audit.SmtpAuditLog;
-import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfileService;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -121,7 +121,7 @@ final class BatchSendController {
             var file = files.get(index);
             listener.fileStarted(index);
             var transcript = transcriptListeners.create(transcriptHeader(request, file, index, total), index == 0);
-            var source = file == null ? MessageSource.ofString("") : MessageSource.ofPath(Path.of(file.getPath()));
+            var source = buildSource(file);
             var sourceBytes = source.size().orElse(0);
             var started = Instant.now();
             var startNanos = System.nanoTime();
@@ -150,6 +150,34 @@ final class BatchSendController {
         notifyBatchOutcome(request, total, sent, failed, skipped, cancelled, lastResult, lastFailure);
     }
 
+    /**
+     * Builds the DATA source for one message, stripping any {@code Bcc:} header field so the blind
+     * recipients are never transmitted (rfc5322 §3.6.3 / §5.3) — the dialog already warned the user
+     * about, and declined to deliver to, those addresses. The content is read through the VFS so any
+     * {@link VirtualFile} (local or otherwise) works, not only files with a readable filesystem path.
+     * A file that actually carries a {@code Bcc:} is rewritten and sent from memory; a local file with
+     * none streams straight from disk so a large message is not buffered for the whole send. An empty
+     * selection is the legacy "envelope only" mode (a {@code null} file → empty body).
+     */
+    private static MessageSource buildSource(@Nullable VirtualFile file) {
+        if (file == null) {
+            return MessageSource.ofString("");
+        }
+        byte[] raw;
+        try (var input = file.getInputStream()) {
+            raw = input.readAllBytes();
+        } catch (IOException ignored) {
+            // Could not read the file to inspect/strip a Bcc header; stream from its path and let the
+            // SMTP client surface any read error.
+            return MessageSource.ofPath(Path.of(file.getPath()));
+        }
+        var stripped = SendDialog.stripBccHeader(raw);
+        if (stripped.changed()) {
+            return MessageSource.ofBytes(stripped.data());
+        }
+        return file.isInLocalFileSystem() ? MessageSource.ofPath(Path.of(file.getPath())) : MessageSource.ofBytes(raw);
+    }
+
     private static int markRemainingSkipped(BatchListener listener, int firstIndex, int total, String reason) {
         for (var index = firstIndex; index < total; index++) {
             listener.fileFinished(index, FileStatus.SKIPPED, reason);
@@ -169,12 +197,21 @@ final class BatchSendController {
     }
 
     private static String sentDetail(SendDialog.SendRequest request, SendResult result) {
-        var recipientCount = result.recipientDispositions().size();
+        // Count only RCPT TO that the server accepted — a rejected recipient was never delivered to,
+        // so it must not inflate the "Delivered to N" figure.
+        var recipientCount = acceptedCount(result);
         var detail = "Delivered to " + recipientCount + " recipient" + (recipientCount == 1 ? "" : "s");
         if (request.config().stopAfter() != null) {
             detail = "Stopped after " + request.config().stopAfter().name() + " (debug)";
         }
         return detail;
+    }
+
+    /** Number of recipients the server actually accepted (RCPT TO answered with a 2xx). */
+    private static long acceptedCount(SendResult result) {
+        return result.recipientDispositions().stream()
+                .filter(SendResult.RecipientDisposition::accepted)
+                .count();
     }
 
     private static String failureDetail(SmtpException failure) {
@@ -183,12 +220,11 @@ final class BatchSendController {
     }
 
     private static String resolveProfileName(SendDialog.SendRequest request) {
-        return SmtpProfileService.getInstance().getProfiles().stream()
-                .filter(profile -> profile.host.equals(request.config().host())
-                        && profile.port == request.config().port())
-                .findFirst()
-                .map(profile -> profile.name)
-                .orElse("ad-hoc");
+        // Use the profile the user actually selected (threaded through the request), not a host:port
+        // reverse-match: two profiles can share a host:port, and a per-send host override would
+        // otherwise mis-attribute (or "ad-hoc"-attribute) a send a real profile drove.
+        var profileName = request.profileName();
+        return profileName != null && !profileName.isBlank() ? profileName : "ad-hoc";
     }
 
     private void recordAuditEntry(
@@ -210,14 +246,18 @@ final class BatchSendController {
         var mechanism = auth == null || auth.isDisabled() || auth.mechanism() == null
                 ? "(none)"
                 : auth.mechanism().wireName();
-        var tlsActive = result != null && result.tls().active();
+        // Prefer the successful send's TLS outcome; on failure fall back to the partial TLS state the
+        // exception carries, so a send that failed AFTER TLS came up (e.g. an AUTH/RCPT rejection) is
+        // still recorded as encrypted instead of showing empty TLS fields.
+        var tls = result != null ? result.tls() : (failure != null ? failure.tls() : null);
+        var tlsActive = tls != null && tls.active();
         var entry = new SmtpAuditEntry(
                 started,
                 profileName,
                 request.config().host(),
                 request.config().port(),
-                tlsActive ? result.tls().protocol() : "",
-                tlsActive ? result.tls().cipherSuite() : "",
+                tlsActive ? tls.protocol() : "",
+                tlsActive ? tls.cipherSuite() : "",
                 mechanism,
                 request.envelope().mailFrom(),
                 dispositions,
@@ -252,7 +292,8 @@ final class BatchSendController {
             return;
         }
         if (total == 1 && lastResult != null) {
-            var recipientCount = lastResult.recipientDispositions().size();
+            // Only accepted RCPT TO count as delivered — a 5xx-rejected recipient was not delivered to.
+            var recipientCount = acceptedCount(lastResult);
             var text = "Delivered to " + recipientCount + " recipient" + (recipientCount == 1 ? "" : "s") + " — "
                     + (lastResult.cleanlyClosed() ? "QUIT 221 OK" : "socket closed without 221");
             notify("SMTP send succeeded", text, NotificationType.INFORMATION);

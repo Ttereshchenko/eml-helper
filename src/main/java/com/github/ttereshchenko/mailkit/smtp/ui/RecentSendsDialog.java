@@ -2,6 +2,8 @@ package com.github.ttereshchenko.mailkit.smtp.ui;
 
 import com.github.ttereshchenko.mailkit.smtp.audit.SmtpAuditEntry;
 import com.github.ttereshchenko.mailkit.smtp.audit.SmtpAuditLog;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Messages;
@@ -36,13 +38,16 @@ public final class RecentSendsDialog extends DialogWrapper {
         super(project);
         this.project = project;
         this.auditLog = SmtpAuditLog.getInstance(project);
-        this.tableModel = new RecentSendsTableModel(auditLog.readAll());
+        // Start empty and load the log off the EDT — reading the audit JSON is blocking I/O that must
+        // not stall the UI thread while the dialog opens.
+        this.tableModel = new RecentSendsTableModel(List.of());
         this.table = new JBTable(tableModel);
         setTitle("Recent SMTP Sends");
         setOKButtonText("Close");
         setCancelButtonText("Clear log");
         init();
         getOKAction().putValue(DialogWrapper.DEFAULT_ACTION, Boolean.FALSE);
+        reload();
     }
 
     @Override
@@ -51,11 +56,19 @@ public final class RecentSendsDialog extends DialogWrapper {
         panel.setPreferredSize(new Dimension(720, 360));
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
         var refreshButton = new JButton("Refresh");
-        refreshButton.addActionListener(event -> tableModel.replaceAll(auditLog.readAll()));
+        refreshButton.addActionListener(event -> reload());
         var bottom = new JPanel();
         bottom.add(refreshButton);
         panel.add(bottom, BorderLayout.SOUTH);
         return panel;
+    }
+
+    /** Reads the audit log on a pooled thread, then replaces the table model back on the EDT. */
+    private void reload() {
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            var entries = auditLog.readAll();
+            ApplicationManager.getApplication().invokeLater(() -> tableModel.replaceAll(entries), ModalityState.any());
+        });
     }
 
     @Override
@@ -66,8 +79,9 @@ public final class RecentSendsDialog extends DialogWrapper {
                 "Clear SMTP Log",
                 Messages.getQuestionIcon());
         if (confirm == Messages.YES) {
-            auditLog.clear();
+            // Clear the view immediately; wipe the file off the EDT (clear() is blocking I/O).
             tableModel.replaceAll(List.of());
+            ApplicationManager.getApplication().executeOnPooledThread(auditLog::clear);
         }
     }
 

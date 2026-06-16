@@ -30,6 +30,13 @@ public record SmtpEnvelope(String mailFrom, List<Recipient> recipients, String e
             requireSafeAddress(address, "recipient address");
             requireNoLineBreaks(orcpt, "ORCPT");
             notifyOn = notifyOn == null ? List.of() : List.copyOf(notifyOn);
+            // rfc3461 §4.1: NEVER is exclusive — `notify-esmtp-value = "NEVER" / 1#notify-list-element`.
+            // Combining it with SUCCESS/FAILURE/DELAY produces `NOTIFY=NEVER,FAILURE`, which a
+            // conformant server rejects with a 501, so reject it here rather than on the wire.
+            if (notifyOn.size() > 1 && notifyOn.contains(DsnNotify.NEVER)) {
+                throw new IllegalArgumentException(
+                        "NOTIFY=NEVER must not be combined with other values (rfc3461 §4.1)");
+            }
         }
 
         public static Recipient of(String address) {

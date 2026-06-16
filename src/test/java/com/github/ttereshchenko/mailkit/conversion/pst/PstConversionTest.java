@@ -94,8 +94,8 @@ class PstConversionTest {
             assertNotNull(invite, "Expected at least one exported appointment to carry an invite.ics");
             assertTrue(invite.contains("RRULE:FREQ=WEEKLY;INTERVAL=1;WKST=SU;BYDAY=TU"), invite);
             assertTrue(invite.contains("BEGIN:VTIMEZONE"), invite);
-            assertTrue(invite.contains("DTSTART;TZID=MailKit-Local:20160802T080000"), invite);
-            assertTrue(invite.contains("EXDATE;TZID=MailKit-Local:20160809T080000"), invite);
+            assertTrue(invite.contains("DTSTART;TZID=MailKit/UTC-0800_DST-0700_0302-1101:20160802T080000"), invite);
+            assertTrue(invite.contains("EXDATE;TZID=MailKit/UTC-0800_DST-0700_0302-1101:20160809T080000"), invite);
 
             // F4: with the non-mail option on, the IPM.DistList item exports with its resolved
             // members as the body.

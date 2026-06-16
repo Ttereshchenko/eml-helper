@@ -44,6 +44,54 @@ class ICalendarGeneratorTest {
         assertTrue(ical.contains("ATTENDEE;CN=\"Bob\":mailto:bob@example.com"), ical);
     }
 
+    // RFC 5546 §2.1.4/§3.2.4 + RFC 5545 §3.8.7.4: every scheduling object needs a SEQUENCE so a
+    // CANCEL or updated REQUEST supersedes the original a client already holds. It defaults to 0 and
+    // carries PidLidAppointmentSequence when present.
+    @Test
+    void sequenceDefaultsToZeroAndIsThreadedFromTheStore() {
+        var defaulted = generate("REQUEST", List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")));
+        assertTrue(defaulted.contains("SEQUENCE:0\r\n"), "every VEVENT must carry a SEQUENCE: " + defaulted);
+
+        var updated = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
+                "CANCEL",
+                START,
+                END,
+                null,
+                "Subject",
+                "Org",
+                "org@example.com",
+                null,
+                List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")),
+                false,
+                null,
+                null,
+                3));
+        assertTrue(updated.contains("METHOD:CANCEL\r\n"), updated);
+        assertTrue(updated.contains("SEQUENCE:3\r\n"), "the stored sequence must be emitted: " + updated);
+    }
+
+    // RFC 5546 §3.2: a scheduling method requires a DTSTART. With no start time the object is
+    // downgraded to PUBLISH rather than emitting an invalid METHOD:REQUEST without a DTSTART.
+    @Test
+    void schedulingMethodWithoutStartTimeDowngradesToPublish() {
+        var ical = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
+                "REQUEST",
+                null,
+                null,
+                null,
+                "Subject",
+                "Org",
+                "org@example.com",
+                null,
+                List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")),
+                false,
+                null,
+                null));
+        assertTrue(ical.contains("METHOD:PUBLISH\r\n"), "a start-less REQUEST must downgrade to PUBLISH: " + ical);
+        assertFalse(ical.contains("DTSTART"), "no DTSTART is available to emit: " + ical);
+        assertFalse(ical.contains("ATTENDEE"), "a downgraded PUBLISH must not carry attendees: " + ical);
+    }
+
     @Test
     void nullEndOmitsDtendAndNullMethodDefaultsToPublish() {
         var ical = ICalendarGenerator.generate(null, START, null, null, "S", null, null, null, List.of());
@@ -163,12 +211,12 @@ class ICalendarGeneratorTest {
                 recurrence));
 
         assertTrue(ical.contains("BEGIN:VTIMEZONE"), ical);
-        assertTrue(ical.contains("DTSTART;TZID=" + WindowsTimeZone.TZID + ":20160802T080000"), ical);
-        assertTrue(ical.contains("DTEND;TZID=" + WindowsTimeZone.TZID + ":20160802T090000"), ical);
+        assertTrue(ical.contains("DTSTART;TZID=" + timeZone.tzid() + ":20160802T080000"), ical);
+        assertTrue(ical.contains("DTEND;TZID=" + timeZone.tzid() + ":20160802T090000"), ical);
         // RFC 5545 §3.3.10: UNTIL with a TZID-anchored DTSTART must be UTC. December 6th is PST
         // (UTC-8), so the 08:00 local start becomes 16:00Z.
         assertTrue(ical.contains("RRULE:FREQ=WEEKLY;INTERVAL=1;WKST=SU;BYDAY=TU;UNTIL=20161206T160000Z"), ical);
-        assertTrue(ical.contains("EXDATE;TZID=" + WindowsTimeZone.TZID + ":20160809T080000"), ical);
+        assertTrue(ical.contains("EXDATE;TZID=" + timeZone.tzid() + ":20160809T080000"), ical);
     }
 
     @Test
@@ -195,18 +243,25 @@ class ICalendarGeneratorTest {
     }
 
     @Test
-    void todoCarriesDueDateCompletionAndEscaping() {
+    void todoCarriesDateOnlyDueDateCompletionAndEscaping() {
+        // Outlook stores PidLidTaskStartDate / PidLidTaskDueDate ([MS-OXOTASK] §2.2.2.2.4–.5) as
+        // midnight-UTC date-only values. rfc5545 §3.3.4 (DATE) vs §3.3.5 (DATE-TIME) and §3.8.2.3
+        // (DUE) require those to be emitted as ;VALUE=DATE:yyyymmdd — rendering them as a
+        // T000000Z DATE-TIME shifts the day one west of UTC for every reader east of Greenwich.
         var todo = ICalendarGenerator.generateTodo(
                 "File; the, report",
                 "Details line",
-                Date.from(Instant.parse("2024-01-01T08:00:00Z")),
-                Date.from(Instant.parse("2024-01-05T17:00:00Z")),
+                Date.from(Instant.parse("2024-01-01T00:00:00Z")),
+                Date.from(Instant.parse("2024-01-05T00:00:00Z")),
                 0.75,
                 false);
 
         assertTrue(todo.contains("BEGIN:VTODO"), todo);
-        assertTrue(todo.contains("DTSTART:20240101T080000Z"), todo);
-        assertTrue(todo.contains("DUE:20240105T170000Z"), todo);
+        assertTrue(todo.contains("DTSTART;VALUE=DATE:20240101"), todo);
+        assertTrue(todo.contains("DUE;VALUE=DATE:20240105"), todo);
+        assertFalse(
+                todo.contains("DTSTART:20240101T000000Z"), "date-only DTSTART must not be a UTC DATE-TIME: " + todo);
+        assertFalse(todo.contains("DUE:20240105T000000Z"), "date-only DUE must not be a UTC DATE-TIME: " + todo);
         assertTrue(todo.contains("SUMMARY:File\\; the\\, report"), todo);
         assertTrue(todo.contains("PERCENT-COMPLETE:75"), todo);
         assertFalse(todo.contains("STATUS:COMPLETED"), todo);
@@ -214,6 +269,42 @@ class ICalendarGeneratorTest {
         var completed = ICalendarGenerator.generateTodo("Done", null, null, null, 1.0, true);
         assertTrue(completed.contains("STATUS:COMPLETED"), completed);
         assertTrue(completed.contains("PERCENT-COMPLETE:100"), completed);
+    }
+
+    @Test
+    void todoKeepsRealDateTimeAsUtc() {
+        // A task date carrying a non-midnight time of day is a genuine date-time and must remain a
+        // UTC DATE-TIME (rfc5545 §3.3.5), not be downgraded to a date.
+        var todo = ICalendarGenerator.generateTodo(
+                "Timed task",
+                null,
+                Date.from(Instant.parse("2024-01-01T08:30:00Z")),
+                Date.from(Instant.parse("2024-01-05T17:15:00Z")),
+                null,
+                false);
+
+        assertTrue(todo.contains("DTSTART:20240101T083000Z"), todo);
+        assertTrue(todo.contains("DUE:20240105T171500Z"), todo);
+        assertFalse(todo.contains("VALUE=DATE"), "a real date-time must not be emitted as a DATE: " + todo);
+    }
+
+    @Test
+    void escapeIcalRepresentsEveryNewlineFormAsBackslashN() {
+        // rfc5545 §3.3.11: a newline inside a TEXT value is escaped as \n and must never be dropped.
+        // The pre-fix escaper deleted a lone CR (Mac-classic line break) outright, silently joining
+        // the two lines; CRLF, a lone CR and a lone LF must all become the literal escape \n.
+        var description = "alpha\r\nbeta\rgamma\ndelta";
+        var todo = ICalendarGenerator.generateTodo("Subject", description, null, null, null, false);
+
+        // Recover the (possibly folded) DESCRIPTION value and assert each break became a literal "\n".
+        var unfolded = todo.replace("\r\n ", "");
+        assertTrue(
+                unfolded.contains("DESCRIPTION:alpha\\nbeta\\ngamma\\ndelta"),
+                "every newline form must be escaped as \\n, none dropped: " + unfolded);
+        // The pre-fix escaper deleted the lone CR, joining "beta" and "gamma" into "betagamma".
+        assertFalse(
+                unfolded.contains("betagamma"),
+                "lone CR must not be deleted (which would join beta and gamma): " + unfolded);
     }
 
     // -----------------------------------------------------------------------

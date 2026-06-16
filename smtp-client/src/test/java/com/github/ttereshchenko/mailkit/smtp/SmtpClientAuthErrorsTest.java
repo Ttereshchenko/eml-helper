@@ -113,10 +113,13 @@ class SmtpClientAuthErrorsTest {
     }
 
     @Test
-    void invalidBase64InChallengeSurfacesAuthFailed() throws Exception {
+    void invalidBase64InChallengeCancelsExchangeWithStarThenSurfacesAuthFailed() throws Exception {
+        // rfc4954 §4: an un-decodable 334 challenge must be aborted with a single "*" so the server
+        // can reject the AUTH, rather than the client just dropping the handshake mid-exchange.
         try (var server = FakeSmtpServer.builder()
                 .expect("EHLO ", "250-fake.local", "250 AUTH LOGIN")
                 .expect("AUTH LOGIN", "334 !!!not-base64!!!")
+                .expect("*", "501 5.5.2 cannot decode challenge")
                 .start()) {
             var auth = AuthConfig.forMechanism(AuthMechanism.LOGIN, passwordCredentials())
                     .withAllowPlaintextAuth(true);
@@ -127,6 +130,10 @@ class SmtpClientAuthErrorsTest {
                 assertEquals(SmtpException.Kind.AUTH_FAILED, failure.kind());
                 assertTrue(failure.getMessage().contains("base64"), failure.getMessage());
             }
+            server.awaitCompletion();
+            assertTrue(
+                    server.receivedLines().contains("*"),
+                    "client must cancel the SASL exchange with '*': " + server.receivedLines());
         }
     }
 

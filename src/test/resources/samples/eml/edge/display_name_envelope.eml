@@ -1,0 +1,6 @@
+From: Alice Example <alice@example.com>
+To: "Doe, John" <john@example.com>, bob@example.com
+Subject: display name envelope
+
+This sample demonstrates a display-name From and a To list whose first entry
+contains a quoted comma plus a second bare recipient.

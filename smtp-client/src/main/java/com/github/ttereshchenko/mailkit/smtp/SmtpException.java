@@ -23,12 +23,15 @@ public final class SmtpException extends Exception {
         STOPPED_AT_PHASE,
         DROPPED_AT_PHASE,
         TIMEOUT,
-        IO_ERROR
+        IO_ERROR,
+        /** A 4yz transient negative reply (rfc5321 §4.2.1) — e.g. a {@code 421} greeting/EHLO; retryable. */
+        TRANSIENT
     }
 
     private final Kind kind;
     private final Phase phase;
     private SmtpTranscript transcript;
+    private SendResult.TlsOutcome tls;
 
     public SmtpException(Kind kind, Phase phase, String message) {
         super(message);
@@ -54,8 +57,22 @@ public final class SmtpException extends Exception {
         return transcript;
     }
 
+    /**
+     * The TLS state negotiated before the failure, or {@code null} when none was attached. Lets a
+     * caller record whether a failed send was actually encrypted (e.g. an AUTH/RCPT rejection that
+     * occurred after STARTTLS) rather than reporting "no TLS" for every failure.
+     */
+    public SendResult.TlsOutcome tls() {
+        return tls;
+    }
+
     SmtpException withTranscript(SmtpTranscript snapshot) {
         this.transcript = snapshot;
+        return this;
+    }
+
+    SmtpException withTls(SendResult.TlsOutcome outcome) {
+        this.tls = outcome;
         return this;
     }
 }

@@ -4,6 +4,7 @@ import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfile;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfileService;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -53,6 +54,18 @@ public class SendDialogTest extends BasePlatformTestCase {
         var dialog = new SendDialog(getProject(), (VirtualFile) null);
         try {
             assertEquals("Send EML", dialog.getTitle());
+        } finally {
+            dialog.close(0);
+        }
+    }
+
+    public void testSendDialogIsNonModalSoTheSendDoesNotFreezeTheIde() {
+        // The dialog runs the send on a pooled thread and shows live progress; a modal dialog would
+        // freeze the whole IDE while it stays open and suppress the result notification balloon until
+        // the dialog is closed (the reported "window frozen, notification only after close" defect).
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
+        try {
+            assertFalse("the Send EML dialog must be non-modal", dialog.isModal());
         } finally {
             dialog.close(0);
         }
@@ -236,6 +249,113 @@ public class SendDialogTest extends BasePlatformTestCase {
         } finally {
             dialog.close(0);
         }
+    }
+
+    public void testDisplayNameAndBareAddressesAreReducedToBareAddrSpecsInTheEnvelope() throws Exception {
+        // Manual-verification sample: a display-name From and a To list whose first entry has a
+        // quoted comma. rfc5321 §4.1.2 — the envelope wants the bare addr-spec, not the rfc5322
+        // mailbox with a display name. Old behavior passed "Alice <alice@…>" straight to
+        // SmtpEnvelope.of, whose requireSafeAddress rejected '<', '>', and spaces.
+        var fixture = "src/test/resources/samples/eml/edge/display_name_envelope.eml";
+        var from = headerValueOf(fixture, "From");
+        var toHeader = headerValueOf(fixture, "To");
+        assertEquals("Alice Example <alice@example.com>", from);
+        assertEquals("\"Doe, John\" <john@example.com>, bob@example.com", toHeader);
+
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
+        try {
+            dialog.setEnvelopeForTest(from, toHeader);
+
+            var request = dialog.buildSendRequest();
+
+            assertEquals(
+                    "from is reduced to its bare addr-spec",
+                    "alice@example.com",
+                    request.envelope().mailFrom());
+            // rfc5322 §3.4 — the quoted comma must NOT split the address list, so there are exactly
+            // two recipients, each a bare addr-spec.
+            assertEquals(List.of("john@example.com", "bob@example.com"), request.recipients());
+        } finally {
+            dialog.close(0);
+        }
+    }
+
+    public void testGroupSyntaxAndCommentsReduceToBareAddrSpecs() throws Exception {
+        // rfc5322 §3.4 group syntax ("Team: a, b;") and §3.2.2 CFWS comments are legitimate address
+        // forms. The old extractor passed "Team: alice@…" and "dave@… (work)" to the envelope, whose
+        // requireSafeAddress rejected the space/colon — so a valid To header failed to send.
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
+        try {
+            dialog.setEnvelopeForTest(
+                    "carol@example.com (Carol)", "Team: alice@example.com, bob@example.com;, dave@example.com (work)");
+
+            var request = dialog.buildSendRequest();
+
+            assertEquals("carol@example.com", request.envelope().mailFrom());
+            assertEquals(List.of("alice@example.com", "bob@example.com", "dave@example.com"), request.recipients());
+        } finally {
+            dialog.close(0);
+        }
+    }
+
+    public void testMultipleDisplayNameRecipientsEachYieldOneBareAddrSpec() throws Exception {
+        // Several "Name <addr>" entries — the classic thing pasted from an EML To header.
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
+        try {
+            dialog.setEnvelopeForTest(
+                    "Carol <carol@example.com>", "Alice <alice@example.com>, Bob B. <bob@example.com>");
+
+            var request = dialog.buildSendRequest();
+
+            assertEquals("carol@example.com", request.envelope().mailFrom());
+            assertEquals(List.of("alice@example.com", "bob@example.com"), request.recipients());
+        } finally {
+            dialog.close(0);
+        }
+    }
+
+    public void testBccHeaderIsRecognizedFoldedAndCaseInsensitivelyAndStrippedFromData() throws Exception {
+        // Manual-verification sample: a folded, mixed-case (BCC:) Bcc field. rfc5322 §3.6.3 / §5.3 —
+        // the Bcc field must not be transmitted; rfc5322 §1.2.2 — field names are case-insensitive;
+        // rfc5322 §2.2.3 — a continuation line begins with SP/HTAB, so the folded value goes too.
+        var bytes = Files.readAllBytes(Path.of("src/test/resources/samples/eml/edge/bcc_disclosure.eml"));
+
+        var result = SendDialog.stripBccHeader(bytes);
+
+        assertTrue("a Bcc field must be detected (this is what triggers the user warning)", result.changed());
+        // The folded field is unfolded and parsed into bare addr-specs (no trailing comma, one entry
+        // per address) so the warning lists real addresses rather than raw line fragments.
+        assertEquals(List.of("secret-one@example.com", "secret-two@example.com"), result.removedAddresses());
+        var data = new String(result.data(), StandardCharsets.UTF_8);
+        assertFalse("the Bcc field name must be gone from DATA", data.contains("BCC:"));
+        assertFalse(data.contains("secret-one@example.com"));
+        assertFalse(data.contains("secret-two@example.com"));
+        assertTrue("the visible header survives", data.contains("To: visible@example.com"));
+        assertTrue("the From header survives", data.contains("From: sender@example.com"));
+        // Dropping the field (and its folded continuation) must not leave a stray blank line.
+        assertFalse("no blank line where the Bcc field was", data.contains("\r\n\r\n\r\n"));
+    }
+
+    public void testStripBccHeaderLeavesABodyLineThatLooksLikeBccUntouched() {
+        // Only the header section is scanned (rfc5322 §2.1) — a body line that merely starts with
+        // "Bcc:" must be left intact.
+        var message = "From: a@example.com\r\nTo: b@example.com\r\n\r\nBcc: not-a-header@example.com\r\n";
+
+        var result = SendDialog.stripBccHeader(message.getBytes(StandardCharsets.UTF_8));
+
+        assertFalse("a body line is not a header — nothing to strip", result.changed());
+        assertEquals(message, new String(result.data(), StandardCharsets.UTF_8));
+    }
+
+    /** Reads one top-level (un-folded) header value from a sample EML on disk. */
+    private static String headerValueOf(String fixturePath, String fieldName) throws Exception {
+        for (var line : Files.readString(Path.of(fixturePath)).split("\r?\n")) {
+            var colon = line.indexOf(':');
+            if (colon > 0 && line.substring(0, colon).trim().equalsIgnoreCase(fieldName)) {
+                return line.substring(colon + 1).trim();
+            }
+        }
+        throw new AssertionError("no " + fieldName + " header in " + fixturePath);
     }
 
     private List<VirtualFile> createBatchSampleFiles() throws Exception {

@@ -23,13 +23,19 @@ public final class PlainAuthClient implements AuthClient {
 
     @Override
     public byte[] initial() {
+        // RFC 4616 §2: the authzid, authcid and passwd SHALL be prepared with SASLprep before
+        // transmission, so a non-ASCII credential matches what a SASLprep-applying server stored.
+        // saslPrep is a no-op for ASCII, so existing ASCII credentials are byte-identical.
         var passwordChars = credentials.password().get();
-        var passwordBytes = toBytes(passwordChars);
+        var preparedPassword =
+                ScramAuthClient.saslPrep(new String(passwordChars)).toCharArray();
         Arrays.fill(passwordChars, '\0');
+        var passwordBytes = toBytes(preparedPassword);
+        Arrays.fill(preparedPassword, '\0');
         try (var buffer = new ByteArrayOutputStream()) {
-            buffer.write(credentials.authzId().getBytes(StandardCharsets.UTF_8));
+            buffer.write(ScramAuthClient.saslPrep(credentials.authzId()).getBytes(StandardCharsets.UTF_8));
             buffer.write(0);
-            buffer.write(credentials.username().getBytes(StandardCharsets.UTF_8));
+            buffer.write(ScramAuthClient.saslPrep(credentials.username()).getBytes(StandardCharsets.UTF_8));
             buffer.write(0);
             buffer.write(passwordBytes);
             complete = true;

@@ -38,8 +38,11 @@ public final class ICalendarGenerator {
 
     /**
      * Everything one VEVENT needs beyond the original nine arguments: the all-day flag
-     * (PidLidAppointmentSubType), the event time zone (PidLidTimeZoneStruct) and the recurrence
-     * (PidLidAppointmentRecur) — each optional.
+     * (PidLidAppointmentSubType), the event time zone (PidLidTimeZoneStruct), the recurrence
+     * (PidLidAppointmentRecur) and the iTIP revision number (PidLidAppointmentSequence) — each
+     * optional. {@code sequence} is the RFC 5546 {@code SEQUENCE} (RFC 5545 §3.8.7.4): a REPLY must
+     * echo the request's value and a CANCEL/updated REQUEST must carry a higher value than the
+     * original, or a client that already holds the event ignores the update; it defaults to 0.
      */
     public record EventDetails(
             String method,
@@ -53,7 +56,39 @@ public final class ICalendarGenerator {
             List<Attendee> attendees,
             boolean allDay,
             WindowsTimeZone timeZone,
-            AppointmentRecurrence.Pattern recurrence) {}
+            AppointmentRecurrence.Pattern recurrence,
+            int sequence) {
+
+        /** An event with no explicit iTIP revision number ({@code SEQUENCE:0}). */
+        public EventDetails(
+                String method,
+                Date startTime,
+                Date endTime,
+                String location,
+                String subject,
+                String organizerName,
+                String organizerEmail,
+                String description,
+                List<Attendee> attendees,
+                boolean allDay,
+                WindowsTimeZone timeZone,
+                AppointmentRecurrence.Pattern recurrence) {
+            this(
+                    method,
+                    startTime,
+                    endTime,
+                    location,
+                    subject,
+                    organizerName,
+                    organizerEmail,
+                    description,
+                    attendees,
+                    allDay,
+                    timeZone,
+                    recurrence,
+                    0);
+        }
+    }
 
     /**
      * The iTIP method (RFC 5546) matching a MAPI calendar message class: meeting requests,
@@ -136,9 +171,13 @@ public final class ICalendarGenerator {
         var utcFormat = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'");
         utcFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
 
-        var safeMethod = event.method() == null || event.method().isBlank()
+        var requestedMethod = event.method() == null || event.method().isBlank()
                 ? "PUBLISH"
                 : escapeParameterValue(event.method().trim()).toUpperCase(Locale.ROOT);
+        // RFC 5546 §3.2: a scheduling object (REQUEST/REPLY/CANCEL) requires a DTSTART. When the store
+        // gave us no start time, fall back to PUBLISH rather than emit an invalid scheduling VEVENT
+        // (which also correctly drops the ATTENDEE list a publication must not carry).
+        var safeMethod = "PUBLISH".equals(requestedMethod) || event.startTime() != null ? requestedMethod : "PUBLISH";
         String dtStamp = utcFormat.format(new Date());
         String uid = UUID.randomUUID().toString();
 
@@ -156,6 +195,7 @@ public final class ICalendarGenerator {
         builder.append("BEGIN:VEVENT\r\n");
         builder.append("UID:").append(uid).append("\r\n");
         builder.append("DTSTAMP:").append(dtStamp).append("\r\n");
+        builder.append("SEQUENCE:").append(Math.max(0, event.sequence())).append("\r\n");
         if (event.startTime() != null) {
             appendEventDate(builder, "DTSTART", event.startTime(), event.allDay(), timeZone, utcFormat);
         }
@@ -235,11 +275,12 @@ public final class ICalendarGenerator {
         todo.append("BEGIN:VTODO\r\n");
         todo.append("UID:").append(UUID.randomUUID()).append("\r\n");
         todo.append("DTSTAMP:").append(utcFormat.format(new Date())).append("\r\n");
+        todo.append("SEQUENCE:0\r\n");
         if (startDate != null) {
-            todo.append("DTSTART:").append(utcFormat.format(startDate)).append("\r\n");
+            appendTaskDate(todo, "DTSTART", startDate, utcFormat);
         }
         if (dueDate != null) {
-            todo.append("DUE:").append(utcFormat.format(dueDate)).append("\r\n");
+            appendTaskDate(todo, "DUE", dueDate, utcFormat);
         }
         if (subject != null && !subject.isBlank()) {
             todo.append("SUMMARY:").append(escapeIcal(subject)).append("\r\n");
@@ -259,6 +300,33 @@ public final class ICalendarGenerator {
         return foldLines(todo.toString());
     }
 
+    /**
+     * Emits a VTODO {@code DTSTART}/{@code DUE} line, distinguishing a date-only value from a real
+     * date-time. Outlook stores task dates ({@code PidLidTaskStartDate}/{@code PidLidTaskDueDate},
+     * [MS-OXOTASK] §2.2.2.2.4–.5) as midnight-UTC date-only values; rendering those as a
+     * {@code yyyymmddT000000Z} DATE-TIME shifts the day one west of UTC for every reader east of the
+     * prime meridian. Per rfc5545 §3.3.4 (DATE) vs §3.3.5 (DATE-TIME) and §3.8.2.3 (DUE), a date-only
+     * value is emitted as {@code ;VALUE=DATE:yyyymmdd}; a value carrying a non-midnight time of day is
+     * a genuine date-time and stays a UTC DATE-TIME.
+     */
+    private static void appendTaskDate(StringBuilder todo, String property, Date value, SimpleDateFormat utcFormat) {
+        if (isDateOnly(value)) {
+            var date =
+                    LocalDateTime.ofInstant(value.toInstant(), ZoneOffset.UTC).toLocalDate();
+            todo.append(property)
+                    .append(";VALUE=DATE:")
+                    .append(DATE_ONLY.format(date))
+                    .append("\r\n");
+        } else {
+            todo.append(property).append(':').append(utcFormat.format(value)).append("\r\n");
+        }
+    }
+
+    /** True when {@code value} falls on a UTC midnight boundary — the MAPI convention for a date-only task date. */
+    private static boolean isDateOnly(Date value) {
+        return value.toInstant().toEpochMilli() % 86_400_000L == 0L;
+    }
+
     /** One DTSTART/DTEND line: {@code VALUE=DATE} for all-day, TZID-local or UTC for timed events. */
     private static void appendEventDate(
             StringBuilder builder,
@@ -275,7 +343,7 @@ public final class ICalendarGenerator {
         } else if (timeZone != null) {
             builder.append(property)
                     .append(";TZID=")
-                    .append(WindowsTimeZone.TZID)
+                    .append(timeZone.tzid())
                     .append(':')
                     .append(LOCAL_DATE_TIME.format(timeZone.toLocal(value.toInstant())))
                     .append("\r\n");
@@ -324,7 +392,7 @@ public final class ICalendarGenerator {
             if (allDay) {
                 builder.append(";VALUE=DATE");
             } else if (timeZone != null) {
-                builder.append(";TZID=").append(WindowsTimeZone.TZID);
+                builder.append(";TZID=").append(timeZone.tzid());
             }
             builder.append(':').append(String.join(",", values)).append("\r\n");
         }
@@ -397,12 +465,19 @@ public final class ICalendarGenerator {
         return builder.toString();
     }
 
+    /**
+     * Escapes an iCalendar TEXT value (rfc5545 §3.3.11): backslash, semicolon and comma are
+     * backslash-escaped and every newline becomes a literal {@code \n}. A line break in TEXT must be
+     * represented, never dropped, so CRLF, a lone CR and a lone LF all map to {@code \n} (matching the
+     * vCard escaper) rather than silently deleting a stray CR.
+     */
     private static String escapeIcal(String text) {
         return text.replace("\\", "\\\\")
                 .replace(";", "\\;")
                 .replace(",", "\\,")
-                .replace("\n", "\\n")
-                .replace("\r", "");
+                .replace("\r\n", "\\n")
+                .replace("\r", "\\n")
+                .replace("\n", "\\n");
     }
 
     /**

@@ -16,6 +16,12 @@ import java.util.List;
  * <p>When multiple addresses match (e.g. AUTO mode returning both v4 and v6 for {@code localhost})
  * the connector tries them in order, returning the first one that connects. This matches the
  * "happy-eyeballs" intent of a generic TCP client without the full RFC 8305 dual-stack timing.
+ *
+ * <p><b>Timeout is per connection attempt, not an overall budget.</b> The {@code timeout} passed to
+ * {@link #connect} applies to <em>each</em> candidate address (and the caller applies it again to
+ * each MX host it tries), so the worst-case wall time to exhaust N unreachable candidates is
+ * {@code timeout × N}. This is intentional — every alternate must get a fair chance per RFC 5321
+ * §5.1 failover — but callers should size {@code timeout} with the candidate count in mind.
  */
 public final class TcpConnector {
 

@@ -27,7 +27,9 @@ import com.intellij.ui.table.JBTable;
 import com.intellij.util.ui.FormBuilder;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -122,6 +124,11 @@ public final class SendDialog extends DialogWrapper {
         this.profileService = SmtpProfileService.getInstance();
         this.credentialStore = new SmtpCredentialStore();
         this.statusTableModel = new FileStatusTableModel(buildFileLabels());
+        // The dialog runs the send itself on a pooled thread and shows live progress, so it must be
+        // non-modal: a modal dialog freezes the whole IDE for the duration the dialog stays open and
+        // makes IntelliJ suppress the success/failure notification balloon until the dialog is closed.
+        // (The launcher uses show() and never showAndGet(), so nothing relies on modal blocking.)
+        setModal(false);
         setTitle(this.sourceFiles.size() > 1 ? "Send " + this.sourceFiles.size() + " EML Files" : "Send EML");
         setOKButtonText("Send");
         setCancelButtonText("Cancel");
@@ -211,6 +218,9 @@ public final class SendDialog extends DialogWrapper {
             if (!confirmInsecureTransport(request.config())) {
                 return;
             }
+            if (!confirmBccStripping()) {
+                return;
+            }
             persistOverridesToProfileIfRequested();
             committedRequest = request;
             startBatch(request);
@@ -257,7 +267,7 @@ public final class SendDialog extends DialogWrapper {
 
             @Override
             public void batchFinished(int sent, int failed, int skipped, boolean cancelled) {
-                onEdt(SendDialog.this::onBatchFinished);
+                onEdt(() -> onBatchFinished(sent, failed, skipped, cancelled));
             }
 
             private void onEdt(Runnable update) {
@@ -273,10 +283,15 @@ public final class SendDialog extends DialogWrapper {
         });
     }
 
-    private void onBatchFinished() {
+    private void onBatchFinished(int sent, int failed, int skipped, boolean cancelled) {
         state = DialogState.DONE;
         setCancelButtonText("Close");
         getCancelAction().setEnabled(true);
+        // Replace the in-progress "Sending…" label with a terminal one so the finished dialog reads as
+        // done rather than appearing stuck mid-send. The OK action stays disabled — there is nothing
+        // left to send from this dialog.
+        String label = cancelled ? "Cancelled" : (failed > 0 ? (sent > 0 ? "Finished" : "Failed") : "Sent");
+        setOKButtonText(label);
     }
 
     private void setInputsEnabled(boolean enabled) {
@@ -415,15 +430,20 @@ public final class SendDialog extends DialogWrapper {
         if (selected == null) {
             throw new ConfigurationException("Pick a profile or add one in Settings → Tools → MailKit SMTP.");
         }
-        var from = envelopeFromField.getText().trim();
+        // The envelope wants a bare addr-spec (mailbox), not an rfc5322 mailbox with a display
+        // name (rfc5321 §4.1.2), so reduce "Alice <alice@example.com>" to "alice@example.com"
+        // before SmtpEnvelope.requireSafeAddress sees it (it rejects '<', '>', and spaces).
+        var from = extractAddrSpec(envelopeFromField.getText().trim());
         if (from.isEmpty()) {
             throw new ConfigurationException("Envelope From cannot be empty.");
         }
         var recipients = new ArrayList<String>();
-        for (var raw : envelopeToField.getText().split(",")) {
-            var trimmed = raw.trim();
-            if (!trimmed.isEmpty()) {
-                recipients.add(trimmed);
+        // Split the list on the separator commas only (not commas inside a quoted display name or
+        // an angle-addr, rfc5322 §3.4), then take each entry's bare addr-spec.
+        for (var raw : splitAddressList(envelopeToField.getText())) {
+            var address = extractAddrSpec(raw);
+            if (!address.isEmpty()) {
+                recipients.add(address);
             }
         }
         if (recipients.isEmpty()) {
@@ -439,9 +459,15 @@ public final class SendDialog extends DialogWrapper {
         var stopChoice = (StopAfterChoice) stopAfterPicker.getSelectedItem();
         var stopPhase = stopChoice == null ? null : stopChoice.phase;
         var hostOverride = hostField.getText().trim();
+        // The Host field is pre-filled from the profile; an empty field means the user cleared it.
+        // Reject it rather than silently falling back to the profile's host (which contradicts the
+        // visibly-empty field and would send to an unexpected server).
+        if (hostOverride.isEmpty()) {
+            throw new ConfigurationException("Host cannot be empty.");
+        }
         var portOverride = (Integer) portSpinner.getValue();
         var config = SmtpProfiles.toConfig(selected, credentialStore).withStopAfter(stopPhase, false);
-        if (!hostOverride.isEmpty() && !hostOverride.equals(selected.host)) {
+        if (!hostOverride.equals(selected.host)) {
             // Per-send override — we rebuild the host/port without persisting back to the profile.
             config = new SmtpConfig(
                     hostOverride,
@@ -474,7 +500,8 @@ public final class SendDialog extends DialogWrapper {
                 config,
                 envelope,
                 sourceFiles,
-                failurePolicy == null ? FailurePolicy.CONTINUE_ON_FAILURE : failurePolicy);
+                failurePolicy == null ? FailurePolicy.CONTINUE_ON_FAILURE : failurePolicy,
+                selected.name);
     }
 
     /**
@@ -500,6 +527,95 @@ public final class SendDialog extends DialogWrapper {
                 auth.optional(),
                 auth.optionalStrict());
         return config.withAuth(transientAuth);
+    }
+
+    /**
+     * Scans every source {@code .eml} for {@code Bcc:} header values without modifying anything,
+     * returning the de-duplicated list of Bcc addresses found across the batch. {@code Bcc:} is a
+     * header field, so a bounded prefix (the same cap {@link #parseEmlHeaders()} uses) always covers
+     * it; this runs on the EDT when the user presses Send. The actual stripping from the transmitted
+     * DATA happens in {@link BatchSendController}; this method exists only to drive the user warning.
+     */
+    private List<String> collectBccAddressesFromSources() {
+        var found = new ArrayList<String>();
+        for (var sourceFile : sourceFiles) {
+            try {
+                byte[] bytes;
+                try (var input = sourceFile.getInputStream()) {
+                    bytes = readHeaderSection(input);
+                }
+                for (var address : stripBccHeader(bytes).removedAddresses()) {
+                    if (!found.contains(address)) {
+                        found.add(address);
+                    }
+                }
+            } catch (IOException ignored) {
+                // Best effort — a file we cannot read here will also fail to send, and the send
+                // path strips Bcc independently, so skipping it for the warning is safe.
+            }
+        }
+        return found;
+    }
+
+    /**
+     * Reads the whole header section (up to and including the blank line that separates header from
+     * body, rfc5322 §2.1), regardless of size. A {@code Bcc:} field can sit anywhere in the header
+     * block, so a fixed byte cap could miss a late one — the warning must see exactly what the send
+     * path strips. Reading stops at the separator (a little body may be over-read, harmlessly), so
+     * only the header section is buffered, not a large message body/attachments.
+     */
+    private static byte[] readHeaderSection(InputStream input) throws IOException {
+        var buffer = new ByteArrayOutputStream();
+        var chunk = new byte[8192];
+        int read;
+        while ((read = input.read(chunk)) != -1) {
+            buffer.write(chunk, 0, read);
+            if (containsHeaderBodySeparator(buffer.toByteArray())) {
+                break;
+            }
+        }
+        return buffer.toByteArray();
+    }
+
+    /** Whether {@code bytes} already contains a header/body separator ({@code \n\n} or {@code \n\r\n}). */
+    private static boolean containsHeaderBodySeparator(byte[] bytes) {
+        for (var index = 1; index < bytes.length; index++) {
+            if (bytes[index] == '\n') {
+                if (bytes[index - 1] == '\n') {
+                    return true;
+                }
+                if (index >= 3 && bytes[index - 1] == '\r' && bytes[index - 2] == '\n') {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * If any source {@code .eml} carries a {@code Bcc:} header, warns the user that those addresses
+     * were removed from the transmitted message (rfc5322 §3.6.3 / §5.3 — a {@code Bcc} field must
+     * not reach recipients) and were NOT added as envelope recipients. The manual-envelope design
+     * is deliberate: we never silently expand the recipient set, so the user can paste any intended
+     * Bcc addresses into the To field themselves. Returns {@code true} when the send should proceed.
+     */
+    private boolean confirmBccStripping() {
+        var bccAddresses = collectBccAddressesFromSources();
+        if (bccAddresses.isEmpty()) {
+            return true;
+        }
+        var answer = Messages.showYesNoDialog(
+                project,
+                "The message contains " + bccAddresses.size() + " Bcc address"
+                        + (bccAddresses.size() == 1 ? "" : "es") + " that will be removed before sending so they are"
+                        + " not disclosed to other recipients:\n\n    " + String.join("\n    ", bccAddresses)
+                        + "\n\nThese addresses will NOT be delivered to. Add them to the \"To\" field if you intend"
+                        + " to send to them.\n\nSend without the Bcc recipients?",
+                "Bcc Header Will Be Removed",
+                "Send Anyway",
+                "Cancel",
+                Messages.getWarningIcon());
+        return answer == Messages.YES;
     }
 
     private DefaultsFromHeaders parseEmlHeaders() {
@@ -533,7 +649,7 @@ public final class SendDialog extends DialogWrapper {
                 var name = line.substring(0, colon).trim().toLowerCase(Locale.ROOT);
                 var value = line.substring(colon + 1).trim();
                 switch (name) {
-                    case "from" -> defaults.from = stripAngles(value);
+                    case "from" -> defaults.from = extractAddrSpec(value);
                     case "subject" -> defaults.subject = value;
                     default -> {
                         /* ignored */
@@ -546,13 +662,297 @@ public final class SendDialog extends DialogWrapper {
         return defaults;
     }
 
-    private static String stripAngles(String value) {
-        var openAngle = value.indexOf('<');
-        var closeAngle = value.indexOf('>');
-        if (openAngle >= 0 && closeAngle > openAngle) {
-            return value.substring(openAngle + 1, closeAngle);
+    /**
+     * Extracts the bare {@code addr-spec} (mailbox) from one address. The SMTP envelope wants a
+     * bare {@code addr-spec} on {@code MAIL FROM} / {@code RCPT TO} (rfc5321 §4.1.2), not an
+     * rfc5322 {@code mailbox} with a display name, so {@code Display Name <addr@host>} must be
+     * reduced to {@code addr@host}. A bare {@code addr@host} (no angle brackets) is returned as-is.
+     *
+     * <p>CFWS comments (rfc5322 §3.2.2) are dropped, an rfc5322 group prefix ({@code Group Name: a@x})
+     * and its trailing {@code ;} are stripped (§3.4), and when angle brackets are present the
+     * <em>innermost</em> {@code angle-addr} wins — so legitimate {@code To:} inputs in any of those
+     * forms reduce to a usable address instead of being rejected as unsafe by the envelope.
+     */
+    private static String extractAddrSpec(String value) {
+        var cleaned = stripComments(value).trim();
+        // Drop an rfc5322 group prefix ("Display Name: addr") — a top-level colon (not inside a quoted
+        // string, angle brackets, or a [domain-literal]) whose left side carries no '@'/'<' is a group
+        // label, not part of an addr-spec (an IPv6 domain-literal's colons stay inside '[ ]').
+        var groupColon = topLevelGroupColon(cleaned);
+        if (groupColon >= 0) {
+            cleaned = cleaned.substring(groupColon + 1).trim();
         }
-        return value;
+        if (cleaned.endsWith(";")) {
+            cleaned = cleaned.substring(0, cleaned.length() - 1).trim();
+        }
+        var openAngle = cleaned.lastIndexOf('<');
+        if (openAngle >= 0) {
+            var closeAngle = cleaned.indexOf('>', openAngle);
+            if (closeAngle > openAngle) {
+                return cleaned.substring(openAngle + 1, closeAngle).trim();
+            }
+        }
+        return cleaned.trim();
+    }
+
+    /** Removes rfc5322 §3.2.2 parenthesised CFWS comments that sit outside a quoted string / angle-addr. */
+    private static String stripComments(String value) {
+        var result = new StringBuilder(value.length());
+        var inQuotes = false;
+        var angleDepth = 0;
+        var commentDepth = 0;
+        for (var index = 0; index < value.length(); index++) {
+            var character = value.charAt(index);
+            if (commentDepth > 0) {
+                if (character == '(') {
+                    commentDepth++;
+                } else if (character == ')') {
+                    commentDepth--;
+                }
+                continue;
+            }
+            switch (character) {
+                case '"' -> {
+                    inQuotes = !inQuotes;
+                    result.append(character);
+                }
+                case '<' -> {
+                    if (!inQuotes) {
+                        angleDepth++;
+                    }
+                    result.append(character);
+                }
+                case '>' -> {
+                    if (!inQuotes && angleDepth > 0) {
+                        angleDepth--;
+                    }
+                    result.append(character);
+                }
+                case '(' -> {
+                    if (inQuotes || angleDepth > 0) {
+                        result.append(character);
+                    } else {
+                        commentDepth = 1;
+                    }
+                }
+                default -> result.append(character);
+            }
+        }
+        return result.toString();
+    }
+
+    /**
+     * The index of the top-level group-separator colon (rfc5322 §3.4), or {@code -1}. A colon counts
+     * only when it is outside a quoted string, angle brackets and a {@code [domain-literal]}, and the
+     * text before it contains no {@code '@'} or {@code '<'} (so a plain display name, not an address).
+     */
+    private static int topLevelGroupColon(String value) {
+        var inQuotes = false;
+        var angleDepth = 0;
+        var inDomainLiteral = false;
+        for (var index = 0; index < value.length(); index++) {
+            var character = value.charAt(index);
+            switch (character) {
+                case '"' -> inQuotes = !inQuotes;
+                case '<' -> {
+                    if (!inQuotes) {
+                        angleDepth++;
+                    }
+                }
+                case '>' -> {
+                    if (!inQuotes && angleDepth > 0) {
+                        angleDepth--;
+                    }
+                }
+                case '[' -> {
+                    if (!inQuotes) {
+                        inDomainLiteral = true;
+                    }
+                }
+                case ']' -> {
+                    if (!inQuotes) {
+                        inDomainLiteral = false;
+                    }
+                }
+                case ':' -> {
+                    if (!inQuotes && angleDepth == 0 && !inDomainLiteral) {
+                        var prefix = value.substring(0, index);
+                        return prefix.indexOf('@') < 0 && prefix.indexOf('<') < 0 ? index : -1;
+                    }
+                }
+                default -> {
+                    /* not a delimiter */
+                }
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Splits an rfc5322 address list on the commas that separate addresses, ignoring commas that
+     * sit inside a quoted string or inside angle brackets (rfc5322 §3.4 — a {@code display-name}
+     * may be a {@code quoted-string}, and an {@code addr-spec} is wrapped in {@code angle-addr}).
+     * A naive {@code split(",")} would shred {@code "Last, First" <a@b>} into two broken entries,
+     * so the quoted comma and the angle-addr comma must both be treated as in-token. Returns the
+     * raw (un-trimmed, address-spec-not-yet-extracted) tokens, skipping empty ones.
+     */
+    private static List<String> splitAddressList(String value) {
+        var tokens = new ArrayList<String>();
+        var current = new StringBuilder();
+        var inQuotes = false;
+        var angleDepth = 0;
+        for (var index = 0; index < value.length(); index++) {
+            var character = value.charAt(index);
+            switch (character) {
+                case '"' -> {
+                    inQuotes = !inQuotes;
+                    current.append(character);
+                }
+                case '<' -> {
+                    if (!inQuotes) {
+                        angleDepth++;
+                    }
+                    current.append(character);
+                }
+                case '>' -> {
+                    if (!inQuotes && angleDepth > 0) {
+                        angleDepth--;
+                    }
+                    current.append(character);
+                }
+                case ',' -> {
+                    if (inQuotes || angleDepth > 0) {
+                        current.append(character);
+                    } else {
+                        var token = current.toString().trim();
+                        if (!token.isEmpty()) {
+                            tokens.add(token);
+                        }
+                        current.setLength(0);
+                    }
+                }
+                default -> current.append(character);
+            }
+        }
+        var last = current.toString().trim();
+        if (!last.isEmpty()) {
+            tokens.add(last);
+        }
+        return tokens;
+    }
+
+    /** Outcome of {@link #stripBccHeader(byte[])}: the cleaned DATA plus the removed Bcc values. */
+    record BccStripResult(byte[] data, List<String> removedAddresses) {
+        BccStripResult {
+            Objects.requireNonNull(data, "data");
+            removedAddresses = List.copyOf(removedAddresses);
+        }
+
+        boolean changed() {
+            return !removedAddresses.isEmpty();
+        }
+    }
+
+    /**
+     * Removes every {@code Bcc:} header field (full folded field, all occurrences) from a message's
+     * DATA, returning the cleaned bytes and the raw Bcc values that were removed.
+     *
+     * <p>The {@code Bcc:} field must not be transmitted to any recipient (rfc5322 §3.6.3, §5.3) —
+     * sending the {@code .eml} verbatim would disclose the blind recipients to everyone on the
+     * envelope. Field-name matching is case-insensitive (rfc5322 §1.2.2 treats field names
+     * case-insensitively) and the whole folded field is dropped: a continuation line begins with
+     * SP or HTAB (rfc5322 §2.2.3), so each such line after a {@code Bcc:} start line is removed too.
+     * Only the header section (up to the blank line separating header and body, rfc5322 §2.1) is
+     * scanned, so a body line that merely looks like {@code Bcc: ...} is never touched. Dropping a
+     * field also drops that field's own line terminator, so no stray blank line is introduced.
+     *
+     * <p>Line endings are preserved as-found per line; the SMTP client normalizes LF→CRLF on the
+     * wire, so mixed endings in the source survive this rewrite without altering delivery.
+     */
+    static BccStripResult stripBccHeader(byte[] data) {
+        var text = new String(data, StandardCharsets.UTF_8);
+        // Split into lines that each retain their own terminator, so the message can be rebuilt
+        // byte-for-byte minus the dropped fields (and their terminators).
+        var lines = text.split("(?<=\n)");
+        var rebuilt = new StringBuilder(text.length());
+        // One unfolded value per Bcc field; a folded field's continuation lines are joined back into a
+        // single value (rfc5322 §2.2.3) so the value can be parsed as a real address list afterwards.
+        var bccValues = new ArrayList<String>();
+        StringBuilder currentBcc = null;
+        var inHeaders = true;
+        var droppingFoldedField = false;
+        for (var line : lines) {
+            if (!inHeaders) {
+                rebuilt.append(line);
+                continue;
+            }
+            // A line that is empty once its terminator is removed is the header/body separator
+            // (rfc5322 §2.1); everything after it is body and must be left untouched.
+            if (stripLineEnding(line).isEmpty()) {
+                if (currentBcc != null) {
+                    bccValues.add(currentBcc.toString());
+                    currentBcc = null;
+                }
+                inHeaders = false;
+                rebuilt.append(line);
+                continue;
+            }
+            var isContinuation = line.startsWith(" ") || line.startsWith("\t");
+            if (droppingFoldedField && isContinuation) {
+                if (currentBcc != null) {
+                    var part = stripLineEnding(line).trim();
+                    if (!part.isEmpty()) {
+                        if (currentBcc.length() > 0) {
+                            currentBcc.append(' ');
+                        }
+                        currentBcc.append(part);
+                    }
+                }
+                continue;
+            }
+            // A non-continuation line ends any Bcc field currently being collected.
+            if (currentBcc != null) {
+                bccValues.add(currentBcc.toString());
+                currentBcc = null;
+            }
+            droppingFoldedField = false;
+            var colon = line.indexOf(':');
+            if (colon > 0 && line.substring(0, colon).trim().equalsIgnoreCase("Bcc")) {
+                droppingFoldedField = true;
+                currentBcc = new StringBuilder(
+                        stripLineEnding(line.substring(colon + 1)).trim());
+                continue;
+            }
+            rebuilt.append(line);
+        }
+        if (currentBcc != null) {
+            bccValues.add(currentBcc.toString());
+        }
+
+        // Parse each Bcc field value into bare addr-specs (rfc5322 §3.4 address list), deduplicating,
+        // so the user warning lists real addresses — not the raw line fragments (with trailing commas,
+        // or several addresses glued into one entry) the previous code reported.
+        var removed = new ArrayList<String>();
+        for (var value : bccValues) {
+            for (var token : splitAddressList(value)) {
+                var address = extractAddrSpec(token);
+                if (!address.isEmpty() && !removed.contains(address)) {
+                    removed.add(address);
+                }
+            }
+        }
+        if (removed.isEmpty()) {
+            return new BccStripResult(data, List.of());
+        }
+        return new BccStripResult(rebuilt.toString().getBytes(StandardCharsets.UTF_8), removed);
+    }
+
+    private static String stripLineEnding(String line) {
+        var end = line.length();
+        while (end > 0 && (line.charAt(end - 1) == '\n' || line.charAt(end - 1) == '\r')) {
+            end--;
+        }
+        return line.substring(0, end);
     }
 
     private String formatSourceSummary() {
@@ -601,7 +1001,11 @@ public final class SendDialog extends DialogWrapper {
     }
 
     public record SendRequest(
-            SmtpConfig config, SmtpEnvelope envelope, List<VirtualFile> sourceFiles, FailurePolicy failurePolicy) {
+            SmtpConfig config,
+            SmtpEnvelope envelope,
+            List<VirtualFile> sourceFiles,
+            FailurePolicy failurePolicy,
+            String profileName) {
         public List<String> recipients() {
             var addresses = new ArrayList<String>(envelope.recipients().size());
             for (var rcpt : envelope.recipients()) {

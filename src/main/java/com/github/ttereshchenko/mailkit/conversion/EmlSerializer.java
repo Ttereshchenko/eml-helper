@@ -951,16 +951,21 @@ public final class EmlSerializer {
             if (index > 0 && (line.isEmpty() || (line.charAt(0) != ' ' && line.charAt(0) != '\t'))) {
                 line = " " + line;
             }
-            while (line.length() > 78) {
+            // RFC 2047 §2: a line that contains one or more encoded-words is limited to 76 chars
+            // (each encoded-word itself to 75); a plain header line keeps the RFC 5322 §2.1.1 soft
+            // limit of 78. The threshold is tightened ONLY for encoded-word lines so the common case
+            // (ASCII headers, or short encoded-words already under 76) is byte-for-byte unchanged.
+            int foldThreshold = line.contains("=?") && line.contains("?=") ? 76 : 78;
+            while (line.length() > foldThreshold) {
                 int breakPos = -1;
-                for (int j = 78; j > 0; j--) {
+                for (int j = foldThreshold; j > 0; j--) {
                     if (line.charAt(j) == ' ' || line.charAt(j) == '\t') {
                         breakPos = j;
                         break;
                     }
                 }
                 if (breakPos == -1) {
-                    for (int j = 78; j < line.length(); j++) {
+                    for (int j = foldThreshold; j < line.length(); j++) {
                         if (line.charAt(j) == ' ' || line.charAt(j) == '\t') {
                             breakPos = j;
                             break;
