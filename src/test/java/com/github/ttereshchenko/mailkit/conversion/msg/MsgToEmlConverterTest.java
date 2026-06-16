@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.github.ttereshchenko.mailkit.conversion.ConversionException;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import java.io.ByteArrayInputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -1233,6 +1234,59 @@ class MsgToEmlConverterTest {
         assertTrue(
                 eml.contains("References: <root-id@example.com> <parent-id@example.com>"),
                 "every References msg-id must be angle-bracketed: " + eml);
+    }
+
+    /**
+     * Codepage regression (MSG-2): a genuinely-UTF-8 PT_STRING8 plain-text body with
+     * PR_INTERNET_CPID = 65001 must be decoded as UTF-8. POI's guess7BitEncoding deliberately drops a
+     * UTF-8 body codepage, leaving the body decoded as the CP1252 default and mojibaked; the converter
+     * now re-applies the CPID, so the body's UTF-8 octets survive the re-encode to the output.
+     */
+    @Test
+    void utf8PlainTextBodyWithCpid65001IsDecodedAsUtf8() throws Exception {
+        // Cyrillic "тест" -> UTF-8 D1 82 D0 B5 D1 81 D1 82, quoted-printable =D1=82=D0=B5=D1=81=D1=82.
+        var body = "тест";
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Codepage")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .internetCpid(65001)
+                .textBodyAnsi(body.getBytes(StandardCharsets.UTF_8))
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        assertTrue(
+                eml.contains("=D1=82=D0=B5=D1=81=D1=82"),
+                "UTF-8 body bytes must survive (not be mis-decoded as CP1252): " + eml);
+    }
+
+    /**
+     * Codepage regression (MSG-1): an ANSI-MSG attachment filename stored as PT_STRING8 must be
+     * decoded with the message codepage. POI's set7BitEncoding never visits attachment chunks, so a
+     * non-Latin PR_ATTACH_LONG_FILENAME stayed at the CP1252 default and was mojibaked; the converter
+     * now re-decodes attachment strings with PR_MESSAGE_CODEPAGE.
+     */
+    @Test
+    void ansiAttachmentFilenameIsDecodedWithMessageCodepage() throws Exception {
+        var windows1251 = Charset.forName("windows-1251");
+        // Cyrillic "файл" -> UTF-8 D1 84 D0 B0 D0 B9 D0 BB, RFC 2231 %D1%84%D0%B0%D0%B9%D0%BB.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Attachment")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageCodepage(1251)
+                // An ANSI main chunk so POI's has7BitEncodingStrings() triggers the codepage path.
+                .textBodyAnsi("ok".getBytes(windows1251))
+                .ansiFilenameAttachment(
+                        "файл.txt".getBytes(windows1251), "text/plain", "data".getBytes(StandardCharsets.US_ASCII))
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        assertTrue(
+                eml.contains("filename*0*=UTF-8''%D1%84%D0%B0%D0%B9%D0%BB"),
+                "the windows-1251 filename must be decoded with the message codepage: " + eml);
     }
 
     private String convertString(byte[] input) throws Exception {

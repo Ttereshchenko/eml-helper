@@ -629,6 +629,41 @@ public class Message {
     }
 
     /**
+     * The decompressed PR_RTF_COMPRESSED body as its exact bytes (leading/trailing ASCII whitespace
+     * trimmed, matching {@link #getRawRtfBody()}'s {@code trim()}), or an empty array. Unlike
+     * {@code getRawRtfBody}, this does not round-trip through windows-1252 — which leaves five byte
+     * values undefined and maps them to {@code '?'} — so it is byte-faithful, and is what a
+     * {@code body.rtf} attachment should carry.
+     */
+    public byte[] getRawRtfBytes() {
+        if (propertyContext != null
+                && propertyContext.getProperty(MapiProperties.PR_RTF_COMPRESSED) instanceof byte[] compressed) {
+            try {
+                return trimAsciiWhitespace(LzFu.decodeToBytes(compressed));
+            } catch (RuntimeException exception) {
+                LOG.log(
+                        System.Logger.Level.DEBUG,
+                        () -> "Failed to decompress RTF body for message node " + nid,
+                        exception);
+            }
+        }
+        return new byte[0];
+    }
+
+    /** Trims leading and trailing bytes &le; 0x20, mirroring {@link String#trim()} over a low-byte charset. */
+    private static byte[] trimAsciiWhitespace(byte[] data) {
+        var start = 0;
+        var end = data.length;
+        while (start < end && (data[start] & 0xFF) <= 0x20) {
+            start++;
+        }
+        while (end > start && (data[end - 1] & 0xFF) <= 0x20) {
+            end--;
+        }
+        return start == 0 && end == data.length ? data : Arrays.copyOfRange(data, start, end);
+    }
+
+    /**
      * The RTF body, or an empty string if the message has none (or its RTF only encapsulates
      * another format — see {@link #isEncapsulationRtf}).
      */

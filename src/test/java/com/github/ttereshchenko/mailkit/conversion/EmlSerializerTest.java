@@ -762,4 +762,50 @@ class EmlSerializerTest {
             assertTrue(line.length() <= 998, "line exceeds the RFC 5322 hard limit: " + line.length());
         }
     }
+
+    /**
+     * Byte-fidelity regression: a hoisted clear-signed S/MIME entity is written verbatim, so an 8-bit
+     * octet in its body (e.g. an inner {@code 8bit} part) must survive byte-for-byte. The old
+     * String-based raw entity decoded the body as ISO-8859-1 and re-encoded it through the UTF-8
+     * writer, doubling every octet &ge; 0x80 (0xE9 → 0xC3 0xA9) and invalidating the signature.
+     */
+    @Test
+    void rawEntityBodyWithEightBitOctetsIsWrittenByteExactViaOutputStream() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.setSubject("signed");
+        serializer.setSender("A", "a@example.com");
+        byte[] body = {'l', 'i', 'n', 'e', '\r', '\n', (byte) 0xE9, (byte) 0x80, (byte) 0xFF, '\r', '\n'};
+        serializer.setRawEntity("multipart/signed; boundary=\"sig\"", "8bit", null, body);
+
+        var bytes = new java.io.ByteArrayOutputStream();
+        serializer.writeTo(bytes);
+        var eml = bytes.toByteArray();
+
+        assertTrue(indexOfSubarray(eml, body) >= 0, "the raw 8-bit body must appear verbatim in the output");
+        assertEquals(1, countByte(eml, (byte) 0xE9), "0xE9 must appear once, not be re-encoded to 0xC3 0xA9");
+        assertEquals(0, countByte(eml, (byte) 0xC3), "no UTF-8 re-encoding of the high bytes may occur");
+    }
+
+    private static int indexOfSubarray(byte[] haystack, byte[] needle) {
+        outer:
+        for (var index = 0; index <= haystack.length - needle.length; index++) {
+            for (var offset = 0; offset < needle.length; offset++) {
+                if (haystack[index + offset] != needle[offset]) {
+                    continue outer;
+                }
+            }
+            return index;
+        }
+        return -1;
+    }
+
+    private static int countByte(byte[] data, byte value) {
+        var count = 0;
+        for (var current : data) {
+            if (current == value) {
+                count++;
+            }
+        }
+        return count;
+    }
 }

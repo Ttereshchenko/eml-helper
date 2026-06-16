@@ -16,9 +16,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
 import java.io.StringWriter;
-import java.io.Writer;
+import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -44,6 +43,7 @@ import org.apache.poi.hsmf.datatypes.StringChunk;
 import org.apache.poi.hsmf.exceptions.ChunkNotFoundException;
 import org.apache.poi.poifs.filesystem.EntryUtils;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.util.CodePageUtil;
 
 /**
  * Converts an Outlook {@code .msg} file (an OLE2/CFB container, parsed by Apache POI's HSMF module)
@@ -137,12 +137,10 @@ public final class MsgToEmlConverter {
 
     private static void writeEml(MAPIMessage message, OutputStream outStream, ConversionLog log)
             throws IOException, ChunkNotFoundException {
-        // UTF-8 (matching the PST path): a stored transport-header block may legitimately carry
-        // non-ASCII bytes. A US-ASCII encoder with CodingErrorAction.REPORT aborts the whole
-        // conversion on the first such byte, which is a common real-world failure.
-        var writer = new OutputStreamWriter(outStream, StandardCharsets.UTF_8);
-        convert(message, 0, writer, log);
-        writer.flush();
+        // writeTo(OutputStream) encodes the message as UTF-8 (matching the PST path: a stored
+        // transport-header block may legitimately carry non-ASCII bytes), but writes a hoisted
+        // S/MIME entity's body as raw bytes so an 8-bit clear-signed envelope is preserved verbatim.
+        convert(message, 0, log).writeTo(outStream);
     }
 
     private static ConversionException wrap(Exception failure) {
@@ -153,7 +151,7 @@ public final class MsgToEmlConverter {
         return new ConversionException("Failed to convert MSG to EML: " + detail, failure);
     }
 
-    static void convert(MAPIMessage message, int depth, Writer writer, ConversionLog log)
+    static EmlSerializer convert(MAPIMessage message, int depth, ConversionLog log)
             throws IOException, ChunkNotFoundException {
         if (depth > MAX_EMBEDDED_DEPTH) {
             // Mirror the PST converter: emit a stub rather than throwing, so an over-deep nested
@@ -161,8 +159,7 @@ public final class MsgToEmlConverter {
             var stub = new EmlSerializer();
             stub.setSubject("Nested Message Limit Exceeded");
             stub.addBody("The maximum nested message depth was reached.", "text/plain; charset=UTF-8");
-            stub.writeTo(writer);
-            return;
+            return stub;
         }
         message.setReturnNullOnMissingChunk(true);
         if (message.has7BitEncodingStrings()) {
@@ -170,6 +167,9 @@ public final class MsgToEmlConverter {
             // PR_MESSAGE_CODEPAGE / PR_INTERNET_CPID / the headers charset. Without this detection POI
             // decodes every string as windows-1252, mojibaking Cyrillic/CJK subjects and bodies.
             message.guess7BitEncoding();
+            // POI's guess7BitEncoding has two blind spots (a UTF-8 body codepage it discards, and
+            // attachment name chunks it never visits); compensate for both before any string is read.
+            applySourceCodepage(message, log);
         }
 
         var details = message.getRecipientDetailsChunks();
@@ -251,8 +251,7 @@ public final class MsgToEmlConverter {
             // the original signed/encrypted MIME entity, so it becomes the message's own top-level
             // entity and the signature stays verifiable. Bodies and other content are skipped — they
             // live inside the hoisted entity.
-            serializer.writeTo(writer);
-            return;
+            return serializer;
         }
 
         // REPORT.* messages (NDR/DSN and read/non-read receipts) become an RFC 6522 multipart/report
@@ -260,8 +259,7 @@ public final class MsgToEmlConverter {
         // flattened to a plain body.
         if (messageClass != null && messageClass.startsWith("REPORT.")) {
             emitReport(message, messageClass, serializer);
-            serializer.writeTo(writer);
-            return;
+            return serializer;
         }
 
         // A distribution list carries no body of its own: synthesize one listing its members, mirroring
@@ -283,7 +281,7 @@ public final class MsgToEmlConverter {
 
         populateAttachments(message, depth, serializer, log);
 
-        serializer.writeTo(writer);
+        return serializer;
     }
 
     private static void populateBodies(MAPIMessage message, EmlSerializer serializer, ConversionLog log) {
@@ -367,7 +365,7 @@ public final class MsgToEmlConverter {
                 String nestedEml;
                 try {
                     var stringWriter = new StringWriter();
-                    convert(embedded, depth + 1, stringWriter, log);
+                    convert(embedded, depth + 1, log).writeTo(stringWriter);
                     nestedEml = stringWriter.toString();
                 } catch (Exception failure) {
                     log.error("Failed to convert embedded message: " + failure.getMessage());
@@ -935,7 +933,7 @@ public final class MsgToEmlConverter {
                 readMainStringById(message, 0x1046), // PidTagInternetMessageId of the original
                 dispositionType);
         var report = ReportGenerator.generate(info);
-        serializer.setRawEntity(report.contentType(), null, null, report.body());
+        serializer.setRawEntity(report.contentType(), null, null, report.body().getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -1281,6 +1279,83 @@ public final class MsgToEmlConverter {
             return null;
         }
         return findStringChunk(mainChunks, property);
+    }
+
+    /**
+     * Re-decodes the body and attachment-name strings of a legacy ANSI MSG with the codepage the
+     * message actually declares, fixing two blind spots in POI's {@link MAPIMessage#guess7BitEncoding()}:
+     *
+     * <ul>
+     *   <li>POI deliberately discards a UTF-8 {@code PR_INTERNET_CPID} for the plain-text body (a
+     *       quirky Outlook special case), leaving a genuinely-UTF-8 PT_STRING8 body decoded as the
+     *       CP1252 default and mojibaked. {@code PidTagInternetCodepage} ([MS-OXPROPS]) is
+     *       authoritative for the body even when it is 65001, so the body chunk is re-decoded with it.
+     *   <li>POI's {@code set7BitEncoding} never visits the attachment chunks, so a non-Latin
+     *       {@code PR_ATTACH_LONG_FILENAME} in an ANSI MSG keeps the CP1252 default. [MS-OXCMSG] §2.2.2:
+     *       attachment name strings follow the message codepage, so they are re-decoded with it too.
+     * </ul>
+     *
+     * Must run after {@code guess7BitEncoding()}. {@link StringChunk#set7BitEncoding} re-reads only
+     * 7-bit (PT_STRING8) chunks, so Unicode properties are left untouched.
+     */
+    private static void applySourceCodepage(MAPIMessage message, ConversionLog log) {
+        var mainChunks = message.getMainChunks();
+        if (mainChunks == null) {
+            return;
+        }
+        var bodyCharset =
+                charsetForCodepage(readMainLong(message, MAPIProperty.INTERNET_CPID.id), "PR_INTERNET_CPID", log);
+        var attachmentCharset =
+                charsetForCodepage(readMainLong(message, MAPIProperty.MESSAGE_CODEPAGE.id), "PR_MESSAGE_CODEPAGE", log);
+        if (attachmentCharset == null) {
+            // PR_INTERNET_CPID is the documented fallback when PR_MESSAGE_CODEPAGE is absent.
+            attachmentCharset = bodyCharset;
+        }
+
+        if (bodyCharset != null) {
+            var bodyChunks = mainChunks.getAll().get(MAPIProperty.BODY);
+            if (bodyChunks != null) {
+                for (var chunk : bodyChunks) {
+                    if (chunk instanceof StringChunk bodyChunk) {
+                        bodyChunk.set7BitEncoding(bodyCharset);
+                    }
+                }
+            }
+        }
+
+        if (attachmentCharset != null) {
+            var attachments = message.getAttachmentFiles();
+            if (attachments != null) {
+                for (var attachment : attachments) {
+                    for (var chunk : attachment.getAll()) {
+                        if (chunk instanceof StringChunk stringChunk) {
+                            stringChunk.set7BitEncoding(attachmentCharset);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (bodyCharset == null && attachmentCharset == null) {
+            // Neither codepage property resolved: POI fell back to its CP1252 default for the
+            // remaining PT_STRING8 strings. Surface it so a mojibaked legacy message is diagnosable.
+            log.info("MSG declares no usable message codepage (PR_MESSAGE_CODEPAGE/PR_INTERNET_CPID); "
+                    + "8-bit strings were decoded with the default Windows-1252 codepage");
+        }
+    }
+
+    /** Maps a MAPI codepage id to a Java charset name via POI's table, or {@code null} when absent/unsupported. */
+    private static String charsetForCodepage(Integer codepage, String source, ConversionLog log) {
+        if (codepage == null) {
+            return null;
+        }
+        try {
+            return CodePageUtil.codepageToEncoding(codepage, true);
+        } catch (UnsupportedEncodingException unsupported) {
+            log.error("MSG " + source + " codepage " + codepage + " is not supported; "
+                    + "its 8-bit strings were decoded with the default Windows-1252 codepage");
+            return null;
+        }
     }
 
     private static String findStringChunk(Chunks mainChunks, MAPIProperty property) {

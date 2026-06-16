@@ -1,10 +1,13 @@
 package com.github.ttereshchenko.mailkit.pst;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
@@ -76,6 +79,25 @@ class LzFuTest {
         String decoded = LzFu.decode(data);
         assertTrue(decoded.startsWith("small"), "Expected the available literal prefix, got: " + decoded);
         assertTrue(decoded.length() < 100, "Output must stop at the actual data, not the declared size");
+    }
+
+    /**
+     * Byte-fidelity regression: windows-1252 leaves five byte values undefined (0x81, 0x8D, 0x8F,
+     * 0x90, 0x9D), so the String {@link LzFu#decode} round-trip maps them to {@code '?'} and loses
+     * them. {@link LzFu#decodeToBytes} returns the exact decompressed octets so a body.rtf attachment
+     * keeps the original RTF bytes.
+     */
+    @Test
+    void decodeToBytesPreservesWindows1252UndefinedBytes() {
+        byte[] payload = {'{', (byte) 0x81, (byte) 0x8D, (byte) 0x8F, (byte) 0x90, (byte) 0x9D, '}'};
+        byte[] data = header(payload.length, MELA_SIGNATURE, payload.length);
+        System.arraycopy(payload, 0, data, 16, payload.length);
+
+        assertArrayEquals(payload, LzFu.decodeToBytes(data), "the exact RTF bytes must survive");
+
+        // Contrast: the old windows-1252 String round-trip corrupts the undefined bytes.
+        byte[] lossy = LzFu.decode(data).getBytes(Charset.forName("windows-1252"));
+        assertFalse(java.util.Arrays.equals(payload, lossy), "the windows-1252 String round-trip is lossy");
     }
 
     @Test

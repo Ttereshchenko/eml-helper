@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 /**
  * Decompresses LZFu-compressed RTF bodies (PR_RTF_COMPRESSED, [MS-OXRTFCP]).
@@ -16,7 +17,9 @@ final class LzFu {
     /** Sanity cap on the declared uncompressed size; output grows incrementally up to this. */
     private static final int MAX_UNCOMPRESSED_SIZE = 100 * 1024 * 1024;
 
-    /** RTF is byte-oriented; windows-1252 maps all 256 byte values, so the decode is lossless. */
+    // Charset for the String {@link #decode} view only. windows-1252 matches how RTF readers map the
+    // low bytes; it is NOT byte-lossless (five byte values are undefined), so callers needing exact
+    // bytes use {@link #decodeToBytes} instead.
     private static final Charset RTF_CHARSET = Charset.forName("windows-1252");
 
     static final String LZFU_HEADER =
@@ -26,9 +29,24 @@ final class LzFu {
         // Utility class
     }
 
+    /**
+     * Decodes the RTF as a windows-1252 String, trimmed. Suitable for control-word parsing
+     * (RtfStripper interprets {@code \'hh} escapes via {@code \ansicpg}); use {@link #decodeToBytes}
+     * when the exact bytes must be preserved — windows-1252 leaves five byte values undefined, so the
+     * String round-trip is not byte-lossless.
+     */
     static String decode(byte[] data) {
+        return new String(decodeToBytes(data), RTF_CHARSET).trim();
+    }
+
+    /**
+     * Decodes the RTF to its exact decompressed bytes (no charset round-trip, untrimmed), or an empty
+     * array. This is the byte-faithful path: it preserves every octet of the RTF stream so a body.rtf
+     * attachment carries the original bytes rather than the lossy windows-1252 String re-encoding.
+     */
+    static byte[] decodeToBytes(byte[] data) {
         if (data == null || data.length < 16) {
-            return "";
+            return new byte[0];
         }
 
         var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
@@ -52,7 +70,7 @@ final class LzFu {
                 LOG.log(
                         System.Logger.Level.WARNING,
                         () -> "Rejecting LZFu body with implausible uncompressed size " + uncompressedSize);
-                return "";
+                return new byte[0];
             }
             // Grow the output incrementally instead of trusting the 4 untrusted header bytes with an
             // up-front allocation; the loop stops at uncompressedSize regardless.
@@ -116,15 +134,15 @@ final class LzFu {
                         () -> "LZFu body truncated: decompressed " + decompressed + " of " + uncompressedSize
                                 + " declared bytes");
             }
-            return output.toString(RTF_CHARSET).trim();
+            return output.toByteArray();
 
         } else if (compressionSignature == 0x414C454D) { // MELA (uncompressed)
-            return new String(data, 16, data.length - 16, RTF_CHARSET).trim();
+            return Arrays.copyOfRange(data, 16, data.length);
         }
 
         LOG.log(
                 System.Logger.Level.WARNING,
                 () -> "Unknown RTF compression signature 0x" + Integer.toHexString(compressionSignature));
-        return "";
+        return new byte[0];
     }
 }
