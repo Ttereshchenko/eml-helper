@@ -24,12 +24,12 @@ public final class SmimeEntityHoist {
      * @param contentType the {@code Content-Type} header value (boundary/name included)
      * @param transferEncoding the {@code Content-Transfer-Encoding}, or {@code null} to omit it
      * @param disposition the {@code Content-Disposition}, or {@code null} to omit it
-     * @param body the entity body, written unmodified after the headers
+     * @param body the entity body bytes, written unmodified after the headers
      * @param fromMimeHeaders {@code true} when the bytes parsed as a full MIME entity (clear-signed),
      *     {@code false} when they were treated as an opaque PKCS#7 blob — lets the caller log which
      */
     public record HoistedEntity(
-            String contentType, String transferEncoding, String disposition, String body, boolean fromMimeHeaders) {}
+            String contentType, String transferEncoding, String disposition, byte[] body, boolean fromMimeHeaders) {}
 
     private SmimeEntityHoist() {}
 
@@ -42,8 +42,11 @@ public final class SmimeEntityHoist {
      * attachment first).
      */
     public static HoistedEntity hoist(byte[] data, String fallbackFilename, String fallbackMimeTag) {
-        // ISO-8859-1 maps bytes 1:1 to chars, so a 7bit-canonicalized envelope (the S/MIME norm,
-        // RFC 8551 §3.1.1) round-trips byte-identically through the UTF-8 output writer.
+        // ISO-8859-1 maps bytes 1:1 to chars, so the header scan and CRLF normalization operate on
+        // chars without altering the byte values; re-encoding the result with ISO-8859-1 recovers the
+        // exact body bytes. The body is then carried as byte[] and written verbatim by
+        // EmlSerializer.writeTo(OutputStream), so an 8-bit clear-signed envelope (e.g. a multipart/
+        // signed part declared 8bit) survives intact rather than being doubled by the UTF-8 encoder.
         var entity = new String(data, StandardCharsets.ISO_8859_1);
         var headerEnd = entityHeaderEnd(entity);
         if (headerEnd > 0) {
@@ -52,7 +55,8 @@ public final class SmimeEntityHoist {
             if (contentType != null && !contentType.isBlank()) {
                 var transferEncoding = entityHeaderValue(headerBlock, "Content-Transfer-Encoding");
                 var bodyStart = headerEnd + (entity.startsWith("\r\n\r\n", headerEnd) ? 4 : 2);
-                var body = normalizeToCrlf(entity.substring(Math.min(bodyStart, entity.length())));
+                var body = normalizeToCrlf(entity.substring(Math.min(bodyStart, entity.length())))
+                        .getBytes(StandardCharsets.ISO_8859_1);
                 return new HoistedEntity(contentType, transferEncoding, null, body, true);
             }
         }
@@ -67,7 +71,7 @@ public final class SmimeEntityHoist {
                 contentType,
                 "base64",
                 "attachment; filename=\"" + filename + "\"",
-                EmlSerializer.encodeBase64Wrapped(data),
+                EmlSerializer.encodeBase64Wrapped(data).getBytes(StandardCharsets.US_ASCII),
                 false);
     }
 

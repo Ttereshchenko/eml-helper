@@ -41,7 +41,8 @@ class SmimeEntityHoistTest {
                 "boundary must be preserved: " + entity.contentType());
         assertEquals("7bit", entity.transferEncoding(), "transferEncoding must be parsed from headers");
         assertNull(entity.disposition(), "disposition must be absent for a MIME-parsed entity");
-        assertTrue(entity.body().contains("<body>"), "body must survive: " + entity.body());
+        var body = new String(entity.body(), StandardCharsets.ISO_8859_1);
+        assertTrue(body.contains("<body>"), "body must survive: " + body);
     }
 
     // -----------------------------------------------------------------------
@@ -119,10 +120,9 @@ class SmimeEntityHoistTest {
         var entity = SmimeEntityHoist.hoist(lfMimeBytes, "smime.p7m", "");
 
         assertTrue(entity.fromMimeHeaders(), "bare-LF entity must still be parsed from headers");
-        assertTrue(
-                entity.body().contains("line1\r\nline2"),
-                "body LF endings must be normalized to CRLF: " + entity.body());
-        assertFalse(entity.body().replace("\r\n", "").contains("\n"), "no bare LF must remain after normalization");
+        var body = new String(entity.body(), StandardCharsets.ISO_8859_1);
+        assertTrue(body.contains("line1\r\nline2"), "body LF endings must be normalized to CRLF: " + body);
+        assertFalse(body.replace("\r\n", "").contains("\n"), "no bare LF must remain after normalization");
     }
 
     // -----------------------------------------------------------------------

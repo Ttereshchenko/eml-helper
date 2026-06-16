@@ -354,6 +354,11 @@ class PstToEmlConverterTest {
                 }
 
                 @Override
+                public byte[] getRawRtfBytes() {
+                    return rtf.getBytes(Charset.forName("windows-1252"));
+                }
+
+                @Override
                 public List<Recipient> getRecipients() {
                     return List.of();
                 }

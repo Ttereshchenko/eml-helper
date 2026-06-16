@@ -2,6 +2,8 @@ package com.github.ttereshchenko.mailkit.conversion;
 
 import java.io.FilterWriter;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.io.StringWriter;
 import java.io.UncheckedIOException;
 import java.io.Writer;
@@ -39,7 +41,7 @@ public final class EmlSerializer {
     private String rawEntityContentType;
     private String rawEntityTransferEncoding;
     private String rawEntityDisposition;
-    private String rawEntityBody;
+    private byte[] rawEntityBody;
 
     public void setScl(Integer scl) {
         this.scl = scl;
@@ -128,8 +130,13 @@ public final class EmlSerializer {
      * Content-Disposition become the message's own structural headers and {@code body} is written
      * unmodified after them. Bodies and attachments added through the regular API are ignored while
      * a raw entity is set; pass {@code null} header values to omit the respective header.
+     *
+     * <p>The body is supplied as raw bytes (not a String) so a clear-signed S/MIME entity carrying
+     * 8-bit octets survives byte-for-byte: {@link #writeTo(OutputStream)} writes these bytes straight
+     * to the stream rather than routing them through the UTF-8 char encoder, which would re-encode any
+     * octet &ge; 0x80 into two bytes and invalidate the signature.
      */
-    public void setRawEntity(String contentType, String transferEncoding, String disposition, String body) {
+    public void setRawEntity(String contentType, String transferEncoding, String disposition, byte[] body) {
         this.rawEntityContentType = contentType;
         this.rawEntityTransferEncoding = transferEncoding;
         this.rawEntityDisposition = disposition;
@@ -151,7 +158,41 @@ public final class EmlSerializer {
         return false;
     }
 
+    /**
+     * Emits the message as raw bytes. This is the byte-exact entry point: in raw-entity mode the
+     * stored body is written straight to {@code outputStream}, so a clear-signed S/MIME entity with
+     * 8-bit octets is preserved verbatim instead of being mangled by the UTF-8 char encoder. The
+     * stream is flushed but not closed.
+     */
+    public void writeTo(OutputStream outputStream) throws IOException {
+        var writer = new OutputStreamWriter(outputStream, StandardCharsets.UTF_8);
+        writeTo(writer, body -> {
+            // Flush the buffered char encoder, then write the raw body bytes directly to the stream so
+            // octets >= 0x80 are not re-encoded.
+            writer.flush();
+            outputStream.write(body);
+            outputStream.flush();
+        });
+        writer.flush();
+    }
+
+    /**
+     * Emits the message to a character sink. Used for embedded {@code message/rfc822} children (a
+     * {@code StringWriter}) and tests. A raw-entity body is decoded as UTF-8 here, which is faithful
+     * for the text raw entities this path carries (report bodies, nested EML); the byte-exact
+     * {@link #writeTo(OutputStream)} overload is what top-level output uses for S/MIME fidelity.
+     */
     public void writeTo(Writer writer) throws IOException {
+        writeTo(writer, body -> writer.append(new String(body, StandardCharsets.UTF_8)));
+    }
+
+    /** Emits a raw-entity body to the current sink; the two public {@code writeTo} overloads differ only here. */
+    @FunctionalInterface
+    private interface RawBodyEmitter {
+        void emit(byte[] body) throws IOException;
+    }
+
+    private void writeTo(Writer writer, RawBodyEmitter rawBodyEmitter) throws IOException {
         // Route all output through a newline-tracking wrapper so the multipart boundary delimiter can
         // own its leading CRLF (RFC 2046) without doubling the trailing CRLF that parts already emit.
         var out = new NewlineTrackingWriter(writer);
@@ -277,7 +318,7 @@ public final class EmlSerializer {
             appendHeader(out, "Content-Transfer-Encoding", rawEntityTransferEncoding);
             appendHeader(out, "Content-Disposition", rawEntityDisposition);
             out.append(CRLF);
-            out.append(rawEntityBody);
+            rawBodyEmitter.emit(rawEntityBody);
             return;
         }
 

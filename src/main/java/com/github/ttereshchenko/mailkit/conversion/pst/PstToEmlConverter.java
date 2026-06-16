@@ -19,9 +19,9 @@ import com.github.ttereshchenko.mailkit.pst.PstFile;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.StringWriter;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -105,10 +105,6 @@ public final class PstToEmlConverter {
     private static final UUID PSETID_ADDRESS = UUID.fromString("00062004-0000-0000-C000-000000000046");
 
     private static final int ATTACH_OLE = 6; // afStorage: an embedded OLE object
-
-    // The LzFu decoder reads RTF as windows-1252, which round-trips all 256 byte values in Java;
-    // encoding the decoded string back with it recovers the original RTF bytes.
-    private static final Charset RTF_CHARSET = Charset.forName("windows-1252");
 
     // Low 5 bits of a NID encode its type; a normal message node is type 0x04.
     private static final int NID_TYPE_MASK = 0x1F;
@@ -860,9 +856,10 @@ public final class PstToEmlConverter {
         }
         if (!rtfBody.isEmpty()) {
             // A genuine RTF body (not encapsulated HTML) is not renderable by mail clients as a
-            // multipart/alternative sibling; preserve it as an application/rtf attachment carrying
-            // its original windows-1252 bytes (the LzFu decode is a lossless 1252 round-trip).
-            serializer.addAttachment("body.rtf", "application/rtf", rtfBody.getBytes(RTF_CHARSET), null, false);
+            // multipart/alternative sibling; preserve it as an application/rtf attachment carrying the
+            // original RTF bytes verbatim (getRawRtfBytes avoids the windows-1252 String round-trip,
+            // which maps five undefined byte values to '?').
+            serializer.addAttachment("body.rtf", "application/rtf", message.getRawRtfBytes(), null, false);
         }
 
         if (msgClass != null && msgClass.startsWith("IPM.Contact")) {
@@ -1230,7 +1227,7 @@ public final class PstToEmlConverter {
                 message.getStringProperty(0x1046), // PidTagOriginalMessageId of the original
                 dispositionType);
         var report = ReportGenerator.generate(info);
-        serializer.setRawEntity(report.contentType(), null, null, report.body());
+        serializer.setRawEntity(report.contentType(), null, null, report.body().getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -1311,8 +1308,10 @@ public final class PstToEmlConverter {
     private static void writeSerializerAtomically(EmlSerializer serializer, Path emlFile) throws IOException {
         var tempFile = emlFile.resolveSibling(emlFile.getFileName() + ".part");
         try {
-            try (var writer = Files.newBufferedWriter(tempFile, StandardCharsets.UTF_8)) {
-                serializer.writeTo(writer);
+            // Write through an OutputStream (not a Writer) so a hoisted clear-signed S/MIME entity's
+            // 8-bit body is emitted byte-for-byte rather than re-encoded by the UTF-8 char writer.
+            try (var outputStream = new BufferedOutputStream(Files.newOutputStream(tempFile))) {
+                serializer.writeTo(outputStream);
             }
             try {
                 Files.move(tempFile, emlFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);

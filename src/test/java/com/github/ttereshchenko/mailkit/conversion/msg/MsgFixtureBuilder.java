@@ -25,6 +25,7 @@ final class MsgFixtureBuilder {
 
     private static final int FLAG_READABLE_WRITABLE = 0x06;
     private static final int TYPE_UNICODE = 0x001F;
+    private static final int TYPE_ANSI = 0x001E; // PT_STRING8: 8-bit codepage-dependent string
     private static final int TYPE_BINARY = 0x0102;
     private static final int TYPE_LONG = 0x0003;
     private static final int TYPE_BOOLEAN = 0x000B;
@@ -40,6 +41,10 @@ final class MsgFixtureBuilder {
     private static final int TAG_RTF_COMPRESSED = (0x1009 << 16) | TYPE_BINARY;
     private static final int TAG_RECIPIENT_ADDRTYPE = (0x3002 << 16) | TYPE_UNICODE;
     private static final int TAG_BODY = (0x1000 << 16) | TYPE_UNICODE;
+    private static final int TAG_BODY_ANSI = (0x1000 << 16) | TYPE_ANSI;
+    private static final int TAG_INTERNET_CPID = (0x3FDE << 16) | TYPE_LONG;
+    private static final int TAG_MESSAGE_CODEPAGE = (0x3FFD << 16) | TYPE_LONG;
+    private static final int TAG_ATTACH_LONG_FILENAME_ANSI = (0x3707 << 16) | TYPE_ANSI;
     private static final int TAG_BODY_HTML_UNICODE = (0x1013 << 16) | TYPE_UNICODE;
     private static final int TAG_SENDER_NAME = (0x0C1A << 16) | TYPE_UNICODE;
     private static final int TAG_SENDER_EMAIL_ADDRESS = (0x0C1F << 16) | TYPE_UNICODE;
@@ -107,6 +112,32 @@ final class MsgFixtureBuilder {
 
     MsgFixtureBuilder htmlBody(String value) {
         return setUnicode(TAG_BODY_HTML_UNICODE, value);
+    }
+
+    /**
+     * PR_BODY as a legacy PT_STRING8 (ANSI) chunk carrying raw codepage bytes verbatim — no charset
+     * conversion. Pairs with {@link #internetCpid}/{@link #messageCodepage} to model an ANSI MSG.
+     */
+    MsgFixtureBuilder textBodyAnsi(byte[] rawBytes) {
+        return setBinary(TAG_BODY_ANSI, rawBytes);
+    }
+
+    /** PidTagInternetCodepage (PR_INTERNET_CPID, 0x3FDE) — the codepage of the text/HTML body bytes. */
+    MsgFixtureBuilder internetCpid(int codepage) {
+        fixedProperties.add(new FixedProperty(TAG_INTERNET_CPID, longBytes(codepage)));
+        return this;
+    }
+
+    /** PidTagMessageCodepage (PR_MESSAGE_CODEPAGE, 0x3FFD) — the general codepage for PT_STRING8 strings. */
+    MsgFixtureBuilder messageCodepage(int codepage) {
+        fixedProperties.add(new FixedProperty(TAG_MESSAGE_CODEPAGE, longBytes(codepage)));
+        return this;
+    }
+
+    /** An attachment whose PR_ATTACH_LONG_FILENAME is a PT_STRING8 (ANSI) chunk of raw codepage bytes. */
+    MsgFixtureBuilder ansiFilenameAttachment(byte[] rawFilename, String mime, byte[] data) {
+        attachments.add(new AttachmentSpec(null, mime, data, null, null, null, null, rawFilename));
+        return this;
     }
 
     MsgFixtureBuilder sender(String name, String email) {
@@ -344,17 +375,17 @@ final class MsgFixtureBuilder {
     }
 
     MsgFixtureBuilder attachment(String filename, String mime, byte[] data) {
-        attachments.add(new AttachmentSpec(filename, mime, data, null, null, null, null));
+        attachments.add(new AttachmentSpec(filename, mime, data, null, null, null, null, null));
         return this;
     }
 
     MsgFixtureBuilder attachment(String filename, String mime, byte[] data, String contentId) {
-        attachments.add(new AttachmentSpec(filename, mime, data, null, contentId, null, null));
+        attachments.add(new AttachmentSpec(filename, mime, data, null, contentId, null, null, null));
         return this;
     }
 
     MsgFixtureBuilder embeddedAttachment(String filename, MsgFixtureBuilder embedded) {
-        attachments.add(new AttachmentSpec(filename, null, null, embedded, null, null, null));
+        attachments.add(new AttachmentSpec(filename, null, null, embedded, null, null, null, null));
         return this;
     }
 
@@ -364,7 +395,7 @@ final class MsgFixtureBuilder {
      * embedded message.
      */
     MsgFixtureBuilder oleAttachment(String displayName, byte[] contents) {
-        attachments.add(new AttachmentSpec(null, null, null, null, null, displayName, contents));
+        attachments.add(new AttachmentSpec(null, null, null, null, null, displayName, contents, null));
         return this;
     }
 
@@ -566,7 +597,8 @@ final class MsgFixtureBuilder {
             MsgFixtureBuilder embedded,
             String contentId,
             String displayName,
-            byte[] oleContents) {
+            byte[] oleContents,
+            byte[] ansiFilename) {
 
         void populate(DirectoryEntry directory) throws IOException {
             var stream = new ByteArrayOutputStream();
@@ -581,6 +613,9 @@ final class MsgFixtureBuilder {
             var varProps = new ArrayList<VarProperty>();
             if (filename != null) {
                 varProps.add(new VarProperty(TAG_ATTACH_LONG_FILENAME, encodeUtf16(filename)));
+            }
+            if (ansiFilename != null) {
+                varProps.add(new VarProperty(TAG_ATTACH_LONG_FILENAME_ANSI, ansiFilename));
             }
             if (displayName != null) {
                 varProps.add(new VarProperty(TAG_ATTACH_DISPLAY_NAME, encodeUtf16(displayName)));

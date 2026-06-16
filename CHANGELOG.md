@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed (conversion charset fidelity)
+
+- Attachment file names written in a non-Latin code page (Cyrillic, Greek, CJK, …) in a legacy `.msg` now keep their original characters instead of turning into garbled text — they are decoded with the message's own code page rather than always Western European.
+- A `.msg` plain-text body stored as UTF-8 is now decoded as UTF-8 instead of being mangled into mojibake.
+- Clear-signed S/MIME messages converted from `.msg`/`.pst`/`.ost` keep their signature verifiable even when the signed content contains 8-bit (non-ASCII) bytes: the original bytes are now written through verbatim instead of being silently altered.
+- An RTF body preserved as a `body.rtf` attachment from `.pst`/`.ost` now carries the source RTF bytes exactly, with no rare byte substitutions.
+
 ## 1.2.1 - 2026-06-16
 
 ### Fixed (SMTP sending)
