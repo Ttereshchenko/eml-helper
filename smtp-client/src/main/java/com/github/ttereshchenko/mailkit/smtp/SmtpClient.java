@@ -46,6 +46,8 @@ public final class SmtpClient {
     private static final byte[] CRLF = {'\r', '\n'};
     private static final int CHUNK_SIZE = 8192;
     private static final int BDAT_CHUNK_SIZE = 256 * 1024;
+    // rfc5321 §4.5.3.1.6: a text line including its CRLF must not exceed 1000 octets — 998 of content.
+    private static final int MAX_WIRE_LINE_CONTENT_OCTETS = 998;
     // Bounds for server replies: a hostile or broken server must not be able to grow client
     // memory without limit by streaming endless "250-..." continuations or a newline-free line.
     private static final int MAX_REPLY_LINES = 500;
@@ -88,7 +90,7 @@ public final class SmtpClient {
                 var cancelWatch = new CancellationWatch(connection, cancel)) {
             return runTransaction(connection, config, envelope, source, cancel, transcript, session, startNanos);
         } catch (SmtpException smtpFailure) {
-            throw smtpFailure.withTranscript(transcript);
+            throw smtpFailure.withTranscript(transcript).withTls(session.tlsOutcome());
         } catch (SocketTimeoutException timeout) {
             if (cancel.isCancelled()) {
                 throw cancelled(session, transcript);
@@ -98,7 +100,8 @@ public final class SmtpClient {
                             session.currentPhase(),
                             "timeout in " + session.currentPhase(),
                             timeout)
-                    .withTranscript(transcript);
+                    .withTranscript(transcript)
+                    .withTls(session.tlsOutcome());
         } catch (IOException ioFailure) {
             // A socket closed by the cancellation watcher unblocks the in-flight read here; surface
             // it as a clean cancellation rather than a generic I/O error.
@@ -107,13 +110,15 @@ public final class SmtpClient {
             }
             throw new SmtpException(
                             SmtpException.Kind.IO_ERROR, session.currentPhase(), ioFailure.getMessage(), ioFailure)
-                    .withTranscript(transcript);
+                    .withTranscript(transcript)
+                    .withTls(session.tlsOutcome());
         }
     }
 
     private static SmtpException cancelled(SmtpSession session, SmtpTranscript transcript) {
         return new SmtpException(SmtpException.Kind.CANCELLED, session.currentPhase(), "cancelled by caller")
-                .withTranscript(transcript);
+                .withTranscript(transcript)
+                .withTls(session.tlsOutcome());
     }
 
     private SendResult runTransaction(
@@ -131,6 +136,9 @@ public final class SmtpClient {
         var destinationHosts = resolveDestinationHosts(config, envelope, transcript);
         Socket fresh = null;
         IOException lastConnectFailure = null;
+        // config.timeout() is applied per host (and per address inside the connector), not as an
+        // overall connect budget — so several unreachable MX hosts can take up to timeout × hosts to
+        // exhaust before failover completes. See TcpConnector for the rationale.
         for (var destinationHost : destinationHosts) {
             try {
                 fresh = connector.connect(destinationHost, config.port(), config.timeout(), config.transport());
@@ -168,8 +176,10 @@ public final class SmtpClient {
         session.enterPhase(Phase.BANNER);
         var banner = readResponse(connection, transcript, Phase.BANNER);
         if (banner.code() != 220) {
+            // rfc5321 §4.2.1/§3.1: a 4yz greeting (e.g. 421 "service not available") is a transient
+            // condition the caller can retry — distinguish it from a genuine protocol violation.
             throw new SmtpException(
-                    SmtpException.Kind.PROTOCOL_VIOLATION,
+                    banner.isTransientNegative() ? SmtpException.Kind.TRANSIENT : SmtpException.Kind.PROTOCOL_VIOLATION,
                     Phase.BANNER,
                     "unexpected banner: " + banner.code() + " " + banner.firstLine());
         }
@@ -240,6 +250,13 @@ public final class SmtpClient {
             // Read MAIL response first.
             var mailResponse = readResponse(connection, transcript, Phase.MAIL);
             if (!mailResponse.isPositiveCompletion()) {
+                // Drain the RCPT and DATA replies already pipelined onto the wire so the teardown is
+                // symmetric with the all-RCPT-rejected branch below (the connection is closed either way,
+                // but an unread reply would corrupt the stream if connection reuse is ever added).
+                for (var ignoredRecipient : envelope.recipients()) {
+                    drainResponse(connection, transcript, Phase.RCPT);
+                }
+                drainResponse(connection, transcript, Phase.DATA);
                 throw new SmtpException(
                         SmtpException.Kind.MAIL_REJECTED,
                         Phase.MAIL,
@@ -258,11 +275,7 @@ public final class SmtpClient {
             }
             if (!anyAccepted) {
                 // Drain the DATA response so the server isn't left holding a half-written reply.
-                try {
-                    readResponse(connection, transcript, Phase.DATA);
-                } catch (SmtpException ignored) {
-                    // already failing — surface the original cause
-                }
+                drainResponse(connection, transcript, Phase.DATA);
                 throw new SmtpException(SmtpException.Kind.RCPT_REJECTED, Phase.RCPT, "no recipients accepted");
             }
             // Finally the DATA response.
@@ -650,26 +663,93 @@ public final class SmtpClient {
             }
         }
 
+        var useBdat = esmtp.useBdat() && session.supports("CHUNKING");
+        var usePrdr = esmtp.usePrdr() && session.supports("PRDR");
+
+        // A single pass over the wire-normalized body yields both the SIZE value and the longest line:
+        // rfc1870 §6 — the declared SIZE must reflect the bytes actually transmitted (CRLF
+        // normalization, and dot-stuffing for DATA but not BDAT, make an LF-only message larger on the
+        // wire than on disk); rfc5321 §4.5.3.1.6 — a text line including its CRLF must not exceed 1000
+        // octets (so 998 octets of content), or a strict server may reject or truncate it.
+        var metrics = computeWireMetrics(source, !useBdat);
+        if (metrics.maxLineOctets() > MAX_WIRE_LINE_CONTENT_OCTETS) {
+            throw new SmtpException(
+                    SmtpException.Kind.DATA_REJECTED,
+                    Phase.DATA,
+                    "message contains a line of " + metrics.maxLineOctets()
+                            + " octets, exceeding the rfc5321 §4.5.3.1.6" + " limit of " + MAX_WIRE_LINE_CONTENT_OCTETS
+                            + " (the message must be folded before sending)");
+        }
+
         var declaredSize = ExtensionNegotiation.OptionalLongHolder.empty();
-        var messageSize = source.size();
-        if (messageSize.isPresent()) {
-            declaredSize = ExtensionNegotiation.OptionalLongHolder.of(messageSize.getAsLong());
+        if (esmtp.declareSizeOnMail() || (esmtp.honorSize() && session.supports("SIZE"))) {
+            var wireSize = metrics.wireLength();
+            declaredSize = ExtensionNegotiation.OptionalLongHolder.of(wireSize);
             if (esmtp.honorSize() && session.supports("SIZE")) {
                 var advertised = SizePreflight.advertisedLimit(session.capabilityArguments("SIZE"));
-                if (SizePreflight.exceedsLimit(messageSize.getAsLong(), advertised)) {
+                if (SizePreflight.exceedsLimit(wireSize, advertised)) {
                     throw new SmtpException(
                             SmtpException.Kind.MAIL_REJECTED,
                             Phase.MAIL,
-                            "message size " + messageSize.getAsLong() + " exceeds server SIZE limit "
-                                    + advertised.getAsLong());
+                            "message size " + wireSize + " exceeds server SIZE limit " + advertised.getAsLong());
                 }
             }
         }
 
-        var useBdat = esmtp.useBdat() && session.supports("CHUNKING");
-        var usePrdr = esmtp.usePrdr() && session.supports("PRDR");
         return new ExtensionNegotiation(requiresUtf8, declareBody8bit, declaredSize, useBdat, usePrdr);
     }
+
+    /**
+     * Computes the on-the-wire DATA length in bytes: the source streamed through the same
+     * CRLF-normalization (and, for DATA, dot-stuffing) the client applies in {@link #streamPayload}
+     * / {@link #performBdat}, including the trailing CRLF appended when the body does not already
+     * end at a line boundary. The terminating {@code <CRLF>.<CRLF>} / {@code BDAT ... LAST} framing
+     * is protocol overhead, not message content, so it is deliberately excluded (rfc1870 §6).
+     */
+    private static WireMetrics computeWireMetrics(MessageSource source, boolean dotStuff) throws IOException {
+        var wireLength = 0L;
+        var maxLineOctets = 0;
+        var currentLineOctets = 0;
+        try (var stream = source.open()) {
+            var buffer = new byte[CHUNK_SIZE];
+            var sawCr = false;
+            var atLineStart = true;
+            int read;
+            while ((read = stream.read(buffer)) != -1) {
+                if (read == 0) {
+                    continue;
+                }
+                var normalized = normalize(buffer, read, sawCr, atLineStart, dotStuff);
+                var bytes = normalized.bytes();
+                wireLength += bytes.length;
+                // Measure the longest content line (octets excluding the CRLF terminator). normalize()
+                // emits every line break as CRLF, so a '\r' is always the first half of a terminator and
+                // is not counted; currentLineOctets carries across chunk boundaries.
+                for (var b : bytes) {
+                    if (b == '\r') {
+                        continue;
+                    }
+                    if (b == '\n') {
+                        maxLineOctets = Math.max(maxLineOctets, currentLineOctets);
+                        currentLineOctets = 0;
+                    } else {
+                        currentLineOctets++;
+                    }
+                }
+                sawCr = normalized.endedWithCr();
+                atLineStart = normalized.endsAtLineStart();
+            }
+            if (!atLineStart) {
+                wireLength += CRLF.length;
+            }
+            // The trailing line (if the body did not end at a line boundary) still counts toward the max.
+            maxLineOctets = Math.max(maxLineOctets, currentLineOctets);
+        }
+        return new WireMetrics(wireLength, maxLineOctets);
+    }
+
+    /** The on-the-wire DATA length and the longest content line (octets excluding the CRLF terminator). */
+    private record WireMetrics(long wireLength, int maxLineOctets) {}
 
     private String buildMailParameters(SmtpConfig config, SmtpSession session, ExtensionNegotiation negotiation) {
         var parameters = new StringBuilder();
@@ -857,7 +937,17 @@ public final class SmtpClient {
             writeAuthCommand(connection.output(), transcript, authLine);
             response = readResponse(connection, transcript, Phase.AUTH);
             while (response.code() == 334) {
-                var challenge = decodeChallenge(response.firstLine());
+                byte[] challenge;
+                try {
+                    challenge = decodeChallenge(response.firstLine());
+                } catch (SmtpException malformedChallenge) {
+                    // rfc4954 §4: the client aborts an in-progress SASL exchange by sending a line
+                    // holding a single "*". A 334 challenge that is not valid base64 cannot be
+                    // answered, so cancel the exchange cleanly — letting the server reject the AUTH —
+                    // rather than abandoning the handshake mid-flight.
+                    cancelAuthExchange(connection, transcript);
+                    throw malformedChallenge;
+                }
                 var reply = client.respond(challenge);
                 var encoded = reply == null ? "" : Base64.getEncoder().encodeToString(reply);
                 writeAuthCommand(connection.output(), transcript, encoded);
@@ -896,10 +986,44 @@ public final class SmtpClient {
                     "AUTH rejected: " + response.code() + " " + response.firstLine());
         }
         if (!client.isComplete()) {
-            throw new SmtpException(
-                    SmtpException.Kind.AUTH_FAILED,
-                    Phase.AUTH,
-                    "AUTH ended with 235 but " + picked.wireName() + " client is not in a complete state");
+            // A 235 is the server's authoritative "authentication successful" (rfc4954 §4). Some
+            // servers complete SCRAM by sending a bare 235 carrying no server-final for the client to
+            // consume, leaving it short of its own "complete" state — trust the 235 rather than fail a
+            // login the server accepted, but record the anomaly. (When the server DOES send a
+            // server-final, client.respond above still verifies its signature and throws on mismatch.)
+            transcript.append(
+                    SmtpTranscript.Direction.INFO,
+                    ("AUTH succeeded (235) before " + picked.wireName()
+                                    + " reached a complete state — accepting the server's authorization")
+                            .getBytes(StandardCharsets.UTF_8),
+                    Phase.AUTH);
+        }
+    }
+
+    /**
+     * rfc4954 §4: abort an in-flight SASL exchange by sending a line containing a single "*". The
+     * server is required to reject the AUTH with a 5xx reply; we drain that reply best-effort and
+     * ignore any error since the caller is already failing the exchange.
+     */
+    /**
+     * Best-effort read of one already-pipelined reply that is being abandoned because an earlier
+     * command in the batch failed. Any IO/protocol error is swallowed — the caller is already failing
+     * the transaction and the connection is about to be closed.
+     */
+    private void drainResponse(Connection connection, SmtpTranscript transcript, Phase phase) {
+        try {
+            readResponse(connection, transcript, phase);
+        } catch (IOException | SmtpException ignored) {
+            // already failing — surface the original cause
+        }
+    }
+
+    private void cancelAuthExchange(Connection connection, SmtpTranscript transcript) {
+        try {
+            writeAuthCommand(connection.output(), transcript, "*");
+            readResponse(connection, transcript, Phase.AUTH);
+        } catch (IOException | SmtpException ignored) {
+            // best-effort cancel — the exchange is already being failed by the caller
         }
     }
 
@@ -962,8 +1086,12 @@ public final class SmtpClient {
             response = command(connection, transcript, phase, verb + " " + config.ehloHost());
         }
         if (!response.isPositiveCompletion()) {
+            // A 4yz EHLO/HELO reply (e.g. 421) is transient and retryable (rfc5321 §4.2.1); only a
+            // non-2xx, non-4xx reply is a true protocol violation.
             throw new SmtpException(
-                    SmtpException.Kind.PROTOCOL_VIOLATION,
+                    response.isTransientNegative()
+                            ? SmtpException.Kind.TRANSIENT
+                            : SmtpException.Kind.PROTOCOL_VIOLATION,
                     phase,
                     verb + " rejected: " + response.code() + " " + response.firstLine());
         }
@@ -1027,37 +1155,51 @@ public final class SmtpClient {
 
     static NormalizedChunk normalize(
             byte[] source, int length, boolean carrySawCr, boolean atLineStart, boolean dotStuff) {
-        var buffer = new byte[length * 2 + 2];
+        // Worst case per input byte: resolve a pending bare CR as CRLF (2) plus the byte's own
+        // expansion (LF→CRLF, or a stuffed leading dot). A carried-in pending CR can add a
+        // leading CRLF. Three-times sizing with slack covers every combination without a resize.
+        var buffer = new byte[length * 3 + 4];
         var pos = 0;
+        // `sawCr` here means "a CR has been seen but not yet emitted": rfc5321 §2.3.8 terminates
+        // lines only with CRLF, so a CR is held back until we know whether an LF follows (emit
+        // CRLF once) or not (emit CRLF anyway, turning a bare CR into a proper line ending). A CR
+        // carried across a chunk boundary is likewise still pending and unemitted.
         var sawCr = carrySawCr;
         var lineStart = atLineStart;
         for (var index = 0; index < length; index++) {
             var current = source[index];
-            if (current == '\r') {
-                buffer[pos++] = '\r';
-                sawCr = true;
-                lineStart = false;
-                continue;
-            }
             if (current == '\n') {
-                if (!sawCr) {
-                    buffer[pos++] = '\r';
-                }
+                // CRLF (pending CR + this LF) or a bare LF promoted to CRLF.
+                buffer[pos++] = '\r';
                 buffer[pos++] = '\n';
                 sawCr = false;
                 lineStart = true;
+                continue;
+            }
+            if (sawCr) {
+                // The pending CR was a bare CR (not part of a CRLF): flush it as CRLF before
+                // processing the current byte. rfc5321 §2.3.8: bare CR is not a valid terminator.
+                buffer[pos++] = '\r';
+                buffer[pos++] = '\n';
+                sawCr = false;
+                lineStart = true;
+            }
+            if (current == '\r') {
+                sawCr = true;
+                lineStart = false;
                 continue;
             }
             if (dotStuff && lineStart && current == '.') {
                 buffer[pos++] = '.';
             }
             buffer[pos++] = current;
-            sawCr = false;
             lineStart = false;
         }
         var trimmed = new byte[pos];
         System.arraycopy(buffer, 0, trimmed, 0, pos);
-        return new NormalizedChunk(trimmed, sawCr, lineStart);
+        // A still-pending CR is reported via endedWithCr; endsAtLineStart is false so the caller's
+        // end-of-stream flush emits the closing CRLF for a trailing bare CR.
+        return new NormalizedChunk(trimmed, sawCr, sawCr ? false : lineStart);
     }
 
     record NormalizedChunk(byte[] bytes, boolean endedWithCr, boolean endsAtLineStart) {}
@@ -1122,6 +1264,16 @@ public final class SmtpClient {
             } catch (NumberFormatException failure) {
                 throw new SmtpException(
                         SmtpException.Kind.PROTOCOL_VIOLATION, phase, "non-numeric reply code: '" + raw + "'", failure);
+            }
+            // rfc5321 §4.2: a reply code is exactly three digits whose leading digit is 2–5 (1yz is
+            // reserved and never sent by a server in this client's transaction model). parseInt also
+            // accepts a leading sign (e.g. "-50") and any 600–999 value, so range-check the parsed
+            // code rather than silently accepting an impossible status.
+            if (lineCode < 200 || lineCode > 599) {
+                throw new SmtpException(
+                        SmtpException.Kind.PROTOCOL_VIOLATION,
+                        phase,
+                        "reply code out of range (2xx–5xx): '" + raw + "'");
             }
             if (code == -1) {
                 code = lineCode;

@@ -42,9 +42,12 @@ class WindowsTimeZoneTest {
 
     @Test
     void vTimeZoneCarriesBothObservancesAndWindowsRules() {
-        var block = WindowsTimeZone.parse(pacificStruct()).toVTimeZone();
+        var zone = WindowsTimeZone.parse(pacificStruct());
+        var block = zone.toVTimeZone();
 
-        assertTrue(block.contains("TZID:" + WindowsTimeZone.TZID));
+        // The TZID is derived from the zone's offsets + DST rules so distinct zones cannot collide.
+        assertTrue(block.contains("TZID:" + zone.tzid()));
+        assertEquals("MailKit/UTC-0800_DST-0700_0302-1101", zone.tzid());
         assertTrue(block.contains("BEGIN:DAYLIGHT"));
         assertTrue(block.contains("RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU"), block);
         assertTrue(block.contains("RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU"), block);

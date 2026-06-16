@@ -425,6 +425,53 @@ class EmlSerializerTest {
                 "the boundary case must stay on one line");
     }
 
+    // RFC 2047 §2: a header line that contains one or more encoded-words is limited to 76 chars
+    // (each encoded-word itself to 75). The generic header folder used 78, so a long header name
+    // carrying a non-ASCII value could emit a 77-79 char encoded-word line. The tightened threshold
+    // applies ONLY to encoded-word lines, so plain ASCII headers stay folded at the §2.1.1 limit.
+    @Test
+    void encodedWordLinesRespectSeventySixCharacterLimit() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        // A long header name plus a three-byte-per-char value: the first encoded-word line, name
+        // prefix included, reaches 84 chars before the fix (76-char limit exceeded).
+        serializer.addCustomHeader("X-Custom-Long-Header-Name-Here", "日本語のテキストをここに置きます以上の文字列");
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        for (var line : eml.split("\r\n", -1)) {
+            if (line.contains("=?") && line.contains("?=")) {
+                assertTrue(line.length() <= 76, "encoded-word line exceeds 76 chars (" + line.length() + "): " + line);
+                // RFC 2047 §2 also caps each individual encoded-word at 75 chars.
+                var start = line.indexOf("=?");
+                var end = line.indexOf("?=", start) + 2;
+                assertTrue(end - start <= 75, "encoded-word exceeds 75 chars: " + line.substring(start, end));
+            }
+        }
+        // The header must still be present and decode back to the original value.
+        assertTrue(eml.contains("X-Custom-Long-Header-Name-Here:"), eml);
+    }
+
+    // A plain ASCII header must be folded exactly as before (78-char threshold) — the encoded-word
+    // tightening must not alter the common case.
+    @Test
+    void plainAsciiHeaderFoldingIsUnchangedByEncodedWordLimit() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        var asciiValue = "token-one token-two token-three token-four token-five token-six token-seven token-eight";
+        serializer.addCustomHeader("X-Ascii-Header", asciiValue);
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        var headerStart = eml.indexOf("X-Ascii-Header:");
+        var firstLine = eml.substring(headerStart, eml.indexOf("\r\n", headerStart));
+        // The first line is folded against the 78-char soft limit (no encoded-word present).
+        assertTrue(firstLine.length() <= 78, "ASCII header first line exceeds 78: " + firstLine);
+        assertFalse(firstLine.contains("=?"), "no encoded-word should appear for pure ASCII: " + firstLine);
+    }
+
     // F19: a stored Message-ID without angle brackets gains them (RFC 5322 §3.6.4).
     @Test
     void messageIdGainsAngleBracketsWhenMissing() throws Exception {

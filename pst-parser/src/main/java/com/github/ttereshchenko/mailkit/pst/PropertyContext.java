@@ -382,6 +382,15 @@ class PropertyContext {
     }
 
     private static List<Object> fixedMultiValue(byte[] data, int width, FixedValueReader reader) {
+        // A fixed-width multi-value blob is exactly count*width bytes ([MS-PST] §2.3.3.4.1); a length
+        // that is not a whole multiple of the element width signals truncation/corruption, and the
+        // trailing partial element is dropped — log it at DEBUG so the silent loss is diagnosable.
+        if (data.length % width != 0) {
+            LOG.log(
+                    System.Logger.Level.DEBUG,
+                    () -> "Fixed-width multi-value blob length " + data.length + " is not a multiple of element width "
+                            + width + "; dropping the trailing partial element");
+        }
         var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
         var values = new ArrayList<>();
         for (int offset = 0; offset + width <= data.length; offset += width) {
@@ -397,14 +406,18 @@ class PropertyContext {
         }
         var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
         int count = buffer.getInt(0);
-        // The count and offsets come from untrusted data; require the offset table to fit and each
-        // segment to lie inside the blob, skipping (not aborting on) individual bad segments.
+        // [MS-PST] §2.3.3.4.2: the record is ulCount followed by exactly ulCount rgulDataOffsets (item
+        // starts). The count and offsets come from untrusted data; require the offset table to fit and
+        // each segment to lie inside the blob, skipping (not aborting on) individual bad segments.
         if (count <= 0 || 4 + (long) count * 4 > data.length) {
             return List.of();
         }
         var segments = new ArrayList<byte[]>(count);
         for (int i = 0; i < count; i++) {
             long start = Integer.toUnsignedLong(buffer.getInt(4 + i * 4));
+            // [MS-PST] §2.3.3.4.2: length(N) = rgulDataOffsets[N+1] - rgulDataOffsets[N], EXCEPT the last
+            // item, which runs to the total size of the MV property data record (there is no terminating
+            // rgulDataOffsets[count] entry, and rgDataItems is byte-aligned with no trailing padding).
             long end = (i + 1 < count) ? Integer.toUnsignedLong(buffer.getInt(4 + (i + 1) * 4)) : data.length;
             if (start > end || end > data.length) {
                 continue;

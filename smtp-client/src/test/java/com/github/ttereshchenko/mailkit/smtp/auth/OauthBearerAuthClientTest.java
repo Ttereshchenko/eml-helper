@@ -2,6 +2,7 @@ package com.github.ttereshchenko.mailkit.smtp.auth;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
@@ -42,9 +43,25 @@ class OauthBearerAuthClientTest {
     }
 
     @Test
-    void errorChallengeIsAcknowledgedWithEmptyResponse() {
+    void errorChallengeIsAcknowledgedWithSingleCtrlAOctet() {
+        // rfc7628 §3.2.3: the client acknowledges the server's error continuation with a single
+        // %x01 (CTRL-A) octet — base64 "AQ==" — not an empty line, so the server can return the
+        // final SASL failure. (The pre-fix client returned an empty byte[0].)
         var client = new OauthBearerAuthClient(AuthCredentials.bearer("u", "t"::toCharArray));
         client.initial();
-        assertArrayEquals(new byte[0], client.respond("{\"status\":\"401\"}".getBytes(StandardCharsets.UTF_8)));
+        assertArrayEquals(new byte[] {0x01}, client.respond("{\"status\":\"401\"}".getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    void rejectsKvsepInGs2Fields() {
+        // rfc7628 §3.1: a gs2 field value must not contain the kvsep (%x01). An injected separator
+        // would forge extra SASL fields inside the base64-wrapped blob, so it is rejected.
+        var injectedUser =
+                new OauthBearerAuthClient(new AuthCredentials("userinjected", "t"::toCharArray, "", Map.of()));
+        assertThrows(IllegalArgumentException.class, injectedUser::initial);
+
+        var injectedHost = new OauthBearerAuthClient(
+                new AuthCredentials("user", "t"::toCharArray, "", Map.of("host", "hx", "port", "25")));
+        assertThrows(IllegalArgumentException.class, injectedHost::initial);
     }
 }

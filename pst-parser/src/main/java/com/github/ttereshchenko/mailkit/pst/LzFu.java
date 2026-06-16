@@ -68,6 +68,7 @@ final class LzFu {
             // Run to the end of the input: stopping 2 bytes early (an old guard) dropped up to two
             // trailing literals when the final flag byte sat near the tail. The token reads below
             // carry their own truncation guards.
+            decode:
             while (currentDataPosition < data.length && output.size() < uncompressedSize) {
                 int flags = data[currentDataPosition++] & 0xFF;
                 for (int x = 0; x < 8 && output.size() < uncompressedSize; x++) {
@@ -75,12 +76,19 @@ final class LzFu {
                     flags >>= 1;
                     if (isReference) {
                         if (currentDataPosition + 1 >= data.length) {
-                            break; // truncated reference token
+                            break decode; // truncated reference token
                         }
                         int referenceHigh = data[currentDataPosition++] & 0xFF;
                         int referenceLow = data[currentDataPosition++] & 0xFF;
                         int referenceOffset = (referenceHigh << 4) | (referenceLow >>> 4);
                         int referenceSize = (referenceLow & 0xF) + 2;
+
+                        if (referenceOffset == bufferPosition) {
+                            // [MS-OXRTFCP] §2.1.3.1.2: a dictionary reference whose offset equals the
+                            // current write cursor is the end-of-stream marker — stop here rather than
+                            // copy spurious dictionary bytes until uncompressedSize is reached.
+                            break decode;
+                        }
 
                         int index = referenceOffset;
                         for (int y = 0; y < referenceSize && output.size() < uncompressedSize; y++) {

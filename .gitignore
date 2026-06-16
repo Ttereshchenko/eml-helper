@@ -64,3 +64,6 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+### MailKit PST conversion test output (generated next to the .pst fixtures) ###
+/src/test/resources/samples/pst/*_eml/

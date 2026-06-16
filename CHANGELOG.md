@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 1.2.1 - 2026-06-16
+
+### Fixed (SMTP sending)
+
+- The Send dialog now accepts envelope addresses written with a display name (`Alice <alice@example.com>`) and comma-separated recipient lists (quoted commas such as `"Doe, John" <john@example.com>` included), instead of rejecting them as unsafe — it sends the bare address each server expects.
+- A `Bcc:` header in the EML being sent is removed before the message goes out, so the blind recipients are never disclosed to the other recipients; the dialog warns which `Bcc:` addresses it stripped (they are not silently added as recipients).
+- "Delivered to N recipients" now counts only the recipients the server actually accepted, not the ones it rejected.
+- Accounts with a non-ASCII username or password can now authenticate with `SCRAM-SHA-1` / `SCRAM-SHA-256`: the credentials are SASLprep-normalized before the response is computed, as the mechanism requires.
+- Lower-level send correctness: a stray carriage return in the message body is normalized to CRLF, the `SIZE` advertised to the server matches the actual on-the-wire byte count, an out-of-range SMTP reply code is reported as a protocol error, and a malformed SASL challenge is cancelled cleanly (with `*`) instead of being left mid-handshake.
+
+### Fixed (conversion correctness)
+
+- Cancelling a `.pst`/`.ost` conversion now stops it immediately, instead of running to the end while logging every remaining message as a spurious failure.
+- Bounce messages and delivery/read receipts converted from `.msg`, `.pst` and `.ost` now produce a standards-compliant `message/delivery-status`: the required Reporting-MTA / Final-Recipient / Action / Status fields are always present, `Status` carries the proper machine-readable code (with the human-readable explanation moved to `Diagnostic-Code`), and `Final-Recipient` names the address that actually failed rather than the bounce's own recipient.
+- A task converted to a `task.ics` VTODO with a date-only start or due date is now exported as a calendar DATE rather than midnight UTC, which previously displayed the task a day early for anyone east of Greenwich.
+- Meeting responses converted from `.msg` name the meeting organizer correctly even when the response was also copied to a delegate; a `Bcc` recipient no longer appears in a converted meeting's attendee list; calendar text (locations, summaries) with embedded line breaks is escaped correctly; RTF-only bodies no longer leak raw binary picture data into the plain-text fallback; and `In-Reply-To`/`References` threading headers are angle-bracket-normalized like `Message-ID`.
+
 ### Added (MSG conversion fidelity)
 
 - S/MIME messages converted from `.msg` keep their cryptographic envelope verifiable: clear-signed messages export as real `multipart/signed` EMLs with the original signature part intact, and opaque signed/encrypted ones as `application/pkcs7-mime` (`smime.p7m`) messages — previously the envelope was buried as a nameless opaque attachment that no mail client could verify or decrypt.

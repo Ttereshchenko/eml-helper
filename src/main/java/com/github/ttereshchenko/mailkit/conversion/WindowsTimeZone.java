@@ -20,9 +20,6 @@ import java.time.temporal.TemporalAdjusters;
  */
 public final class WindowsTimeZone {
 
-    /** The TZID used for the generated VTIMEZONE; the struct does not record a display name. */
-    public static final String TZID = "MailKit-Local";
-
     /** One Windows SYSTEMTIME yearly transition rule: month is 1-12, occurrence 1-4 or 5 = last. */
     private record TransitionRule(int month, int dayOfWeek, int occurrence, int hour, int minute) {}
 
@@ -85,6 +82,31 @@ public final class WindowsTimeZone {
         return standardRule != null;
     }
 
+    /**
+     * A TZID for this zone's VTIMEZONE, derived from its UTC offsets and DST transition rules (the
+     * struct records no display name). It is unique to the zone definition — two events with
+     * different zones in one VCALENDAR get distinct TZIDs (RFC 5545 §3.2.19 requires each
+     * {@code TZID} reference to match a VTIMEZONE in the object), while two events sharing a zone
+     * reuse the same one. Uses only RFC 5545 {@code paramtext} SAFE-CHARs.
+     */
+    public String tzid() {
+        var builder = new StringBuilder("MailKit/UTC").append(formatOffset(standardOffsetMinutes));
+        if (hasDst()) {
+            builder.append("_DST")
+                    .append(formatOffset(daylightOffsetMinutes))
+                    .append('_')
+                    .append(ruleToken(daylightRule))
+                    .append('-')
+                    .append(ruleToken(standardRule));
+        }
+        return builder.toString();
+    }
+
+    /** A compact, deterministic token for a transition rule: month (2 digits), weekday, occurrence. */
+    private static String ruleToken(TransitionRule rule) {
+        return String.format("%02d%d%d", rule.month(), rule.dayOfWeek(), rule.occurrence());
+    }
+
     /** The wall-clock time of {@code instant} in this zone. */
     public LocalDateTime toLocal(Instant instant) {
         return LocalDateTime.ofInstant(instant, offsetAt(instant));
@@ -133,7 +155,7 @@ public final class WindowsTimeZone {
     public String toVTimeZone() {
         var block = new StringBuilder();
         block.append("BEGIN:VTIMEZONE\r\n");
-        block.append("TZID:").append(TZID).append("\r\n");
+        block.append("TZID:").append(tzid()).append("\r\n");
         if (!hasDst()) {
             block.append("BEGIN:STANDARD\r\n");
             block.append("DTSTART:19700101T000000\r\n");

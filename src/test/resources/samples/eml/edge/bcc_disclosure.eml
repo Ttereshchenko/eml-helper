@@ -1,0 +1,9 @@
+From: sender@example.com
+To: visible@example.com
+BCC: secret-one@example.com,
+ secret-two@example.com
+Subject: bcc disclosure
+
+The Bcc header above (mixed-case field name, folded across two lines) must be
+stripped from the transmitted DATA so the blind recipients are not disclosed,
+and the user must be warned that those addresses were not delivered to.

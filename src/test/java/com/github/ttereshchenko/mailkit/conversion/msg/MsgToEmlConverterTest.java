@@ -1074,9 +1074,187 @@ class MsgToEmlConverterTest {
                 "an unrecognized message class must trigger an info downgrade log: " + loggedMessages);
     }
 
+    // --- finding 1: DSN Status must be a d.d.d code (rfc3464 §2.3.4), not the free-form
+    //     PR_SUPPLEMENTARY_INFO text, which belongs in Diagnostic-Code (rfc3464 §2.3.6). ---
+    @Test
+    void ndrStatusIsEnhancedCodeAndSupplementaryTextGoesToDiagnosticCode() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Undeliverable: Hello")
+                .sender("Postmaster", "postmaster@example.com")
+                .recipientTo("Failed Person", "failed@remote.example.com")
+                .messageClass("REPORT.IPM.Note.NDR")
+                .reportText("Delivery to the following recipient failed permanently.")
+                .supplementaryInfo("550 5.1.1 <failed@remote.example.com>: Recipient address rejected: User unknown")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // rfc3464 §2.3.4: Status is a class.subject.detail code recovered from the supplementary text,
+        // never the free text itself (the old code fed PR_SUPPLEMENTARY_INFO straight into Status).
+        assertTrue(eml.contains("Status: 5.1.1"), "Status must be the d.d.d code parsed from the report: " + eml);
+        assertFalse(
+                eml.contains("Status: 550 5.1.1") || eml.contains("Status: smtp"),
+                "Status must not carry the free-form supplementary/diagnostic text: " + eml);
+        // rfc3464 §2.3.6: the free-form transport text is the Diagnostic-Code, not the Status.
+        assertTrue(
+                unfold(eml)
+                        .contains("Diagnostic-Code: smtp; 550 5.1.1 <failed@remote.example.com>: Recipient"
+                                + " address rejected: User unknown"),
+                "the supplementary text must be routed to Diagnostic-Code: " + eml);
+    }
+
+    // --- finding 1 (default): a report with no parseable status code defaults to 5.0.0, not free text. ---
+    @Test
+    void ndrWithoutEnhancedCodeDefaultsStatusToPermanentFailure() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Undeliverable")
+                .sender("Postmaster", "postmaster@example.com")
+                .recipientTo("Failed", "failed@remote.example.com")
+                .messageClass("REPORT.IPM.Note.NDR")
+                .reportText("Your message could not be delivered.")
+                .supplementaryInfo("Remote host said: mailbox full")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // rfc3463 §3 "other or undefined permanent failure" when no finer code is available.
+        assertTrue(eml.contains("Status: 5.0.0"), "missing status code must default to 5.0.0: " + eml);
+        assertTrue(
+                eml.contains("Diagnostic-Code: smtp; Remote host said: mailbox full"),
+                "the supplementary text is still surfaced as Diagnostic-Code: " + eml);
+    }
+
+    // --- finding 2: Final-Recipient must be the address that failed (rfc3464 §2.3.2), taken from the
+    //     report's recipient table — not the bounce's own PR_DISPLAY_TO. ---
+    @Test
+    void ndrFinalRecipientIsTheFailedAddressNotTheBounceRecipient() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Undeliverable: Hello")
+                .sender("Postmaster", "postmaster@example.com")
+                // The recipient table of the NDR holds the failed recipient.
+                .recipientTo("Failed Person", "failed@remote.example.com")
+                // PR_DISPLAY_TO is the bounce's own recipient (the original sender) — must NOT be used.
+                .displayTo("original-sender@example.com")
+                .messageClass("REPORT.IPM.Note.NDR")
+                .reportText("Delivery failed.")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(
+                eml.contains("Final-Recipient: rfc822; failed@remote.example.com"),
+                "Final-Recipient must be the failed recipient address: " + eml);
+        assertFalse(
+                eml.contains("Final-Recipient: rfc822; original-sender@example.com"),
+                "Final-Recipient must not be the bounce's own PR_DISPLAY_TO: " + eml);
+    }
+
+    // --- finding 3: BCC-class recipients must be excluded from iCal ATTENDEE lines (RFC 5546 —
+    //     attendees are the visible participants). Drives the calendar path with a synthesized
+    //     __nameid appointment-start so the meeting REQUEST emits ATTENDEE lines. ---
+    @Test
+    void bccRecipientIsExcludedFromMeetingAttendees() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Schedule.Meeting.Request")
+                .subject("Project kickoff")
+                .sender("Chair Person", "chair@example.com")
+                .recipientTo("Visible Attendee", "visible@example.com")
+                .recipientBcc("Hidden Person", "hidden@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                .textBody("Agenda inside")
+                .toBytes();
+
+        var eml = convertString(bytes);
+        var invite = decodedInvite(eml);
+
+        assertTrue(unfold(eml).contains("method=REQUEST"), "meeting request must produce a REQUEST invite: " + eml);
+        assertTrue(invite.contains("METHOD:REQUEST"), invite);
+        assertTrue(
+                invite.contains("ATTENDEE;CN=\"Visible Attendee\":mailto:visible@example.com"),
+                "the visible To recipient must appear as an ATTENDEE: " + invite);
+        assertFalse(
+                invite.contains("hidden@example.com"),
+                "a BCC recipient must never leak into an iCal ATTENDEE line: " + invite);
+    }
+
+    @Test
+    void meetingResponseReplyOrganizerIsTheToRecipientNotACcDelegate() throws Exception {
+        // RFC 5546 §3.2.3: a meeting-response REPLY flows from the responding attendee (the sender) to
+        // the meeting ORGANIZER, which Outlook stores as the response's To recipient. A Cc'd delegate
+        // must not be promoted to ORGANIZER, and the single ATTENDEE is the responder with its PARTSTAT.
+        // (This in-memory case lists the To recipient first; the Cc-before-To ordering edge — where the
+        // organizer-selection fix actually changes the outcome — is covered end-to-end by the vendored
+        // meeting_response_accepted.msg in MsgSampleCorpusTest.)
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Schedule.Meeting.Resp.Pos")
+                .subject("Accepted: Project kickoff")
+                .sender("Responding Attendee", "responder@example.com")
+                .recipientTo("Meeting Organizer", "organizer@example.com")
+                .recipientCc("Delegate", "delegate@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                .textBody("Accepted")
+                .toBytes();
+
+        var eml = convertString(bytes);
+        // iCal folds lines longer than 75 octets as CRLF + a single WSP (rfc5545 §3.1); unfolding
+        // removes both so a long ATTENDEE address is not split mid-token before the substring checks.
+        var invite = decodedInvite(eml).replace("\r\n ", "").replace("\r\n\t", "");
+
+        assertTrue(unfold(eml).contains("method=REPLY"), "a meeting response must produce a REPLY invite: " + eml);
+        assertTrue(invite.contains("METHOD:REPLY"), invite);
+        assertTrue(
+                invite.contains("ORGANIZER;CN=\"Meeting Organizer\":mailto:organizer@example.com"),
+                "the meeting organizer is the To recipient: " + invite);
+        assertFalse(
+                invite.contains("delegate@example.com"),
+                "a Cc delegate must not appear as the organizer of a REPLY: " + invite);
+        assertTrue(
+                invite.contains("ATTENDEE;CN=\"Responding Attendee\";PARTSTAT=ACCEPTED:mailto:responder@example.com"),
+                "the REPLY's single ATTENDEE is the responder carrying PARTSTAT: " + invite);
+    }
+
+    // --- finding 4: In-Reply-To/References msg-id references must be angle-bracketed (rfc5322
+    //     §3.6.4), the same normalization Message-ID gets — they are stored unbracketed in MAPI. ---
+    @Test
+    void threadingHeaderReferencesAreAngleBracketNormalized() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Re: thread")
+                .sender("A", "a@example.com")
+                .recipientTo("B", "b@example.com")
+                .inReplyTo("parent-id@example.com")
+                .references("root-id@example.com parent-id@example.com")
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // The stored values lack angle brackets; the converter must add them (rfc5322 §3.6.4).
+        assertTrue(eml.contains("In-Reply-To: <parent-id@example.com>"), "In-Reply-To must be angle-bracketed: " + eml);
+        assertTrue(
+                eml.contains("References: <root-id@example.com> <parent-id@example.com>"),
+                "every References msg-id must be angle-bracketed: " + eml);
+    }
+
     private String convertString(byte[] input) throws Exception {
         var out = new java.io.ByteArrayOutputStream();
         MsgToEmlConverter.convert(new ByteArrayInputStream(input), out, ConversionLog.NOOP);
         return out.toString(java.nio.charset.StandardCharsets.US_ASCII);
+    }
+
+    /** Reverses RFC 5322 header folding so long header values can be matched as one logical line. */
+    private static String unfold(String eml) {
+        return eml.replace("\r\n ", " ").replace("\r\n\t", " ");
+    }
+
+    /** Decodes the base64-encoded {@code invite.ics} attachment part out of the EML. */
+    private static String decodedInvite(String eml) {
+        var marker = "filename=\"invite.ics\"";
+        var markerIndex = eml.indexOf(marker);
+        assertTrue(markerIndex >= 0, "no invite.ics attachment:\r\n" + eml);
+        var payloadStart = eml.indexOf("\r\n\r\n", markerIndex) + 4;
+        var payloadEnd = eml.indexOf("\r\n--", payloadStart);
+        var base64 = eml.substring(payloadStart, payloadEnd < 0 ? eml.length() : payloadEnd)
+                .replace("\r\n", "");
+        return new String(java.util.Base64.getDecoder().decode(base64), java.nio.charset.StandardCharsets.UTF_8);
     }
 }

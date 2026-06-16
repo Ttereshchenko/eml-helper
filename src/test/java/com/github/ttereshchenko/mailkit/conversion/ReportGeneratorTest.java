@@ -105,16 +105,34 @@ class ReportGeneratorTest {
     }
 
     @Test
-    void nullAndBlankFieldsAreOmittedFromDeliveryStatus() {
-        // Only supply Action; all other optional delivery-status fields are null.
-        var report = generate(new ReportInfo(true, null, null, null, "failed", null, null, null, null));
+    void mandatoryFieldsAreDefaultedWhileOptionalFieldsStayOmitted() {
+        // A sparse NDR supplies nothing. rfc3464 makes Reporting-MTA (§2.2.2), Final-Recipient
+        // (§2.3.1/§2.3.2), Action (§2.3.3) and Status (§2.3.4) MANDATORY, so a structurally valid
+        // delivery-status block must default them rather than drop them; Diagnostic-Code (§2.3.6)
+        // is optional and is still omitted when absent.
+        var report = generate(new ReportInfo(true, null, null, null, null, null, null, null, null));
 
         var body = report.body();
-        assertTrue(body.contains("Action: failed"), body);
-        assertFalse(body.contains("Reporting-MTA:"), "null Reporting-MTA must be omitted: " + body);
-        assertFalse(body.contains("Final-Recipient:"), "null Final-Recipient must be omitted: " + body);
-        assertFalse(body.contains("Status:"), "null Status must be omitted: " + body);
-        assertFalse(body.contains("Diagnostic-Code:"), "null Diagnostic-Code must be omitted: " + body);
+        assertTrue(body.contains("Reporting-MTA: dns; unknown"), "missing Reporting-MTA must default: " + body);
+        assertTrue(body.contains("Final-Recipient: rfc822; unknown"), "missing Final-Recipient must default: " + body);
+        assertTrue(body.contains("Action: failed"), "missing Action must default to failed: " + body);
+        assertTrue(body.contains("Status: 5.0.0"), "missing Status must default to 5.0.0: " + body);
+        assertFalse(body.contains("Diagnostic-Code:"), "optional Diagnostic-Code must stay omitted: " + body);
+    }
+
+    @Test
+    void suppliedMandatoryFieldsAreNotOverriddenByDefaults() {
+        // When the values are present they must win over the defaults.
+        var report = generate(new ReportInfo(
+                true, null, "mta.example.com", "user@example.com", "delayed", "4.4.7", null, null, null));
+
+        var body = report.body();
+        assertTrue(body.contains("Reporting-MTA: dns; mta.example.com"), body);
+        assertTrue(body.contains("Final-Recipient: rfc822; user@example.com"), body);
+        assertTrue(body.contains("Action: delayed"), body);
+        assertTrue(body.contains("Status: 4.4.7"), body);
+        assertFalse(body.contains("dns; unknown"), "a present host must not be replaced by the sentinel: " + body);
+        assertFalse(body.contains("rfc822; unknown"), "a present recipient must not be replaced: " + body);
     }
 
     // -----------------------------------------------------------------------
@@ -179,6 +197,19 @@ class ReportGeneratorTest {
         assertTrue(
                 report.body().contains("Disposition: automatic-action/MDN-sent-automatically; displayed"),
                 "null dispositionType must default to displayed: " + report.body());
+    }
+
+    @Test
+    void readReceiptDefaultsMandatoryFinalRecipientWhenAddressMissing() {
+        // rfc8098 §3.1 makes final-recipient-field REQUIRED in an MDN. A read receipt with no
+        // recipient address must still emit the field (defaulted), exactly as the DSN path defaults
+        // its mandatory fields — not drop it and produce a structurally invalid notification.
+        var report = generate(new ReportInfo(
+                false, "Your message was read.", null, null, null, null, null, "<orig-1@example.com>", "displayed"));
+
+        assertTrue(
+                report.body().contains("Final-Recipient: rfc822; unknown"),
+                "a missing MDN Final-Recipient must be defaulted, not omitted: " + report.body());
     }
 
     @Test
@@ -262,6 +293,65 @@ class ReportGeneratorTest {
                     line.startsWith("X-Bad:"),
                     "CRLF in Final-Recipient must not inject X-Bad as a standalone header line: " + report.body());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Header folding (rfc5322 §2.2.3) — must not collapse internal whitespace
+    // -----------------------------------------------------------------------
+
+    @Test
+    void foldingPreservesInternalWhitespaceInDiagnosticCode() {
+        // A Diagnostic-Code whose value embeds runs of significant whitespace and is long enough to
+        // force at least one fold. rfc5322 §2.2.3 unfolds a header by deleting the CRLF that precedes
+        // a WSP — folding must therefore insert CRLF+WSP at a fold point WITHOUT collapsing the
+        // value's own internal whitespace runs. The pre-fix split(" ") collapsed every run to a
+        // single space, corrupting the value.
+        var diagnostic = "550 5.1.1   mailbox    unavailable        rejected    by    remote    host    table";
+        var report = generate(new ReportInfo(true, null, null, null, "failed", "5.1.1", diagnostic, null, null));
+
+        var body = report.body();
+        var headerStart = body.indexOf("Diagnostic-Code:");
+        assertTrue(headerStart >= 0, "Diagnostic-Code must be present: " + body);
+        // Collect the folded field: its first line plus every continuation line (those beginning with
+        // WSP), then unfold per rfc5322 §2.2.3 (drop the CRLF before the leading WSP).
+        var field = new StringBuilder();
+        var lines = body.substring(headerStart).split("\r\n", -1);
+        field.append(lines[0]);
+        for (var index = 1; index < lines.length; index++) {
+            var line = lines[index];
+            if (line.startsWith(" ") || line.startsWith("\t")) {
+                field.append('\n').append(line);
+            } else {
+                break;
+            }
+        }
+        var unfolded = field.toString().replace("\n ", " ").replace("\n\t", "\t");
+        assertTrue(
+                unfolded.contains(diagnostic),
+                "unfolding must reproduce the original internal whitespace verbatim: [" + unfolded + "]");
+    }
+
+    @Test
+    void foldingBreaksLongFieldAtSeventyEightCharacters() {
+        // A long Final-Recipient must be folded so every emitted line stays within the rfc5322
+        // §2.1.1 soft limit of 78 characters where a fold opportunity exists.
+        var report = generate(new ReportInfo(
+                true,
+                null,
+                "this-is-a-long-reporting-host.subdomain.example.com",
+                "a-very-long-local-part.that-keeps-going@a-long-domain.subdomain.example.com",
+                "failed",
+                "5.1.1",
+                null,
+                null,
+                null));
+
+        var body = report.body();
+        var headerStart = body.indexOf("Final-Recipient:");
+        var firstLine = body.substring(headerStart, body.indexOf("\r\n", headerStart));
+        assertTrue(
+                firstLine.length() <= 78,
+                "the first folded line of a long field must respect the 78-char soft limit: " + firstLine);
     }
 
     @Test

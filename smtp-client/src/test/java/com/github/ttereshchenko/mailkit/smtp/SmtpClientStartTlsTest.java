@@ -50,6 +50,35 @@ class SmtpClientStartTlsTest {
     }
 
     @Test
+    void failureAfterStartTlsCarriesTheNegotiatedTlsOutcome() throws Exception {
+        // A send that fails AFTER STARTTLS came up (here a rejected MAIL FROM) must carry the TLS
+        // state on the exception so the audit log records the send as encrypted, not "no TLS".
+        try (var server = FakeSmtpServer.builder()
+                .expect("EHLO ", "250-fake.local Hello", "250-STARTTLS", "250 PIPELINING")
+                .expectStartTls("220 Ready to start TLS")
+                .expect("EHLO ", "250-fake.local Hello (secure)", "250 PIPELINING")
+                .expect("MAIL FROM:", "550 5.7.1 rejected")
+                .start()) {
+            var config = SmtpConfig.defaults("localhost")
+                    .withPort(server.port())
+                    .withTls(TestTlsResources.clientStartTlsConfig());
+            try {
+                new SmtpClient()
+                        .send(
+                                config,
+                                SmtpEnvelope.of("from@example.com", "to@example.com"),
+                                MessageSource.ofString("Subject: hi\n\nbody\n"));
+                fail("expected MAIL_REJECTED");
+            } catch (SmtpException failure) {
+                assertEquals(SmtpException.Kind.MAIL_REJECTED, failure.kind());
+                assertNotNull(failure.tls(), "the failure must carry the TLS outcome");
+                assertTrue(failure.tls().active(), "TLS was established before the rejection");
+                assertFalse(failure.tls().protocol().isBlank(), "the negotiated protocol must be recorded");
+            }
+        }
+    }
+
+    @Test
     void starttlsRequiredFailsWhenServerDoesNotAdvertiseIt() throws Exception {
         try (var server = FakeSmtpServer.builder()
                 .expect("EHLO ", "250 fake.local Hello")

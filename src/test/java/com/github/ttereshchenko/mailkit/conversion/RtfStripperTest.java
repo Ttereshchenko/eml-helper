@@ -84,6 +84,31 @@ class RtfStripperTest {
         assertEquals("€Done", RtfStripper.strip(rtf));
     }
 
+    // \binN introduces exactly N bytes of raw binary picture data (RTF spec / [MS-OXRTFCP]
+    // §2.1.3.1.5) that are NOT RTF text. The pre-fix stripper consumed only the \binN control word
+    // and then leaked the N raw bytes into the plain-text output.
+    @Test
+    void binBinaryDataIsSkipped() {
+        // \bin5 followed by a single delimiting space and exactly five raw bytes "ABCDE".
+        var rtf = "{\\rtf1\\ansi Before\\bin5 ABCDEAfter}";
+        assertEquals("BeforeAfter", RtfStripper.strip(rtf));
+    }
+
+    @Test
+    void binBinaryDataContainingBackslashesAndBracesIsSkipped() {
+        // The skipped bytes may themselves be backslashes/braces; counting (not re-parsing) them is
+        // what keeps the parser in sync. The four bytes "\{a}" are consumed, then "Tail" survives.
+        var rtf = "{\\rtf1\\ansi X\\bin4 \\{a}Tail}";
+        assertEquals("XTail", RtfStripper.strip(rtf));
+    }
+
+    @Test
+    void binWithoutCountSkipsNoBinaryData() {
+        // A bare \bin with no count carries no binary payload; following text must survive.
+        var rtf = "{\\rtf1\\ansi P\\bin Q}";
+        assertEquals("PQ", RtfStripper.strip(rtf));
+    }
+
     // #14: HTML-encapsulated RTF (\fromhtml) is detected and de-encapsulated to HTML, rather than
     // stripped to plain text (which loses the markup the PST path already preserves).
     @Test

@@ -30,6 +30,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.apache.poi.hpsf.ClassID;
 import org.apache.poi.hsmf.MAPIMessage;
 import org.apache.poi.hsmf.datatypes.AttachmentChunks;
@@ -79,6 +80,11 @@ public final class MsgToEmlConverter {
     private static final ClassID PSETID_TASK = new ClassID("{00062003-0000-0000-C000-000000000046}");
     private static final ClassID PSETID_ADDRESS = new ClassID("{00062004-0000-0000-C000-000000000046}");
     private static final ClassID PS_PUBLIC_STRINGS = new ClassID("{00020329-0000-0000-C000-000000000046}");
+
+    // An RFC 3464 §2.3.4 enhanced-status code (class.subject.detail) embedded in free-form report
+    // text — Outlook writes it inline, e.g. "... #5.1.1 ...". The class digit is constrained to 2/4/5
+    // so a date or version string in the diagnostic text is not mistaken for a status code.
+    private static final Pattern STATUS_CODE_PATTERN = Pattern.compile("([245]\\.\\d{1,3}\\.\\d{1,3})");
 
     private MsgToEmlConverter() {}
 
@@ -209,13 +215,22 @@ public final class MsgToEmlConverter {
 
         // Recover reply-threading headers from MAPI when the original transport headers are absent;
         // EmlSerializer's transport-header dedup keeps these from doubling up when they are present.
+        // RFC 5322 §3.6.4: In-Reply-To/References are msg-id lists and each id is angle-bracketed,
+        // exactly as Message-ID is. MAPI stores these unbracketed, so normalize them the same way the
+        // serializer normalizes Message-ID instead of emitting the bare values.
         var inReplyTo = readMainString(message, MAPIProperty.IN_REPLY_TO_ID);
         if (inReplyTo != null && !inReplyTo.isBlank()) {
-            serializer.addCustomHeader("In-Reply-To", inReplyTo.trim());
+            var normalized = angleBracketMessageIds(inReplyTo);
+            if (!normalized.isEmpty()) {
+                serializer.addCustomHeader("In-Reply-To", normalized);
+            }
         }
         var references = readMainString(message, MAPIProperty.INTERNET_REFERENCES);
         if (references != null && !references.isBlank()) {
-            serializer.addCustomHeader("References", references.trim());
+            var normalized = angleBracketMessageIds(references);
+            if (!normalized.isEmpty()) {
+                serializer.addCustomHeader("References", normalized);
+            }
         }
 
         // PidTagContentFilterSpamConfidenceLevel. POI has no constant for it, and a
@@ -464,7 +479,11 @@ public final class MsgToEmlConverter {
     private static String pickMimeType(AttachmentChunks chunks) {
         var mime = chunkValue(chunks.getAttachMimeTag());
         if (mime != null && !mime.isBlank()) {
-            return mime;
+            // Outlook occasionally stores parameters on PR_ATTACH_MIME_TAG (e.g. `image/png; name="x"`).
+            // The serializer appends its own `name=` parameter, so keep only the type/subtype here to
+            // avoid a Content-Type with a duplicate parameter (rfc2045 §5.1 forbids a repeated parameter).
+            var separator = mime.indexOf(';');
+            return (separator >= 0 ? mime.substring(0, separator) : mime).trim();
         }
         return "application/octet-stream";
     }
@@ -689,6 +708,13 @@ public final class MsgToEmlConverter {
         if (details != null) {
             var limit = Math.min(details.length, MAX_RECIPIENTS);
             for (var index = 0; index < limit; index++) {
+                // RFC 5546: ATTENDEE lists the meeting's visible participants. A BCC-class recipient is
+                // hidden from the other invitees, so excluding it keeps the iTIP object from leaking the
+                // blind copy into a property every attendee can read.
+                var type = readRecipientType(details[index]);
+                if (type != null && type == EmlSerializer.RECIPIENT_TYPE_BCC) {
+                    continue;
+                }
                 var address = resolveRecipientAddress(details[index]);
                 if (address != null && !address.isBlank()) {
                     attendees.add(new ICalendarGenerator.Attendee(details[index].getRecipientName(), address));
@@ -702,15 +728,18 @@ public final class MsgToEmlConverter {
         if ("REPLY".equals(method)) {
             // RFC 5546 §3.2.3: a meeting-response REPLY flows from the responding ATTENDEE to the
             // meeting ORGANIZER, carrying that attendee's PARTSTAT. In the MSG the responder is the
-            // sender (the `organizer` identity here) and the meeting organizer is the recipient, so
+            // sender (the `organizer` identity here) and the meeting organizer is the To recipient, so
             // the two roles are swapped relative to a REQUEST and the PARTSTAT is attached to the
             // single responding attendee. (attendees is non-empty — method() returns REPLY only then.)
-            var meetingOrganizer = attendees.get(0);
+            // Prefer the To recipient rather than the first row so a Cc'd delegate is not mistaken for
+            // the organizer.
+            var meetingOrganizer = pickReplyMeetingOrganizer(details, attendees);
             organizerName = meetingOrganizer.name();
             organizerEmail = meetingOrganizer.email();
             eventAttendees = List.of(new ICalendarGenerator.Attendee(
                     organizer.name(), organizer.email(), ICalendarGenerator.responsePartStat(messageClass)));
         }
+        var sequence = readNamedLong(message, PSETID_APPOINTMENT, 0x8201); // PidLidAppointmentSequence
         var ical = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
                 method,
                 start,
@@ -723,7 +752,8 @@ public final class MsgToEmlConverter {
                 eventAttendees,
                 allDay,
                 timeZone,
-                recurrence));
+                recurrence,
+                sequence != null ? sequence : 0));
         serializer.addAttachment(
                 "invite.ics",
                 "text/calendar; charset=UTF-8; method=" + method,
@@ -868,23 +898,133 @@ public final class MsgToEmlConverter {
      * {@code message/delivery-status} part (RFC 3464), a read receipt ({@code .IPNRN}/{@code .IPNNRN})
      * a {@code message/disposition-notification} part (RFC 8098). The class suffix selects the branch
      * and supplies {@code Action}/{@code Disposition}, which MAPI does not store verbatim.
+     *
+     * <p>For a delivery report the per-recipient fields are sourced from the failed recipient rather
+     * than the bounce's own envelope: {@code Final-Recipient} (rfc3464 §2.3.2) is the address that
+     * actually failed (the NDR's recipient-table entry), the {@code Status} {@code d.d.d} code
+     * (rfc3464 §2.3.4) comes from the report's enhanced-status property, and the free-form
+     * {@code PidTagSupplementaryInfo} text becomes the {@code Diagnostic-Code} (rfc3464 §2.3.6) — it
+     * is human-readable transport text and must not be fed into the strictly-formatted {@code Status}.
      */
     private static void emitReport(MAPIMessage message, String messageClass, EmlSerializer serializer) {
         var deliveryReport = messageClass.endsWith(".NDR") || messageClass.endsWith(".DR");
         var action = messageClass.endsWith(".NDR") ? "failed" : messageClass.endsWith(".DR") ? "delivered" : null;
         var dispositionType = messageClass.endsWith(".IPNNRN") ? "deleted" : "displayed";
+        // The free-form supplementary info is the transport diagnostic, not a status code.
+        var supplementaryInfo = readMainStringById(message, 0x0C1B); // PidTagSupplementaryInfo
+        String status = null;
+        String diagnosticCode = null;
+        String finalRecipient = null;
+        if (deliveryReport) {
+            finalRecipient = reportFailedRecipient(message);
+            status = reportStatusCode(message, supplementaryInfo, messageClass.endsWith(".NDR"));
+            diagnosticCode = supplementaryInfo;
+        }
+        if (finalRecipient == null || finalRecipient.isBlank()) {
+            // Last resort only: the report carried no per-recipient address at all.
+            finalRecipient = readMainStringById(message, 0x0E04); // PidTagDisplayTo
+        }
         var info = new ReportGenerator.ReportInfo(
                 deliveryReport,
                 readMainStringById(message, 0x1001), // PidTagReportText
                 readMainStringById(message, 0x6820), // PidTagReportingMessageTransferAgent
-                readMainStringById(message, 0x0E04), // PidTagDisplayTo (final recipient)
+                finalRecipient,
                 action,
-                readMainStringById(message, 0x0C1B), // PidTagSupplementaryInfo (DSN status text)
-                null,
+                status,
+                diagnosticCode,
                 readMainStringById(message, 0x1046), // PidTagInternetMessageId of the original
                 dispositionType);
         var report = ReportGenerator.generate(info);
         serializer.setRawEntity(report.contentType(), null, null, report.body());
+    }
+
+    /**
+     * The address that actually failed (rfc3464 §2.3.2): the recipient-table entry of the NDR message
+     * holding the failed recipient — not the bounce's own {@code PidTagDisplayTo}. A {@code RECIPIENT_TYPE_TO}
+     * row is preferred, because an NDR's recipient table can also carry non-TO routing entries; the
+     * first row with any resolvable address is the fallback. Returns {@code null} when the report stores
+     * no recipient table or no resolvable address.
+     */
+    private static String reportFailedRecipient(MAPIMessage message) {
+        var details = message.getRecipientDetailsChunks();
+        if (details == null) {
+            return null;
+        }
+        var limit = Math.min(details.length, MAX_RECIPIENTS);
+        String firstWithAddress = null;
+        for (var index = 0; index < limit; index++) {
+            var address = resolveRecipientAddress(details[index]);
+            if (address == null || address.isBlank()) {
+                continue;
+            }
+            var type = readRecipientType(details[index]);
+            if (type != null && type == EmlSerializer.RECIPIENT_TYPE_TO) {
+                return address;
+            }
+            if (firstWithAddress == null) {
+                firstWithAddress = address;
+            }
+        }
+        return firstWithAddress;
+    }
+
+    /**
+     * The DSN {@code Status} {@code d.d.d} code (rfc3464 §2.3.4). MAPI does not store the field
+     * verbatim, so it is recovered, in order of preference, from: the enhanced status code embedded
+     * in {@code PidTagSupplementaryInfo} text (the most precise source), then a sane class-derived
+     * default ({@code 5.0.0} for a permanent {@code .NDR} failure, {@code 2.0.0} for a {@code .DR}
+     * success). The supplementary text itself never becomes the status — it is free-form and would
+     * violate the {@code DIGIT "." 1*3DIGIT "." 1*3DIGIT} grammar.
+     */
+    private static String reportStatusCode(MAPIMessage message, String supplementaryInfo, boolean failed) {
+        var fromText = extractStatusCode(supplementaryInfo);
+        if (fromText != null) {
+            return fromText;
+        }
+        var reportText = readMainStringById(message, 0x1001); // PidTagReportText
+        var fromReport = extractStatusCode(reportText);
+        if (fromReport != null) {
+            return fromReport;
+        }
+        return failed ? "5.0.0" : "2.0.0";
+    }
+
+    /**
+     * Extracts the first {@code d.d.d} enhanced-status token (rfc3464 §2.3.4 grammar) embedded in
+     * free-form report/diagnostic text — Outlook commonly writes it as {@code "... #5.1.1 ..."}.
+     * Returns {@code null} when the text holds no such token.
+     */
+    private static String extractStatusCode(String text) {
+        if (text == null) {
+            return null;
+        }
+        var matcher = STATUS_CODE_PATTERN.matcher(text);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    /**
+     * Normalizes a stored {@code In-Reply-To}/{@code References} value to the angle-bracketed msg-id
+     * list RFC 5322 §3.6.4 requires, mirroring how {@link EmlSerializer#setMessageId} normalizes
+     * {@code Message-ID}. The value is a whitespace-separated list of message ids; an already-bracketed
+     * token is kept verbatim and a bare token is wrapped in {@code <...>}, then the tokens are rejoined
+     * with a single space. Per rfc5322 §3.6.4 a {@code msg-id} is an {@code addr-spec} (it must contain
+     * an {@code "@"}), so a token without one is free text some clients store in the field rather than a
+     * real id — it is dropped instead of being turned into a bogus {@code <token>}. Returns an empty
+     * string when no token is a usable msg-id (the caller then omits the header).
+     */
+    private static String angleBracketMessageIds(String value) {
+        var ids = new ArrayList<String>();
+        for (var token : value.trim().split("\\s+")) {
+            if (token.isEmpty()) {
+                continue;
+            }
+            var inner = token.startsWith("<") ? token.substring(1) : token;
+            inner = inner.endsWith(">") ? inner.substring(0, inner.length() - 1) : inner;
+            if (inner.contains("@")) {
+                ids.add("<" + inner + ">");
+            }
+        }
+        return String.join(" ", ids);
     }
 
     /**
@@ -934,6 +1074,11 @@ public final class MsgToEmlConverter {
         return propertyId >= 0 && readFixedValueById(message, propertyId) instanceof Number number
                 ? number.doubleValue()
                 : null;
+    }
+
+    private static Integer readNamedLong(MAPIMessage message, ClassID propertySet, long lid) {
+        var propertyId = namedPropertyId(message, propertySet, null, lid);
+        return propertyId >= 0 ? readMainLong(message, propertyId) : null;
     }
 
     private static byte[] readNamedBytes(MAPIMessage message, ClassID propertySet, long lid) {
@@ -1041,8 +1186,16 @@ public final class MsgToEmlConverter {
                 var chunks = details[index];
                 var type = readRecipientType(chunks);
                 if (type != null && type == wantedType) {
-                    serializer.addRecipient(wantedType, chunks.getRecipientName(), resolveRecipientAddress(chunks));
-                    found = true;
+                    var name = chunks.getRecipientName();
+                    var address = resolveRecipientAddress(chunks);
+                    // Only treat the row as a usable recipient (and so suppress the PR_DISPLAY_* fallback)
+                    // when it actually yields a name or address; a type-matching but empty row would
+                    // otherwise leave the header blank while skipping the display-string fallback that
+                    // could still populate it.
+                    if ((name != null && !name.isBlank()) || (address != null && !address.isBlank())) {
+                        serializer.addRecipient(wantedType, name, address);
+                        found = true;
+                    }
                 }
             }
             if (found) return;
@@ -1187,6 +1340,29 @@ public final class MsgToEmlConverter {
             }
         }
         return null;
+    }
+
+    /**
+     * RFC 5546 §3.2.3: a meeting-response REPLY is addressed to the meeting ORGANIZER, which Outlook
+     * stores as the response's primary (To) recipient. Prefer the first resolvable To-type recipient
+     * over the first recipient row, so a Cc'd delegate on the response is not promoted to ORGANIZER.
+     * Falls back to the first attendee when no To recipient carries an address.
+     */
+    private static ICalendarGenerator.Attendee pickReplyMeetingOrganizer(
+            RecipientChunks[] details, List<ICalendarGenerator.Attendee> fallback) {
+        if (details != null) {
+            var limit = Math.min(details.length, MAX_RECIPIENTS);
+            for (var index = 0; index < limit; index++) {
+                var type = readRecipientType(details[index]);
+                if (type != null && type == EmlSerializer.RECIPIENT_TYPE_TO) {
+                    var address = resolveRecipientAddress(details[index]);
+                    if (address != null && !address.isBlank()) {
+                        return new ICalendarGenerator.Attendee(details[index].getRecipientName(), address);
+                    }
+                }
+            }
+        }
+        return fallback.get(0);
     }
 
     private static Integer readRecipientType(RecipientChunks chunks) {

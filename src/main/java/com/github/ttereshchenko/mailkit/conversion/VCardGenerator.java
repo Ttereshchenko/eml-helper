@@ -68,35 +68,61 @@ public final class VCardGenerator {
     /** Builds the vCard; a contact with no usable name still yields a structurally valid card. */
     public static String generate(Contact contact) {
         var card = new StringBuilder();
-        card.append("BEGIN:VCARD\r\n");
-        card.append("VERSION:3.0\r\n");
+        appendFolded(card, "BEGIN:VCARD");
+        appendFolded(card, "VERSION:3.0");
         var formattedName = contact.displayName != null && !contact.displayName.isBlank()
                 ? contact.displayName.trim()
                 : joinNonBlank(contact.givenName, contact.surname);
-        card.append("FN:").append(escape(formattedName)).append("\r\n");
-        card.append("N:")
-                .append(escape(blankToEmpty(contact.surname)))
-                .append(';')
-                .append(escape(blankToEmpty(contact.givenName)))
-                .append(";;;\r\n");
+        appendFolded(card, "FN:" + escape(formattedName));
+        appendFolded(
+                card,
+                "N:" + escape(blankToEmpty(contact.surname)) + ';' + escape(blankToEmpty(contact.givenName)) + ";;;");
         if (contact.company != null && !contact.company.isBlank()) {
-            card.append("ORG:").append(escape(contact.company.trim())).append("\r\n");
+            appendFolded(card, "ORG:" + escape(contact.company.trim()));
         }
         if (contact.jobTitle != null && !contact.jobTitle.isBlank()) {
-            card.append("TITLE:").append(escape(contact.jobTitle.trim())).append("\r\n");
+            appendFolded(card, "TITLE:" + escape(contact.jobTitle.trim()));
         }
         for (var email : contact.emails) {
-            card.append("EMAIL;TYPE=internet:").append(escape(email)).append("\r\n");
+            appendFolded(card, "EMAIL;TYPE=internet:" + escape(email));
         }
         for (var phone : contact.phonesByType.entrySet()) {
-            card.append("TEL;TYPE=")
-                    .append(phone.getKey())
-                    .append(':')
-                    .append(escape(phone.getValue()))
-                    .append("\r\n");
+            appendFolded(card, "TEL;TYPE=" + phone.getKey() + ':' + escape(phone.getValue()));
         }
-        card.append("END:VCARD\r\n");
+        appendFolded(card, "END:VCARD");
         return card.toString();
+    }
+
+    /**
+     * Appends one content line, folded at 75 octets of UTF-8 (RFC 6350 §3.2 / RFC 2426 §2.6 measure
+     * octets, not chars) with a continuation {@code CRLF + SPACE}, never splitting inside a code point
+     * (a fold between the halves of a surrogate pair would corrupt the character).
+     */
+    private static void appendFolded(StringBuilder card, String line) {
+        var octets = 0;
+        var index = 0;
+        while (index < line.length()) {
+            var codePoint = line.codePointAt(index);
+            var width = utf8Width(codePoint);
+            if (octets + width > 75) {
+                card.append("\r\n ");
+                octets = 1; // the folding space counts toward the continuation line's 75 octets
+            }
+            card.appendCodePoint(codePoint);
+            octets += width;
+            index += Character.charCount(codePoint);
+        }
+        card.append("\r\n");
+    }
+
+    private static int utf8Width(int codePoint) {
+        if (codePoint < 0x80) {
+            return 1;
+        }
+        if (codePoint < 0x800) {
+            return 2;
+        }
+        return codePoint < 0x10000 ? 3 : 4;
     }
 
     private static String joinNonBlank(String first, String second) {

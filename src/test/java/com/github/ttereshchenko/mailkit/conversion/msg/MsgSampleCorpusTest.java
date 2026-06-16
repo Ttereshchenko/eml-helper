@@ -238,6 +238,49 @@ class MsgSampleCorpusTest {
         assertTrue(invite.contains("DTSTART;VALUE=DATE:20221211"), invite);
     }
 
+    // finding 5: the meeting-REQUEST path (ORGANIZER/ATTENDEE/RRULE) on the MSG side. The fixture is an
+    // IPM.Schedule.Meeting.Request, so method() yields REQUEST and the recurring series, organizer and
+    // attendee all survive into the iTIP object (RFC 5546). Fixture: Aspose (recurring meeting request).
+    @Test
+    void meetingRequestInviteCarriesOrganizerAttendeeAndRecurrence() throws Exception {
+        var eml = convert("aspose_meeting_recurring.msg");
+        // method=REQUEST lives on the attachment part's Content-Type, in the body — not the top headers.
+        assertTrue(unfold(eml).contains("method=REQUEST"), eml);
+        var invite = decodedBase64Attachment(eml, "invite.ics");
+        assertTrue(invite.contains("METHOD:REQUEST"), invite);
+        assertTrue(invite.contains("BEGIN:VEVENT"), invite);
+        // The organizer is the Exchange-DN sender (IMCEA-encapsulated) and the single attendee is the
+        // SMTP recipient — the two distinct iTIP roles a REQUEST carries.
+        assertTrue(invite.contains("ORGANIZER;CN=\"Kashif Iqbal\":mailto:"), invite);
+        assertTrue(invite.contains("ATTENDEE;CN=\"asposeemail test3\":mailto:asposeemail.test3@aspose.com"), invite);
+        // PidLidAppointmentRecur -> RRULE: a weekly Monday/Thursday series ([MS-OXOCAL] §2.2.1.44.1).
+        assertTrue(invite.contains("RRULE:FREQ=WEEKLY;INTERVAL=1;WKST=SU;BYDAY=MO,TH"), invite);
+        assertTrue(invite.contains("LOCATION:10 Down Street\\, NY\\, USA"), invite);
+        assertTrue(invite.contains("SUMMARY:Meeting with Recurring Occurrences"), invite);
+    }
+
+    // A meeting RESPONSE (IPM.Schedule.Meeting.Resp.Pos) exports a METHOD:REPLY invite carrying the
+    // responder's PARTSTAT. The vendored fixture lists a Cc'd delegate BEFORE the To organizer in the
+    // recipient table, so it also guards the organizer-selection fix (RFC 5546 §3.2.3): the ORGANIZER
+    // must be the To recipient, not merely the first recipient row. No license-clean public meeting-
+    // response .msg exists, so the fixture is synthesized in-repo via MsgFixtureBuilder.
+    @Test
+    void meetingResponseInviteCarriesPartstatAndNamesToRecipientAsOrganizer() throws Exception {
+        var eml = convert("meeting_response_accepted.msg");
+        assertTrue(unfold(eml).contains("method=REPLY"), eml);
+        // iCal folds long lines as CRLF + a single WSP (rfc5545 §3.1); unfold so addresses stay intact.
+        var invite =
+                decodedBase64Attachment(eml, "invite.ics").replace("\r\n ", "").replace("\r\n\t", "");
+        assertTrue(invite.contains("METHOD:REPLY"), invite);
+        assertTrue(
+                invite.contains("ORGANIZER;CN=\"Meeting Organizer\":mailto:organizer@example.com"),
+                "ORGANIZER must be the To recipient, not the Cc'd delegate listed first: " + invite);
+        assertFalse(invite.contains("delegate@example.com"), "the Cc delegate is not the organizer: " + invite);
+        assertTrue(
+                invite.contains("ATTENDEE;CN=\"Responding Attendee\";PARTSTAT=ACCEPTED:mailto:responder@example.com"),
+                "the REPLY's single ATTENDEE is the responder carrying PARTSTAT: " + invite);
+    }
+
     // N7: contacts gain a contact.vcf and tasks a task.ics VTODO — parity with the PST pipeline.
     @Test
     void contactExportsVcard() throws Exception {
@@ -254,8 +297,10 @@ class MsgSampleCorpusTest {
         var eml = convert("msgClassTask.msg");
         var todo = decodedBase64Attachment(eml, "task.ics");
         assertTrue(todo.contains("BEGIN:VTODO"), todo);
-        assertTrue(todo.contains("DTSTART:20170219T000000Z"), todo);
-        assertTrue(todo.contains("DUE:20170310T000000Z"), todo);
+        // Outlook stores the task start/due as midnight-UTC date-only values, so rfc5545 §3.3.4
+        // requires VALUE=DATE rather than a T000000Z DATE-TIME (which would shift the day west of UTC).
+        assertTrue(todo.contains("DTSTART;VALUE=DATE:20170219"), todo);
+        assertTrue(todo.contains("DUE;VALUE=DATE:20170310"), todo);
         assertTrue(todo.contains("SUMMARY:Must jump over the lazy dog"), todo);
     }
 

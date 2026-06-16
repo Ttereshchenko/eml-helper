@@ -17,6 +17,7 @@ import com.github.ttereshchenko.mailkit.pst.Message;
 import com.github.ttereshchenko.mailkit.pst.NodeEntry;
 import com.github.ttereshchenko.mailkit.pst.PstFile;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import java.io.IOException;
 import java.io.StringWriter;
@@ -406,6 +407,10 @@ public final class PstToEmlConverter {
                     stats.recoveredOrphans++;
                 }
                 knownMessages.add(nid);
+            } catch (ProcessCanceledException canceled) {
+                // As in the folder walk: cancellation must propagate, not be counted as a failed
+                // recovery and logged as a spurious error.
+                throw canceled;
             } catch (Exception exception) {
                 stats.failedMessages++;
                 log.error("Failed to recover message " + nid + ": " + describeFailure(exception));
@@ -477,6 +482,15 @@ public final class PstToEmlConverter {
         String folderName;
         try {
             folder = new Folder(pstFile, folderNid);
+            // The Folder constructor swallows a read failure into loadError rather than throwing, so an
+            // unreadable folder must be detected explicitly here — otherwise it would silently create an
+            // empty directory, lose its messages, and be counted as a success. (Its messages still
+            // classify as Recovered, not Orphaned, because folderNid is already in `visited`.)
+            if (!folder.isLoaded()) {
+                log.error("Failed to read folder " + folderNid + ": " + describeFailure(folder.getLoadError()));
+                stats.failedFolders++;
+                return;
+            }
             folderName = folder.getDisplayName();
             if (folderName == null || folderName.isBlank() || folderName.startsWith("Unknown")) {
                 folderName = "Folder_" + folderNid;
@@ -611,6 +625,12 @@ public final class PstToEmlConverter {
                     var serializer = createSerializer(message, options, pstFile, 0, log, stats);
                     writeSerializerAtomically(serializer, emlFile);
                     stats.converted++;
+                } catch (ProcessCanceledException canceled) {
+                    // The progress indicator's checkCanceled() throws ProcessCanceledException (a
+                    // RuntimeException via CancellationException); the action layer expects it to
+                    // propagate so the cancel is graceful. Rethrow before the generic catch so it is
+                    // not swallowed, counted as a failed message, and logged as a spurious failure.
+                    throw canceled;
                 } catch (Exception exception) {
                     stats.failedMessages++;
                     // Track failures separately; do not pop notifications per failure to avoid spam.
@@ -893,13 +913,26 @@ public final class PstToEmlConverter {
                 List<ICalendarGenerator.Attendee> eventAttendees = attendees;
                 if ("REPLY".equals(method)) {
                     // RFC 5546 §3.2.3: a meeting-response REPLY flows from the responding ATTENDEE to the
-                    // ORGANIZER and carries that attendee's PARTSTAT. In the stored response the responder
-                    // is the sender and the meeting organizer is the (single) recipient, so the two roles
-                    // swap relative to a REQUEST and the PARTSTAT (ACCEPTED/DECLINED/TENTATIVE) attaches to
-                    // the responding attendee. (attendees is non-empty — method() returns REPLY only then.)
-                    var meetingOrganizer = attendees.get(0);
-                    organizerName = meetingOrganizer.name();
-                    organizerEmail = meetingOrganizer.email();
+                    // ORGANIZER and carries that attendee's PARTSTAT, so the two roles swap relative to a
+                    // REQUEST. The responder is the sender (fromName/fromEmail). The ORGANIZER is the
+                    // original meeting organizer — in the stored response that is the message's To
+                    // recipient (PR_RECIPIENT_TYPE = TO), NOT simply the first recipient row: a response
+                    // CC'd to delegates or other attendees would otherwise pick a non-organizer (and the
+                    // real organizer would be lost). Fall back to the first usable recipient only when no
+                    // explicit To recipient carries an address.
+                    var meetingOrganizer = recipients.stream()
+                            .filter(recipient -> recipient.type == EmlSerializer.RECIPIENT_TYPE_TO
+                                    && recipient.email != null
+                                    && !recipient.email.isBlank())
+                            .findFirst()
+                            .orElseGet(() -> recipients.stream()
+                                    .filter(recipient -> recipient.email != null && !recipient.email.isBlank())
+                                    .findFirst()
+                                    .orElse(null));
+                    if (meetingOrganizer != null) {
+                        organizerName = meetingOrganizer.name;
+                        organizerEmail = meetingOrganizer.email;
+                    }
                     eventAttendees = List.of(new ICalendarGenerator.Attendee(
                             fromName, fromEmail, ICalendarGenerator.responsePartStat(msgClass)));
                 }
@@ -927,6 +960,10 @@ public final class PstToEmlConverter {
                     }
                 }
 
+                Integer sequenceId = pstFile.namedPropertyId(PSETID_APPOINTMENT, 0x8201); // PidLidAppointmentSequence
+                int sequence = sequenceId != null && message.getProperty(sequenceId) instanceof Number sequenceValue
+                        ? sequenceValue.intValue()
+                        : 0;
                 String ical = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
                         method,
                         Date.from(start),
@@ -939,7 +976,8 @@ public final class PstToEmlConverter {
                         eventAttendees,
                         allDay,
                         timeZone,
-                        recurrence));
+                        recurrence,
+                        sequence));
                 serializer.addAttachment(
                         "invite.ics",
                         "text/calendar; charset=UTF-8; method=" + method,
@@ -1012,6 +1050,10 @@ public final class PstToEmlConverter {
                     embedSerializer.writeTo(stringWriter);
                     if (!attachName.toLowerCase(Locale.ROOT).endsWith(".eml")) attachName += ".eml";
                     serializer.addEmbeddedMessage(attachName, stringWriter.toString());
+                } catch (ProcessCanceledException canceled) {
+                    // Never demote a cancellation to a failed-attachment count; let it unwind so the
+                    // whole conversion stops (mirrors the per-message guard in processFolderContents).
+                    throw canceled;
                 } catch (Exception exception) {
                     stats.failedAttachments++;
                     log.error("Failed to extract embedded message '" + attachName + "': " + describeFailure(exception));

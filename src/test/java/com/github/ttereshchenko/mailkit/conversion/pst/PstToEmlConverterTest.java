@@ -12,9 +12,12 @@ import com.github.ttereshchenko.mailkit.pst.MapiProperties;
 import com.github.ttereshchenko.mailkit.pst.Message;
 import com.github.ttereshchenko.mailkit.pst.NodeEntry;
 import com.github.ttereshchenko.mailkit.pst.PstFile;
+import com.intellij.openapi.progress.ProcessCanceledException;
+import com.intellij.openapi.progress.util.ProgressIndicatorBase;
 import java.io.StringWriter;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
@@ -1260,9 +1263,9 @@ class PstToEmlConverterTest {
                                 .group(1)),
                 java.nio.charset.StandardCharsets.UTF_8);
         assertTrue(ics.contains("BEGIN:VTIMEZONE"), ics);
-        assertTrue(ics.contains("DTSTART;TZID=MailKit-Local:20160802T080000"), ics);
+        assertTrue(ics.contains("DTSTART;TZID=MailKit/UTC-0800_DST-0700_0302-1101:20160802T080000"), ics);
         assertTrue(ics.contains("RRULE:FREQ=WEEKLY;INTERVAL=1;WKST=SU;BYDAY=TU"), ics);
-        assertTrue(ics.contains("EXDATE;TZID=MailKit-Local:20160809T080000"), ics);
+        assertTrue(ics.contains("EXDATE;TZID=MailKit/UTC-0800_DST-0700_0302-1101:20160809T080000"), ics);
     }
 
     /**
@@ -1955,6 +1958,187 @@ class PstToEmlConverterTest {
         }
     }
 
+    /**
+     * Release-readiness regression (appointment REPLY organizer): on a meeting-response REPLY the
+     * ORGANIZER is the original meeting organizer — the response's To recipient (RFC 5546 §3.2.3) —
+     * not blindly the first recipient row. A response CC'd to another attendee that precedes the
+     * organizer in the recipient table must still name the To recipient as ORGANIZER, and the CC'd
+     * attendee must not be promoted to organizer (which would also drop the real organizer).
+     */
+    @Test
+    void meetingResponseOrganizerIsToRecipientNotFirstRecipient() throws Exception {
+        var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
+        try (var pstFile = new PstFile(distListPst)) {
+            var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
+            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Schedule.Meeting.Resp.Pos";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Accepted: Sync";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Bob";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "bob@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // PR_RECIPIENT_TYPE: 1 = To, 2 = Cc. A CC'd attendee (Carol) deliberately precedes
+                    // the To recipient (Alice, the real organizer) in the table; the old code picked
+                    // recipients.get(0) -> Carol.
+                    return List.of(
+                            new Recipient(2, "Carol", "carol@example.com"),
+                            new Recipient(1, "Alice", "alice@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    if (propertyId == startId) {
+                        return Instant.parse("2026-07-01T15:00:00Z");
+                    }
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            var icsMatcher = Pattern.compile("(?s)name=\"invite\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                    .matcher(eml);
+            assertTrue(icsMatcher.find(), "invite.ics must be present: " + eml);
+            var ics = new String(Base64.getMimeDecoder().decode(icsMatcher.group(1)), StandardCharsets.UTF_8);
+
+            assertTrue(ics.contains("METHOD:REPLY"), "method must be REPLY: " + ics);
+
+            var organizerLine = ics.lines()
+                    .filter(line -> line.startsWith("ORGANIZER"))
+                    .findFirst()
+                    .orElse("");
+            assertTrue(
+                    organizerLine.contains("alice@example.com"),
+                    "ORGANIZER must be the To recipient (the meeting organizer), got: " + organizerLine);
+            assertFalse(
+                    organizerLine.contains("carol@example.com"),
+                    "ORGANIZER must not be the CC'd attendee Carol: " + organizerLine);
+
+            // The responding attendee (the sender) must survive with its PARTSTAT, and Carol must not
+            // have been silently dropped or promoted into the organizer role.
+            var attendeeLines =
+                    ics.lines().filter(line -> line.startsWith("ATTENDEE")).toList();
+            assertTrue(
+                    attendeeLines.stream().anyMatch(line -> line.contains("bob@example.com")),
+                    "responding attendee Bob must be present: " + ics);
+            assertTrue(
+                    attendeeLines.stream().anyMatch(line -> line.contains("PARTSTAT=ACCEPTED")),
+                    "responding attendee must carry PARTSTAT=ACCEPTED: " + ics);
+        }
+    }
+
+    /**
+     * Companion to the role-swap regression: with only the organizer in the To field (the common
+     * single-recipient response shape) the organizer is still the To recipient and the responder is
+     * the attendee — the prior {@code attendees.get(0)} path and the To-recipient path must agree here.
+     */
+    @Test
+    void meetingResponseSingleToRecipientStillNamesOrganizer() throws Exception {
+        var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
+        try (var pstFile = new PstFile(distListPst)) {
+            var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
+            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Schedule.Meeting.Resp.Tent";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Tentative: Sync";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Bob";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "bob@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // PR_RECIPIENT_TYPE 1 = To (the meeting organizer on a response).
+                    return List.of(new Recipient(1, "Alice", "alice@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    if (propertyId == startId) {
+                        return Instant.parse("2026-07-01T15:00:00Z");
+                    }
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var ics = new String(
+                    Base64.getMimeDecoder()
+                            .decode(Pattern.compile("(?s)name=\"invite\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                                    .matcher(writer.toString())
+                                    .results()
+                                    .findFirst()
+                                    .orElseThrow()
+                                    .group(1)),
+                    StandardCharsets.UTF_8);
+
+            assertTrue(ics.contains("METHOD:REPLY"), "method must be REPLY: " + ics);
+            var organizerLine = ics.lines()
+                    .filter(line -> line.startsWith("ORGANIZER"))
+                    .findFirst()
+                    .orElse("");
+            assertTrue(organizerLine.contains("alice@example.com"), "ORGANIZER must be Alice: " + organizerLine);
+            assertTrue(ics.contains("PARTSTAT=TENTATIVE"), "PARTSTAT must be TENTATIVE for Resp.Tent: " + ics);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // TaskRequest METHOD
     // -----------------------------------------------------------------------
@@ -2126,6 +2310,56 @@ class PstToEmlConverterTest {
                     log.infos.stream()
                             .anyMatch(info -> info.contains("No specialized handler for message class IPM.Document")),
                     () -> "Expected a downgrade note for IPM.Document, got: " + log.infos);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Cancellation propagation (release blocker)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Release-readiness regression: the progress indicator's {@code checkCanceled()} throws a
+     * {@link ProcessCanceledException} (a {@code RuntimeException} via {@code CancellationException}).
+     * The per-message and per-folder loops wrap each item in a generic {@code catch (Exception)}, so
+     * before the fix the cancellation was swallowed — counted as a failed message and logged as a
+     * spurious failure — and the conversion kept running, never reaching the action layer that
+     * handles cancellation gracefully. Driving the package-private {@code processFolder} entry point
+     * (the same loop {@code convert} walks), the {@code ProcessCanceledException} must propagate out
+     * unchanged, the walk must stop early (fewer than all messages converted), and no canceled item
+     * may be counted as a failure.
+     */
+    @Test
+    void cancellationPropagatesOutOfConvertAndIsNotCountedAsFailure() throws Exception {
+        var multiMessagePst = Paths.get("src/test/resources/samples/pst/testPST_variousBodyTypes.pst");
+        var tempDir = Files.createTempDirectory("pst_cancel");
+        try (var pstFile = new PstFile(multiMessagePst)) {
+            // Arms cancellation after the first message: the loop calls checkCanceled() then setText()
+            // per message, so setText fires once for message #1 (converting it), arms cancel, and the
+            // final checkCanceled() guarding message #2 then throws — exercising mid-walk cancellation.
+            var indicator = new ProgressIndicatorBase() {
+                @Override
+                public void setText(String text) {
+                    super.setText(text);
+                    cancel();
+                }
+            };
+            var stats = new PstToEmlConverter.Stats();
+
+            var thrown = org.junit.jupiter.api.Assertions.assertThrows(
+                    ProcessCanceledException.class,
+                    () -> PstToEmlConverter.processFolder(
+                            pstFile, 0x122, tempDir, defaultOptions(), stats, indicator, "", ConversionLog.NOOP),
+                    "checkCanceled()'s ProcessCanceledException must propagate, not be swallowed");
+            org.junit.jupiter.api.Assertions.assertNotNull(thrown);
+
+            assertEquals(
+                    0,
+                    stats.failedMessages(),
+                    "A cancellation must not be miscounted as a failed message: " + stats.failedMessages());
+            assertTrue(
+                    stats.converted() < 4,
+                    "The walk must stop early on cancellation rather than convert all four messages, got "
+                            + stats.converted());
         }
     }
 

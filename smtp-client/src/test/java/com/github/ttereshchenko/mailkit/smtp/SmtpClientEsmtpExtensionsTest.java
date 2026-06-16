@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import com.github.ttereshchenko.mailkit.smtp.fake.FakeSmtpServer;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 class SmtpClientEsmtpExtensionsTest {
@@ -26,6 +27,58 @@ class SmtpClientEsmtpExtensionsTest {
                 assertEquals(SmtpException.Kind.MAIL_REJECTED, failure.kind());
                 assertTrue(failure.getMessage().contains("SIZE"), failure.getMessage());
             }
+        }
+    }
+
+    @Test
+    void sizePreflightUsesWireLengthSoAnLfOnlyMessageUnderTheRawLimitIsStillRejected() throws Exception {
+        // rfc1870 §6: the SIZE preflight must reflect the bytes actually transmitted. The body is
+        // 10 bytes on disk (LF-only) but 12 bytes on the wire once each LF is normalized to CRLF.
+        // Against an advertised "SIZE 11" the raw length (10) would pass — the old, buggy check —
+        // but the true wire length (12) exceeds the limit and must be refused before MAIL.
+        try (var server = FakeSmtpServer.builder()
+                .expect("EHLO ", "250-fake.local", "250 SIZE 11")
+                .start()) {
+            var config = SmtpConfig.defaults("127.0.0.1").withPort(server.port());
+            try {
+                new SmtpClient()
+                        .send(
+                                config,
+                                SmtpEnvelope.of("from@example.com", "to@example.com"),
+                                MessageSource.ofBytes("aaaa\nbbbb\n".getBytes(StandardCharsets.UTF_8)));
+                fail("expected MAIL_REJECTED: wire length 12 exceeds advertised SIZE 11");
+            } catch (SmtpException failure) {
+                assertEquals(SmtpException.Kind.MAIL_REJECTED, failure.kind());
+                assertTrue(failure.getMessage().contains("12"), failure.getMessage());
+            }
+        }
+    }
+
+    @Test
+    void declaredSizeOnMailIsTheCrlfWireLengthNotTheRawLength() throws Exception {
+        // rfc1870 §4: SIZE=<n> is the estimate of the transmitted message. An LF-only "hi\n" is 3
+        // raw bytes but 4 on the wire ("hi\r\n"), so the MAIL FROM parameter must declare SIZE=4.
+        try (var server = FakeSmtpServer.builder()
+                .expect("EHLO ", "250-fake.local", "250 SIZE 1048576")
+                .expect("MAIL FROM:", "250 OK")
+                .expect("RCPT TO:", "250 OK")
+                .expect("DATA", "354 go")
+                .expectData("250 queued")
+                .expect("QUIT", "221 bye")
+                .start()) {
+            var config = SmtpConfig.defaults("127.0.0.1").withPort(server.port());
+
+            new SmtpClient()
+                    .send(
+                            config,
+                            SmtpEnvelope.of("from@example.com", "to@example.com"),
+                            MessageSource.ofBytes("hi\n".getBytes(StandardCharsets.UTF_8)));
+
+            var mailLine = server.receivedLines().stream()
+                    .filter(line -> line.startsWith("MAIL FROM:"))
+                    .findFirst()
+                    .orElseThrow();
+            assertTrue(mailLine.contains("SIZE=4"), "declared size must be the CRLF wire length, not raw: " + mailLine);
         }
     }
 
