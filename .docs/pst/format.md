@@ -59,11 +59,12 @@ the 2013 column is parser-only where marked **(no spec)**.
 | BTENTRY (branch) entry size | 8 | 16 | 16 | §2.2.2.7.7.2 | `NodeDatabase` SIBLOCK/branch |
 | BBT/NBT leaf entry size | 12 | 24 | 24 | §2.2.2.7.7.3 / .4 | `NodeDatabase` SLBLOCK/leaf |
 | XBLOCK child-entry size | 4 | 8 | 8 | §2.2.2.8.3.2.1 | `NodeDatabase` XBLOCK |
-| 2013 compressed-block inflated size | — | — | `getInt(offset+24)` **(no spec)** | — | `NodeDatabase` (`isCompressedBlock`) |
+| 2013 compressed-block inflated size (`cbInflated`) | — | — | `getShort(offset+18)` uint16 **(no spec)** | — | `NodeDatabase.getBlock` |
 
 > **Outlook 2013+ specifics that bite (all parser-only):** 4 KB pages, the 2-byte
 > entry count in the BTPAGE trailer at `4056`, and **block-level compression**
-> (`isCompressedBlock`, inflated via the 4096-byte inner buffer path). ANSI vs
+> (a block is treated as zlib-compressed when its `cbInflated` uint16 at entry
+> `+18` differs from `cb`; inflated via `NodeDatabase.tryDecompress`). ANSI vs
 > Unicode differences ARE in spec: pointer width (`§2.2.1.2`) and the 12- vs
 > 16-byte block trailer (`§2.2.2.8.1`).
 

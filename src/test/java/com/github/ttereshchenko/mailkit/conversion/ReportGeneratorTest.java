@@ -1,7 +1,9 @@
 package com.github.ttereshchenko.mailkit.conversion;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.ttereshchenko.mailkit.conversion.ReportGenerator.Report;
@@ -56,8 +58,31 @@ class ReportGeneratorTest {
         assertTrue(body.contains("Final-Recipient: rfc822; user@example.com"), body);
         assertTrue(body.contains("Action: failed"), body);
         assertTrue(body.contains("Status: 5.1.1"), body);
-        // diagnosticCode is not lowercased; the smtp; prefix comes from prefixed().
-        assertTrue(body.contains("Diagnostic-Code: smtp; smtp; 550 User unknown"), body);
+        // diagnosticCode already carries its own "smtp;" type token, so prefixed() must NOT add a second
+        // one (rfc3464 §2.3.6: the field is <type> ";" <text>).
+        assertTrue(body.contains("Diagnostic-Code: smtp; 550 User unknown"), body);
+        assertFalse(body.contains("smtp; smtp;"), "the type token must not be doubled: " + body);
+    }
+
+    @Test
+    void diagnosticWithoutTypeIsPrefixedAndStatusLeadingZerosAreStripped() {
+        var report = generate(new ReportInfo(
+                true,
+                "Delivery failed.",
+                "mail.example.com",
+                "user@example.com",
+                "failed",
+                "5.01.001",
+                "550 mailbox full",
+                null,
+                null));
+
+        var body = report.body();
+        // A bare diagnostic with no type token still gets the smtp; qualifier...
+        assertTrue(body.contains("Diagnostic-Code: smtp; 550 mailbox full"), body);
+        // ...and a non-canonical status with leading-zero sub-fields is normalized (rfc3464 §2.3.4).
+        assertTrue(body.contains("Status: 5.1.1"), body);
+        assertFalse(body.contains("5.01.001"), body);
     }
 
     @Test
@@ -362,6 +387,45 @@ class ReportGeneratorTest {
         } catch (NullPointerException expected) {
             // correct
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enhanced status code (rfc3464 §2.3.4) — shared by the MSG and PST report paths
+    // -----------------------------------------------------------------------
+
+    @Test
+    void statusCodeExtractsEmbeddedEnhancedCode() {
+        // A d.d.d token mined from free-form text is preferred over any class default.
+        assertEquals("5.1.1", ReportGenerator.statusCode(true, "Delivery failed: #5.1.1 user unknown", null));
+    }
+
+    @Test
+    void statusCodeFallsBackToClassDefault() {
+        // No embedded code: a permanent failure defaults to 5.0.0, a success to 2.0.0.
+        assertEquals("5.0.0", ReportGenerator.statusCode(true, "no code here", null));
+        assertEquals("2.0.0", ReportGenerator.statusCode(false, null, "still nothing"));
+    }
+
+    @Test
+    void statusCodePrefersFirstCandidateThatCarriesACode() {
+        assertEquals("4.4.7", ReportGenerator.statusCode(true, "queued 4.4.7", "later 5.5.0"));
+    }
+
+    @Test
+    void extractStatusCodeIgnoresNonStatusNumbers() {
+        // A version/date (leading digit not 2/4/5) must not be mistaken for an enhanced status code.
+        assertNull(ReportGenerator.extractStatusCode("build 1.2.3 dated 2026.06.16"));
+        assertEquals("5.1.1", ReportGenerator.extractStatusCode("oops 5.1.1 here"));
+    }
+
+    @Test
+    void extractStatusCodeIgnoresVersionAndBuildNumbers() {
+        // Audit: a 2/4/5 class digit *inside* a longer dotted number — an Exchange version/build banner
+        // like "15.2.1544.5" — must not be mined as a fabricated status (5.2.154). The token boundaries
+        // reject it, while a genuine standalone code in the same text is still extracted.
+        assertNull(ReportGenerator.extractStatusCode("Generating server: EXCH 15.2.1544.5"));
+        assertNull(ReportGenerator.extractStatusCode("agent 14.3.123.4 build"));
+        assertEquals("5.1.1", ReportGenerator.extractStatusCode("550 5.1.1 User unknown (15.2.1544.5)"));
     }
 
     // -----------------------------------------------------------------------

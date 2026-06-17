@@ -13,10 +13,15 @@ import java.util.regex.Pattern;
  */
 public final class HtmlMetaCharset {
 
-    // Keys on the charset= attribute/parameter: group 1 is everything up to the value, group 2 the
-    // charset token itself (replaced with UTF-8).
+    // Keys on the charset= attribute/parameter. The lookbehind requires charset to be preceded by a
+    // real separator (whitespace, ';', or a quote) so an unrelated attribute that merely ends in
+    // "charset" (e.g. data-charset=) is not rewritten. Groups 1+2 are everything up to the value,
+    // group 3 the charset token itself (replaced with UTF-8). The value class also stops at ';' — the
+    // MIME parameter separator (rfc2045 §5.1) — so a multi-parameter Content-Type
+    // ("text/html; charset=windows-1250; format=flowed") keeps the ';' after the rewritten charset
+    // instead of swallowing it and merging the following parameter.
     private static final Pattern META_CHARSET =
-            Pattern.compile("(?i)(<meta\\s[^>]*?charset\\s*=\\s*[\"']?)([^\"'\\s/>]+)");
+            Pattern.compile("(?i)(<meta\\s[^>]*?)(?<=[\\s;\"'])(charset\\s*=\\s*[\"']?)([^\"'\\s;/>]+)");
 
     private HtmlMetaCharset() {}
 
@@ -35,6 +40,6 @@ public final class HtmlMetaCharset {
         if (!matcher.find()) {
             return html;
         }
-        return matcher.replaceAll("$1UTF-8");
+        return matcher.replaceAll("$1$2UTF-8");
     }
 }

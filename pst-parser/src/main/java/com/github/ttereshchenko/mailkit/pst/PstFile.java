@@ -90,6 +90,8 @@ public final class PstFile implements AutoCloseable {
     // Lazily read store-wide default code page (message store object); resolved at most once.
     private boolean storeCodePageResolved;
     private Integer storeCodePage;
+    private boolean passwordProtectedResolved;
+    private boolean passwordProtected;
 
     /**
      * Opens the PST/OST file at the given path with the {@linkplain #DEFAULT_MAX_NODE_SIZE default}
@@ -232,20 +234,28 @@ public final class PstFile implements AutoCloseable {
     }
 
     /**
-     * Whether the store carries an Outlook password (PidTagPstPassword). The "password" is only a
-     * CRC kept in the message store object — the content is not encrypted with it — so this library
-     * reads protected stores normally; the flag is surfaced for callers that want to warn.
-     *
-     * @throws IOException if the message store object cannot be read
+     * The property id this store assigned to a string-named property, identified by its property-set
+     * GUID and name (e.g. {@code PS_PUBLIC_STRINGS} / {@code "Keywords"}), or {@code null} if the store
+     * defines no such named property.
      */
-    public boolean isPasswordProtected() throws IOException {
-        var storeNode = nodeDatabase.getNode(NID_MESSAGE_STORE);
-        if (storeNode == null) {
-            return false;
+    public Integer namedPropertyId(UUID propertySetGuid, String name) {
+        return nameToIdMap().getId(propertySetGuid, name);
+    }
+
+    public synchronized boolean isPasswordProtected() throws IOException {
+        if (!passwordProtectedResolved) {
+            var storeNode = nodeDatabase.getNode(NID_MESSAGE_STORE);
+            if (storeNode != null) {
+                var propertyContext =
+                        new PropertyContext(nodeDatabase.readNodeData(storeNode.dataBid()), nodeDatabase, storeNode);
+                passwordProtected =
+                        propertyContext.getProperty(MapiProperties.PR_PST_PASSWORD) instanceof Integer crc && crc != 0;
+            }
+            // Set only after a successful read so a transient I/O failure (which still propagates) is
+            // retried on the next call rather than cached as "not protected".
+            passwordProtectedResolved = true;
         }
-        var propertyContext =
-                new PropertyContext(nodeDatabase.readNodeData(storeNode.dataBid()), nodeDatabase, storeNode);
-        return propertyContext.getProperty(MapiProperties.PR_PST_PASSWORD) instanceof Integer crc && crc != 0;
+        return passwordProtected;
     }
 
     /**

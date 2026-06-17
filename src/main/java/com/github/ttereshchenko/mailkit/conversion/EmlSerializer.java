@@ -117,9 +117,22 @@ public final class EmlSerializer {
         addAttachment(filename, mimeType, data, contentId, null, isInline);
     }
 
+    /**
+     * Adds an embedded {@code message/rfc822} part whose body is the already-serialized child message
+     * as raw bytes. The bytes are emitted verbatim (see {@link #appendAttachmentPart}), so a nested
+     * clear-signed S/MIME entity carrying 8-bit octets keeps its signature; callers must serialize the
+     * child via {@link #writeTo(OutputStream)} (not a char sink) to obtain byte-exact input.
+     */
+    public void addEmbeddedMessage(String filename, byte[] nestedEml) {
+        if (nestedEml != null && nestedEml.length > 0) {
+            attachments.add(new Attachment(filename, "message/rfc822", null, nestedEml, null, null, false));
+        }
+    }
+
+    /** Convenience overload for a text embedded message; the string is encoded as UTF-8. */
     public void addEmbeddedMessage(String filename, String nestedEml) {
         if (nestedEml != null && !nestedEml.isEmpty()) {
-            attachments.add(new Attachment(filename, "message/rfc822", null, nestedEml, null, null, false));
+            addEmbeddedMessage(filename, nestedEml.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -354,7 +367,7 @@ public final class EmlSerializer {
 
         if (mixedParts.isEmpty()) {
             // Only inline parts: the whole message is a multipart/related.
-            appendRelated(out, relatedParts);
+            appendRelated(out, relatedParts, rawBodyEmitter);
             return;
         }
 
@@ -368,7 +381,7 @@ public final class EmlSerializer {
         if (!bodies.isEmpty() || !relatedParts.isEmpty()) {
             appendBoundary(out, rootBoundary, false);
             if (!relatedParts.isEmpty()) {
-                appendRelated(out, relatedParts);
+                appendRelated(out, relatedParts, rawBodyEmitter);
             } else {
                 appendBodyEntity(out);
             }
@@ -376,7 +389,7 @@ public final class EmlSerializer {
 
         for (var part : mixedParts) {
             appendBoundary(out, rootBoundary, false);
-            appendAttachmentPart(out, part);
+            appendAttachmentPart(out, part, rawBodyEmitter);
         }
         appendBoundary(out, rootBoundary, true);
     }
@@ -385,7 +398,9 @@ public final class EmlSerializer {
     private void appendBodyEntity(Writer writer) throws IOException {
         if (bodies.size() <= 1) {
             var body = bodies.isEmpty() ? new Body("", "text/plain; charset=UTF-8") : bodies.get(0);
-            writer.append("Content-Type: ").append(body.contentType).append(CRLF);
+            writer.append("Content-Type: ")
+                    .append(stripLineBreaks(body.contentType))
+                    .append(CRLF);
             writer.append("Content-Transfer-Encoding: quoted-printable").append(CRLF);
             writer.append(CRLF);
             writer.append(quotedPrintableEncode(bodyTextForOutput(body)));
@@ -398,7 +413,9 @@ public final class EmlSerializer {
             writer.append(CRLF);
             for (var body : bodies) {
                 appendBoundary(writer, altBoundary, false);
-                writer.append("Content-Type: ").append(body.contentType).append(CRLF);
+                writer.append("Content-Type: ")
+                        .append(stripLineBreaks(body.contentType))
+                        .append(CRLF);
                 writer.append("Content-Transfer-Encoding: quoted-printable").append(CRLF);
                 writer.append(CRLF);
                 writer.append(quotedPrintableEncode(bodyTextForOutput(body)));
@@ -408,7 +425,8 @@ public final class EmlSerializer {
     }
 
     /** Writes a multipart/related entity: the body followed by the inline parts. */
-    private void appendRelated(Writer writer, List<Attachment> relatedParts) throws IOException {
+    private void appendRelated(Writer writer, List<Attachment> relatedParts, RawBodyEmitter rawBodyEmitter)
+            throws IOException {
         var relatedBoundary = uniqueBoundary("MAILKIT_REL_");
         writer.append("Content-Type: multipart/related; boundary=\"")
                 .append(relatedBoundary)
@@ -422,7 +440,7 @@ public final class EmlSerializer {
         appendBodyEntity(writer);
         for (var part : relatedParts) {
             appendBoundary(writer, relatedBoundary, false);
-            appendAttachmentPart(writer, part);
+            appendAttachmentPart(writer, part, rawBodyEmitter);
         }
         appendBoundary(writer, relatedBoundary, true);
     }
@@ -437,15 +455,29 @@ public final class EmlSerializer {
         }
         var contentType = bodies.get(0).contentType;
         var parameterStart = contentType.indexOf(';');
-        return (parameterStart < 0 ? contentType : contentType.substring(0, parameterStart)).trim();
+        return stripLineBreaks((parameterStart < 0 ? contentType : contentType.substring(0, parameterStart)).trim());
     }
 
-    private static void appendAttachmentPart(Writer writer, Attachment part) throws IOException {
+    private static void appendAttachmentPart(Writer writer, Attachment part, RawBodyEmitter rawBodyEmitter)
+            throws IOException {
         writer.append(part.headers());
         writer.append(CRLF);
-        writer.append(part.encodedBody());
-        if (!part.encodedBody().endsWith(CRLF)) {
-            writer.append(CRLF);
+        if (part.nestedEml() != null) {
+            // Embedded message/rfc822: emit the child's bytes verbatim through the raw-body emitter so a
+            // nested clear-signed S/MIME entity keeps its 8-bit octets (and thus its signature) — routing
+            // them through the char writer would re-encode every octet >= 0x80. The terminating CRLF is
+            // written through the tracking writer so the next boundary's leading-CRLF accounting is correct.
+            var nested = part.nestedEml();
+            rawBodyEmitter.emit(nested);
+            if (nested.length == 0 || nested[nested.length - 1] != '\n') {
+                writer.append(CRLF);
+            }
+        } else {
+            var encoded = part.encodedBody();
+            writer.append(encoded);
+            if (!encoded.endsWith(CRLF)) {
+                writer.append(CRLF);
+            }
         }
     }
 
@@ -472,6 +504,33 @@ public final class EmlSerializer {
             bracketed = bracketed + ">";
         }
         return bracketed;
+    }
+
+    /**
+     * Normalizes a whitespace-separated {@code msg-id} list (the MAPI {@code In-Reply-To}/{@code
+     * References} values, which Outlook stores unbracketed) into RFC 5322 §3.6.4 form: an
+     * already-bracketed token is kept verbatim and a bare token is wrapped in {@code <...>}, then the
+     * tokens are rejoined with a single space. Per §3.6.4 a {@code msg-id} is an {@code addr-spec} (it
+     * must contain an {@code "@"}), so a token without one is free text some clients store in the field
+     * rather than a real id — it is dropped instead of being turned into a bogus {@code <token>}. Returns
+     * an empty string when no token is a usable msg-id (the caller then omits the header).
+     */
+    public static String normalizeMessageIdList(String value) {
+        if (value == null) {
+            return "";
+        }
+        var ids = new ArrayList<String>();
+        for (var token : value.trim().split("\\s+")) {
+            if (token.isEmpty()) {
+                continue;
+            }
+            var inner = token.startsWith("<") ? token.substring(1) : token;
+            inner = inner.endsWith(">") ? inner.substring(0, inner.length() - 1) : inner;
+            if (inner.contains("@")) {
+                ids.add("<" + inner + ">");
+            }
+        }
+        return String.join(" ", ids);
     }
 
     static String quotedPrintableEncode(String text) {
@@ -915,7 +974,8 @@ public final class EmlSerializer {
         // Base64 attachment bodies cannot contain the boundary, but an embedded message/rfc822 part is
         // written as raw 8bit EML and could, so scan those too for the deterministic guarantee to hold.
         for (var attachment : attachments) {
-            if (attachment.nestedEml() != null && attachment.nestedEml().contains(candidate)) {
+            if (attachment.nestedEml() != null
+                    && new String(attachment.nestedEml(), StandardCharsets.ISO_8859_1).contains(candidate)) {
                 return true;
             }
         }
@@ -1060,17 +1120,13 @@ public final class EmlSerializer {
 
     private record Recipient(int type, String name, String email) {}
 
-    private record Body(String text, String contentType) {
-        byte[] utf8Bytes() {
-            return text.getBytes(StandardCharsets.UTF_8);
-        }
-    }
+    private record Body(String text, String contentType) {}
 
     private record Attachment(
             String filename,
             String mimeType,
             byte[] data,
-            String nestedEml,
+            byte[] nestedEml,
             String contentId,
             String contentLocation,
             boolean isInline) {
@@ -1144,25 +1200,26 @@ public final class EmlSerializer {
             return headers.toString();
         }
 
-        /** True when any line exceeds the RFC 5322 §2.1.1 hard limit of 998 octets (excluding CRLF). */
-        private static boolean hasLineOverLimit(String content) {
+        /**
+         * True when any line of the embedded message exceeds the RFC 5322 §2.1.1 hard limit of 998
+         * octets (excluding CRLF). The embedded message is held as raw bytes, so each line is measured
+         * directly in octets between line breaks.
+         */
+        private static boolean hasLineOverLimit(byte[] content) {
             var lineStart = 0;
-            for (var index = 0; index < content.length(); index++) {
-                var character = content.charAt(index);
-                if (character == '\n' || character == '\r') {
+            for (var index = 0; index < content.length; index++) {
+                var octet = content[index];
+                if (octet == '\n' || octet == '\r') {
                     if (index - lineStart > MAX_HEADER_LINE_LENGTH) {
                         return true;
                     }
                     lineStart = index + 1;
                 }
             }
-            return content.length() - lineStart > MAX_HEADER_LINE_LENGTH;
+            return content.length - lineStart > MAX_HEADER_LINE_LENGTH;
         }
 
         String encodedBody() {
-            if (nestedEml != null) {
-                return nestedEml;
-            }
             return encodeBase64Wrapped(data);
         }
     }

@@ -36,6 +36,11 @@ public class Message {
 
     private static final System.Logger LOG = System.getLogger(Message.class.getName());
 
+    // {\*\htmltag<N> …} groups: a leading numeric token (the de-encapsulation index) is stripped, and a
+    // group that is only that number carries no content. Compiled once rather than per RTF token.
+    private static final Pattern HTMLTAG_LEADING_INDEX = Pattern.compile("^\\d+\\s*");
+    private static final Pattern HTMLTAG_DIGITS_ONLY = Pattern.compile("\\d+");
+
     private static final int NID_ATTACHMENT_TABLE = 0x0671;
     private static final int NID_RECIPIENT_TABLE = 0x0692;
 
@@ -342,10 +347,10 @@ public class Message {
                 int end = findGroupEnd(rtf, index);
                 if (end != -1) {
                     String tag = rtf.substring(index + 11, end).trim();
-                    tag = tag.replaceFirst("^\\d+\\s*", "");
+                    tag = HTMLTAG_LEADING_INDEX.matcher(tag).replaceFirst("");
                     if (tag.equals("\\par")) {
                         html.append("\r\n");
-                    } else if (!tag.matches("\\d+")) {
+                    } else if (!HTMLTAG_DIGITS_ONLY.matcher(tag).matches()) {
                         html.append(decodeHtmlTagContent(tag, charsetName));
                     }
                     index = end + 1;
@@ -639,7 +644,7 @@ public class Message {
         if (propertyContext != null
                 && propertyContext.getProperty(MapiProperties.PR_RTF_COMPRESSED) instanceof byte[] compressed) {
             try {
-                return trimAsciiWhitespace(LzFu.decodeToBytes(compressed));
+                return CompressedRtf.decompressToBytes(compressed);
             } catch (RuntimeException exception) {
                 LOG.log(
                         System.Logger.Level.DEBUG,
@@ -648,19 +653,6 @@ public class Message {
             }
         }
         return new byte[0];
-    }
-
-    /** Trims leading and trailing bytes &le; 0x20, mirroring {@link String#trim()} over a low-byte charset. */
-    private static byte[] trimAsciiWhitespace(byte[] data) {
-        var start = 0;
-        var end = data.length;
-        while (start < end && (data[start] & 0xFF) <= 0x20) {
-            start++;
-        }
-        while (end > start && (data[end - 1] & 0xFF) <= 0x20) {
-            end--;
-        }
-        return start == 0 && end == data.length ? data : Arrays.copyOfRange(data, start, end);
     }
 
     /**

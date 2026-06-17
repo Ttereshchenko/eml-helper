@@ -84,6 +84,15 @@ class RtfStripperTest {
         assertEquals("€Done", RtfStripper.strip(rtf));
     }
 
+    @Test
+    void unicodeSkipCountIsGroupScopedInStrip() {
+        // \\ucN is a group-scoped property: a \\uc0 set inside {...} must revert at the closing brace, so
+        // the \\u8364 *after* the group still skips its one ANSI fallback char. The pre-fix stripper let
+        // the \\uc0 leak past the brace, leaving the trailing '?' in the output (€X€?Y).
+        var rtf = "{\\rtf1\\ansi{\\uc0\\u8364}X\\u8364?Y}";
+        assertEquals("€X€Y", RtfStripper.strip(rtf));
+    }
+
     // \binN introduces exactly N bytes of raw binary picture data (RTF spec / [MS-OXRTFCP]
     // §2.1.3.1.5) that are NOT RTF text. The pre-fix stripper consumed only the \binN control word
     // and then leaked the N raw bytes into the plain-text output.
@@ -189,5 +198,54 @@ class RtfStripperTest {
     void deEncapsulationDecodesNegativeSurrogatePairs() {
         var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1\\uc1 \\u-10179?\\u-8704?}");
         assertEquals("😀", html);
+    }
+
+    // A DBCS or UTF-8 (\ansicpg65001) code page stores one character as several consecutive \'hh
+    // bytes; the pre-fix stripper decoded each byte alone, turning one character into U+FFFD / '?'
+    // mojibake. The run must be decoded as a single byte sequence.
+    @Test
+    void decodesMultiByteUtf8HexEscapeRun() {
+        // \ansicpg65001 is UTF-8: U+4E2D (中) is the three bytes E4 B8 AD.
+        var rtf = "{\\rtf1\\ansi\\ansicpg65001 \\'e4\\'b8\\'ad}";
+        assertEquals("中", RtfStripper.strip(rtf));
+    }
+
+    @Test
+    void decodesMultiByteDbcsHexEscapeRun() {
+        // \ansicpg936 is GBK: U+4E2D (中) is the two bytes D6 D0; per-byte decoding yields '?' mojibake.
+        var rtf = "{\\rtf1\\ansi\\ansicpg936 \\'d6\\'d0}";
+        assertEquals("中", RtfStripper.strip(rtf));
+    }
+
+    @Test
+    void deEncapsulationDecodesMultiByteUtf8Run() {
+        // A recovered HTML body carries non-ASCII as consecutive \'hh bytes in the declared code page.
+        var html = RtfStripper.deEncapsulateHtml(
+                "{\\rtf1\\ansi\\ansicpg65001\\fromhtml1 {\\*\\htmltag84 <p>}\\'e4\\'b8\\'ad{\\*\\htmltag92 </p>}}");
+        assertEquals("<p>中</p>", html);
+    }
+
+    @Test
+    void htmlTagContentDecodesMultiByteUtf8Run() {
+        // The same multibyte run can appear inside a {\*\htmltag ...} attribute value.
+        var html = RtfStripper.deEncapsulateHtml(
+                "{\\rtf1\\ansi\\ansicpg65001\\fromhtml1 {\\*\\htmltag84 <p title=\"\\'e4\\'b8\\'ad\">}x{\\*\\htmltag92 </p>}}");
+        assertEquals("<p title=\"中\">x</p>", html);
+    }
+
+    // F8 (audit follow-up): \htmlrtf is RTF group-scoped — a toggle set inside a {group} must be
+    // restored at the group's closing brace and not suppress text that follows it.
+    @Test
+    void htmlRtfSuppressionIsGroupScoped() {
+        var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1 A{\\htmlrtf B}C}");
+        assertEquals("AC", html);
+    }
+
+    // F9 (audit follow-up): a \\uN escape inside a {\*\htmltag ...} run honors the active \\ucN fallback
+    // count instead of a hardcoded 1, so surplus fallback bytes do not leak into the recovered tag text.
+    @Test
+    void htmlTagUnicodeFallbackHonorsActiveUcCount() {
+        var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1\\uc2 {\\*\\htmltag84 \\u8364XX<b>}done}");
+        assertEquals("€<b>done", html);
     }
 }

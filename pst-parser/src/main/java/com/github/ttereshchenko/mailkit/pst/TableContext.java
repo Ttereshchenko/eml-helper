@@ -235,6 +235,15 @@ class TableContext {
         var existenceBitmap = new byte[bitmapLength];
         if (existenceBitmapOffset + bitmapLength <= rowData.length) {
             System.arraycopy(rowData, existenceBitmapOffset, existenceBitmap, 0, bitmapLength);
+        } else {
+            // The CEB does not fit the row, so it is left all-zero and every cell of this row reads as
+            // absent. Warn so a corrupt existenceBitmapOffset/rowWidth (both from the untrusted TCINFO
+            // header) is diagnosable rather than presenting as invisible whole-row data loss.
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    () -> "Cell existence bitmap (offset " + existenceBitmapOffset + ", length " + bitmapLength
+                            + ") does not fit the " + rowData.length + "-byte row; all cells of row " + rowId
+                            + " were dropped");
         }
 
         for (var column : columns) {

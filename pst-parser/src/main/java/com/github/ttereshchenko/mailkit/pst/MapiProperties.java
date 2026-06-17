@@ -34,6 +34,12 @@ public final class MapiProperties {
     public static final int PR_CLIENT_SUBMIT_TIME = 0x0039;
 
     /**
+     * Whether the sender requested a read receipt (PT_BOOLEAN).
+     * EML alternative: The "Disposition-Notification-To:" header (rfc8098).
+     */
+    public static final int PR_READ_RECEIPT_REQUESTED = 0x0029;
+
+    /**
      * The internet message ID.
      * EML alternative: The "Message-ID:" header.
      */

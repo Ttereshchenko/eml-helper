@@ -2,6 +2,7 @@ package com.github.ttereshchenko.mailkit.pst;
 
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -132,11 +133,6 @@ public class Folder {
         return displayName;
     }
 
-    /**
-     * The sub-folders listed in this folder's hierarchy table; empty if it has none.
-     *
-     * @throws PstException if the hierarchy table exists but cannot be parsed
-     */
     public List<Folder> getSubFolders() throws PstException {
         List<Folder> subFolders = new ArrayList<>();
         int hierarchyNid = (nid & ~0x1F) | 0x0D; // NID_TYPE_HIERARCHY_TABLE
@@ -150,10 +146,25 @@ public class Folder {
             byte[] data = nodeDatabase.readNodeData(node.dataBid());
             var tableContext = new TableContext(data, nodeDatabase, node);
 
+            var seen = new HashSet<Integer>();
             for (Map<Integer, Object> row : tableContext.getRows()) {
-                // The RowID in the Hierarchy table is the NID of the subfolder
+                // The RowID in the Hierarchy table is the NID of the subfolder.
                 if (row.get(MapiProperties.PidTagLtpRowId) instanceof Integer rowNid) {
-                    subFolders.add(new Folder(pstFile, rowNid));
+                    // A hierarchy table that lists this folder as its own child, or the same child twice,
+                    // is corrupt: passing it on would make a depth-first walk recurse forever or duplicate
+                    // work. The parser owns the folder graph, so drop the trivial self-loop and any
+                    // duplicate child here; deeper A->B->A cycles are caught by the recursive caller, which
+                    // tracks the folder NIDs already on its path.
+                    if (rowNid == nid) {
+                        LOG.log(
+                                System.Logger.Level.WARNING,
+                                () -> "Folder node " + nid
+                                        + " lists itself as a sub-folder; skipping the self-reference");
+                        continue;
+                    }
+                    if (seen.add(rowNid)) {
+                        subFolders.add(new Folder(pstFile, rowNid));
+                    }
                 }
             }
         } catch (PstException exception) {

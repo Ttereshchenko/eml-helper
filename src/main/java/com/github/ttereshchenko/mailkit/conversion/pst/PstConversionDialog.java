@@ -12,6 +12,8 @@ import com.intellij.ui.SimpleListCellRenderer;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBTextField;
 import com.intellij.util.ui.FormBuilder;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import javax.swing.JComboBox;
@@ -113,6 +115,14 @@ public class PstConversionDialog extends DialogWrapper {
     protected @Nullable ValidationInfo doValidate() {
         if (targetDirectoryField.getText().trim().isEmpty()) {
             return new ValidationInfo("Choose a target directory", targetDirectoryField);
+        }
+        try {
+            var target = Paths.get(targetDirectoryField.getText().trim());
+            if (Files.exists(target) && !Files.isDirectory(target)) {
+                return new ValidationInfo("Target must be a directory, not a file", targetDirectoryField);
+            }
+        } catch (InvalidPathException ignored) {
+            return new ValidationInfo("Target directory path is not valid", targetDirectoryField);
         }
         var limitText = messageCountLimitField.getText().trim();
         if (!limitText.isEmpty()) {

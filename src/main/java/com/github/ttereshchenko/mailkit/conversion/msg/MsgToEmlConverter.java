@@ -1,6 +1,7 @@
 package com.github.ttereshchenko.mailkit.conversion.msg;
 
 import com.github.ttereshchenko.mailkit.conversion.AppointmentRecurrence;
+import com.github.ttereshchenko.mailkit.conversion.AttachmentBudget;
 import com.github.ttereshchenko.mailkit.conversion.ConversionException;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
@@ -11,12 +12,12 @@ import com.github.ttereshchenko.mailkit.conversion.RtfStripper;
 import com.github.ttereshchenko.mailkit.conversion.SmimeEntityHoist;
 import com.github.ttereshchenko.mailkit.conversion.VCardGenerator;
 import com.github.ttereshchenko.mailkit.conversion.WindowsTimeZone;
+import com.github.ttereshchenko.mailkit.pst.CompressedRtf;
 import com.github.ttereshchenko.mailkit.pst.Message;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.StringWriter;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -29,7 +30,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Pattern;
 import org.apache.poi.hpsf.ClassID;
 import org.apache.poi.hsmf.MAPIMessage;
 import org.apache.poi.hsmf.datatypes.AttachmentChunks;
@@ -70,9 +70,10 @@ public final class MsgToEmlConverter {
     // truncated rather than failing the conversion of an otherwise valid message.
     private static final int MAX_RECIPIENTS = 2048;
 
-    // A genuine (non-HTML-encapsulated) RTF body is preserved as a body.rtf attachment in this
-    // charset — the LzFu decode POI performs is a lossless windows-1252 round-trip. Mirrors the PST
-    // converter's body.rtf export.
+    // windows-1252 is the legacy fallback charset: it backs a body.rtf attachment only when the raw
+    // PR_RTF_COMPRESSED chunk is unavailable (the faithful path decompresses that chunk to exact bytes
+    // via CompressedRtf), and is the default code page when a message declares none. Mirrors the PST
+    // converter.
     private static final Charset RTF_CHARSET = Charset.forName("windows-1252");
 
     // Named-property sets ([MS-OXPROPS] §1.3.2) resolved through the message's __nameid mapping.
@@ -80,11 +81,6 @@ public final class MsgToEmlConverter {
     private static final ClassID PSETID_TASK = new ClassID("{00062003-0000-0000-C000-000000000046}");
     private static final ClassID PSETID_ADDRESS = new ClassID("{00062004-0000-0000-C000-000000000046}");
     private static final ClassID PS_PUBLIC_STRINGS = new ClassID("{00020329-0000-0000-C000-000000000046}");
-
-    // An RFC 3464 §2.3.4 enhanced-status code (class.subject.detail) embedded in free-form report
-    // text — Outlook writes it inline, e.g. "... #5.1.1 ...". The class digit is constrained to 2/4/5
-    // so a date or version string in the diagnostic text is not mistaken for a status code.
-    private static final Pattern STATUS_CODE_PATTERN = Pattern.compile("([245]\\.\\d{1,3}\\.\\d{1,3})");
 
     private MsgToEmlConverter() {}
 
@@ -153,6 +149,13 @@ public final class MsgToEmlConverter {
 
     static EmlSerializer convert(MAPIMessage message, int depth, ConversionLog log)
             throws IOException, ChunkNotFoundException {
+        // Each top-level message gets a fresh attachment budget; the recursive overload threads the
+        // same instance through embedded messages so the caps bound the whole tree (see AttachmentBudget).
+        return convert(message, depth, log, new AttachmentBudget());
+    }
+
+    private static EmlSerializer convert(MAPIMessage message, int depth, ConversionLog log, AttachmentBudget budget)
+            throws IOException, ChunkNotFoundException {
         if (depth > MAX_EMBEDDED_DEPTH) {
             // Mirror the PST converter: emit a stub rather than throwing, so an over-deep nested
             // message truncates gracefully instead of failing the entire parent conversion.
@@ -176,6 +179,10 @@ public final class MsgToEmlConverter {
         if (details != null && details.length > MAX_RECIPIENTS) {
             log.error("Message has " + details.length + " recipients; exporting only the first " + MAX_RECIPIENTS);
         }
+
+        // The legacy code page for this message's non-Unicode one-off strings (reply-to entries and
+        // distribution-list members), applied only where MAE_UNICODE is clear; defaults to windows-1252.
+        var ansiCharset = resolveMessageAnsiCharset(message);
 
         var serializer = new EmlSerializer();
 
@@ -220,14 +227,14 @@ public final class MsgToEmlConverter {
         // serializer normalizes Message-ID instead of emitting the bare values.
         var inReplyTo = readMainString(message, MAPIProperty.IN_REPLY_TO_ID);
         if (inReplyTo != null && !inReplyTo.isBlank()) {
-            var normalized = angleBracketMessageIds(inReplyTo);
+            var normalized = EmlSerializer.normalizeMessageIdList(inReplyTo);
             if (!normalized.isEmpty()) {
                 serializer.addCustomHeader("In-Reply-To", normalized);
             }
         }
         var references = readMainString(message, MAPIProperty.INTERNET_REFERENCES);
         if (references != null && !references.isBlank()) {
-            var normalized = angleBracketMessageIds(references);
+            var normalized = EmlSerializer.normalizeMessageIdList(references);
             if (!normalized.isEmpty()) {
                 serializer.addCustomHeader("References", normalized);
             }
@@ -241,7 +248,7 @@ public final class MsgToEmlConverter {
             serializer.setScl(spamConfidenceLevel);
         }
 
-        populateMapiHeaders(message, serializer, from);
+        populateMapiHeaders(message, serializer, from, ansiCharset);
 
         var messageClass = readMessageClass(message);
         if (messageClass != null
@@ -257,8 +264,9 @@ public final class MsgToEmlConverter {
         // REPORT.* messages (NDR/DSN and read/non-read receipts) become an RFC 6522 multipart/report
         // so the structured delivery-status / disposition-notification survives instead of being
         // flattened to a plain body.
-        if (messageClass != null && messageClass.startsWith("REPORT.")) {
-            emitReport(message, messageClass, serializer);
+        if (messageClass != null
+                && messageClass.startsWith("REPORT.")
+                && emitReport(message, messageClass, serializer)) {
             return serializer;
         }
 
@@ -266,7 +274,7 @@ public final class MsgToEmlConverter {
         // the PST pipeline. Fall back to the regular body pass when no members decode.
         var distListBody = messageClass != null
                 && messageClass.startsWith("IPM.DistList")
-                && populateDistributionList(message, serializer);
+                && populateDistributionList(message, serializer, ansiCharset);
         if (!distListBody) {
             populateBodies(message, serializer, log);
         }
@@ -279,7 +287,7 @@ public final class MsgToEmlConverter {
             log.info("No specialized handler for message class " + messageClass + "; exported as a generic message");
         }
 
-        populateAttachments(message, depth, serializer, log);
+        populateAttachments(message, depth, serializer, log, budget);
 
         return serializer;
     }
@@ -315,7 +323,7 @@ public final class MsgToEmlConverter {
             if (!recovered.isBlank()) {
                 serializer.addBody(HtmlMetaCharset.rewriteToUtf8(recovered), "text/html; charset=UTF-8");
             } else {
-                serializer.addAttachment("body.rtf", "application/rtf", rtfText.getBytes(RTF_CHARSET), null, false);
+                serializer.addAttachment("body.rtf", "application/rtf", rawRtfBytes(message, rtfText), null, false);
             }
             return;
         }
@@ -328,7 +336,30 @@ public final class MsgToEmlConverter {
                 serializer.addBody(stripped, "text/plain; charset=UTF-8");
             }
         }
-        serializer.addAttachment("body.rtf", "application/rtf", rtfText.getBytes(RTF_CHARSET), null, false);
+        serializer.addAttachment("body.rtf", "application/rtf", rawRtfBytes(message, rtfText), null, false);
+    }
+
+    /**
+     * The byte-faithful RTF for a {@code body.rtf} attachment: the raw {@code PR_RTF_COMPRESSED} chunk
+     * decompressed straight to bytes ([MS-OXRTFCP]), which preserves every octet of the RTF stream.
+     * POI's only RTF accessor ({@link MAPIMessage#getRtfBody()}) returns a windows-1252 {@code String};
+     * re-encoding that maps the five byte values that code page leaves undefined to {@code '?'} and
+     * corrupts the attachment, so the compressed chunk is decoded independently — matching the PST
+     * path's {@link Message#getRawRtfBytes()}. Falls back to re-encoding {@code rtfText} only when the
+     * compressed chunk is unavailable.
+     */
+    private static byte[] rawRtfBytes(MAPIMessage message, String rtfText) {
+        var mainChunks = message.getMainChunks();
+        if (mainChunks != null) {
+            var rtfChunk = mainChunks.getRtfBodyChunk();
+            if (rtfChunk != null && rtfChunk.getValue() != null) {
+                var decoded = CompressedRtf.decompressToBytes(rtfChunk.getValue());
+                if (decoded.length > 0) {
+                    return decoded;
+                }
+            }
+        }
+        return rtfText.getBytes(RTF_CHARSET);
     }
 
     /** Supplies one body flavour from POI; the checked miss exception keeps the lambda references terse. */
@@ -352,7 +383,8 @@ public final class MsgToEmlConverter {
         }
     }
 
-    private static void populateAttachments(MAPIMessage message, int depth, EmlSerializer serializer, ConversionLog log)
+    private static void populateAttachments(
+            MAPIMessage message, int depth, EmlSerializer serializer, ConversionLog log, AttachmentBudget budget)
             throws IOException {
         var raw = message.getAttachmentFiles();
         if (raw == null || raw.length == 0) {
@@ -360,16 +392,38 @@ public final class MsgToEmlConverter {
         }
         var usedEmbeddedNames = new HashSet<String>();
         for (var chunks : raw) {
+            // Bound what a hostile .msg can buffer: EmlSerializer holds every part in memory before
+            // writing, so an unbounded count or aggregate size can OutOfMemoryError (which escapes the
+            // per-item catch below). The budget is shared with nested messages so the caps cover the
+            // whole tree, mirroring the PST converter.
+            if (budget.atCountLimit()) {
+                log.error("Message has more than " + AttachmentBudget.MAX_ATTACHMENT_COUNT
+                        + " attachments (including nested messages); remaining attachments were skipped");
+                break;
+            }
+            budget.recordAttachment();
             if (isEmbeddedMessageAttachment(chunks)) {
                 var embedded = chunks.getEmbeddedMessage();
-                String nestedEml;
+                byte[] nestedEml;
                 try {
-                    var stringWriter = new StringWriter();
-                    convert(embedded, depth + 1, log).writeTo(stringWriter);
-                    nestedEml = stringWriter.toString();
+                    // Serialize the child to BYTES (not a char sink): a nested clear-signed S/MIME entity
+                    // must reach the parent EML byte-for-byte or its signature breaks. EmlSerializer emits
+                    // these bytes through its byte-exact raw-body path.
+                    var nestedStream = new ByteArrayOutputStream();
+                    convert(embedded, depth + 1, log, budget).writeTo(nestedStream);
+                    nestedEml = nestedStream.toByteArray();
                 } catch (Exception failure) {
                     log.error("Failed to convert embedded message: " + failure.getMessage());
-                    nestedEml = "Subject: Error converting nested message\r\n\r\n" + failure.getMessage();
+                    nestedEml = ("Subject: Error converting nested message\r\n\r\n" + failure.getMessage())
+                            .getBytes(StandardCharsets.UTF_8);
+                }
+                // Count the serialized nested EML against the aggregate byte cap (its own nested-attachment
+                // bytes were already recorded during recursion; this also bounds the retained EML text and
+                // its base64 expansion).
+                if (budget.recordBytes(nestedEml.length)) {
+                    log.error("Message attachments exceed " + AttachmentBudget.maxTotalMegabytes()
+                            + " MB in aggregate (including nested messages); remaining attachments were skipped");
+                    break;
                 }
                 var subject = safeString(safeSubject(embedded));
                 var filename = uniqueEmbeddedName(subject.isBlank() ? "embedded" : subject, usedEmbeddedNames);
@@ -377,6 +431,18 @@ public final class MsgToEmlConverter {
                 serializer.addEmbeddedMessage(filename, nestedEml);
             } else {
                 var bytes = attachmentBytes(chunks, log);
+                var method = readAttachmentMethod(chunks);
+                if (bytes.length == 0 && method != null && method == 5) {
+                    // ATTACH_EMBEDDED_MSG (5) that isEmbeddedMessageAttachment() could not route because
+                    // the sub-storage is missing or unreadable; name the lost nested message rather than
+                    // leaving only attachmentBytes's generic "carries no data" note.
+                    log.error("Embedded message attachment has no readable storage; the nested message was lost");
+                }
+                if (budget.recordBytes(bytes.length)) {
+                    log.error("Message attachments exceed " + AttachmentBudget.maxTotalMegabytes()
+                            + " MB in aggregate (including nested messages); remaining attachments were skipped");
+                    break;
+                }
                 var filename = pickFilename(chunks);
                 if ((filename == null || filename.isBlank()) && chunks.getAttachmentDirectory() != null) {
                     // An OLE-embedded object (ATTACH_OLE) usually has no filename properties, only a
@@ -390,6 +456,9 @@ public final class MsgToEmlConverter {
                 var mime = pickMimeType(chunks);
                 var contentId = pickContentId(chunks);
                 var contentLocation = chunkValue(chunks.getAttachContentLocation());
+                // A Content-ID marks a part as an inline candidate; EmlSerializer demotes it to a
+                // regular attachment unless an HTML body actually references the cid (see writeTo),
+                // so an unreferenced cid never produces a stray multipart/related member.
                 boolean isInline = contentId != null;
 
                 log.info("Found attachment: " + filename + " (" + mime + ")");
@@ -563,7 +632,8 @@ public final class MsgToEmlConverter {
      * read-receipt request — the same set the PST pipeline emits. {@link EmlSerializer} skips each
      * one when a stored transport-header block already carries the same header, so none can double up.
      */
-    private static void populateMapiHeaders(MAPIMessage message, EmlSerializer serializer, MailboxIdentity from) {
+    private static void populateMapiHeaders(
+            MAPIMessage message, EmlSerializer serializer, MailboxIdentity from, Charset ansiCharset) {
         var importance = readMainLong(message, 0x0017); // PR_IMPORTANCE: 0 = low, 1 = normal, 2 = high
         if (importance != null && importance == 2) {
             serializer.addCustomHeader("Importance", "High");
@@ -600,7 +670,7 @@ public final class MsgToEmlConverter {
             var replyNames = readMainStringById(message, 0x0050);
             var replyTo = new ArrayList<String>();
             for (Message.Recipient recipient : Message.parseReplyRecipients(
-                    replyEntries, replyNames, RTF_CHARSET, Message.AddressPreference.PREFER_SMTP)) {
+                    replyEntries, replyNames, ansiCharset, Message.AddressPreference.PREFER_SMTP)) {
                 var formatted = EmlSerializer.formatAddress(recipient.name, recipient.email);
                 if (!formatted.isBlank()) {
                     replyTo.add(formatted);
@@ -701,24 +771,7 @@ public final class MsgToEmlConverter {
                         + " non-Gregorian); the invite carries the first occurrence only");
             }
         }
-        var attendees = new ArrayList<ICalendarGenerator.Attendee>();
-        var details = message.getRecipientDetailsChunks();
-        if (details != null) {
-            var limit = Math.min(details.length, MAX_RECIPIENTS);
-            for (var index = 0; index < limit; index++) {
-                // RFC 5546: ATTENDEE lists the meeting's visible participants. A BCC-class recipient is
-                // hidden from the other invitees, so excluding it keeps the iTIP object from leaking the
-                // blind copy into a property every attendee can read.
-                var type = readRecipientType(details[index]);
-                if (type != null && type == EmlSerializer.RECIPIENT_TYPE_BCC) {
-                    continue;
-                }
-                var address = resolveRecipientAddress(details[index]);
-                if (address != null && !address.isBlank()) {
-                    attendees.add(new ICalendarGenerator.Attendee(details[index].getRecipientName(), address));
-                }
-            }
-        }
+        var attendees = visibleAttendees(message);
         var method = ICalendarGenerator.method(messageClass, !attendees.isEmpty());
         var organizerName = organizer.name();
         var organizerEmail = organizer.email();
@@ -731,6 +784,7 @@ public final class MsgToEmlConverter {
             // single responding attendee. (attendees is non-empty — method() returns REPLY only then.)
             // Prefer the To recipient rather than the first row so a Cc'd delegate is not mistaken for
             // the organizer.
+            var details = message.getRecipientDetailsChunks();
             var meetingOrganizer = pickReplyMeetingOrganizer(details, attendees);
             organizerName = meetingOrganizer.name();
             organizerEmail = meetingOrganizer.email();
@@ -738,7 +792,7 @@ public final class MsgToEmlConverter {
                     organizer.name(), organizer.email(), ICalendarGenerator.responsePartStat(messageClass)));
         }
         var sequence = readNamedLong(message, PSETID_APPOINTMENT, 0x8201); // PidLidAppointmentSequence
-        var ical = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
+        var eventDetails = new ICalendarGenerator.EventDetails(
                 method,
                 start,
                 end,
@@ -751,10 +805,13 @@ public final class MsgToEmlConverter {
                 allDay,
                 timeZone,
                 recurrence,
-                sequence != null ? sequence : 0));
+                sequence != null ? sequence : 0);
+        var ical = ICalendarGenerator.generate(eventDetails);
         serializer.addAttachment(
                 "invite.ics",
-                "text/calendar; charset=UTF-8; method=" + method,
+                // Stamp method= with what generate() actually emitted: it downgrades to PUBLISH without a
+                // resolvable organizer/start, and the MIME method= must equal the body METHOD (rfc6047 §2.4).
+                "text/calendar; charset=UTF-8; method=" + ICalendarGenerator.effectiveMethod(eventDetails),
                 ical.getBytes(StandardCharsets.UTF_8),
                 null,
                 false);
@@ -801,6 +858,38 @@ public final class MsgToEmlConverter {
         var due = readNamedTime(message, PSETID_TASK, 0x8105); // PidLidTaskDueDate
         var percent = readNamedDouble(message, PSETID_TASK, 0x8102); // PidLidPercentComplete
         var complete = readNamedBoolean(message, PSETID_TASK, 0x811C); // PidLidTaskComplete
+        // RFC 5546 §3.4: a task REQUEST/REPLY carries an ORGANIZER and ATTENDEE(s). For a REQUEST the
+        // ORGANIZER is the assigner (sender) and the ATTENDEE(s) the assignee recipients. For a REPLY the
+        // roles swap (mirroring the meeting path): the ORGANIZER is the original assigner (the To
+        // recipient) and the single ATTENDEE is the responding sender, carrying the accept/decline
+        // PARTSTAT. A plain task keeps neither. effectiveTodoMethod downgrades to PUBLISH when the parties
+        // a scheduling object needs are missing.
+        String organizerName = null;
+        String organizerEmail = null;
+        List<ICalendarGenerator.Attendee> attendees = List.of();
+        if ("REQUEST".equals(method)) {
+            var assigner = resolveAuthorIdentity(message);
+            if (assigner.email() == null || assigner.email().isBlank()) {
+                assigner = resolveSenderIdentity(message);
+            }
+            organizerName = assigner.name();
+            organizerEmail = assigner.email();
+            attendees = visibleAttendees(message);
+        } else if ("REPLY".equals(method)) {
+            var responder = resolveAuthorIdentity(message);
+            if (responder.email() == null || responder.email().isBlank()) {
+                responder = resolveSenderIdentity(message);
+            }
+            var replyAttendees = visibleAttendees(message);
+            if (!replyAttendees.isEmpty()) {
+                var assigner = pickReplyMeetingOrganizer(message.getRecipientDetailsChunks(), replyAttendees);
+                organizerName = assigner.name();
+                organizerEmail = assigner.email();
+                attendees = List.of(new ICalendarGenerator.Attendee(
+                        responder.name(), responder.email(), ICalendarGenerator.taskResponsePartStat(messageClass)));
+            }
+            // else: no recipient identifies the assigner — leave participants empty to downgrade to PUBLISH.
+        }
         var todo = ICalendarGenerator.generateTodo(
                 safeString(safeSubject(message)),
                 readBody(message::getTextBody, "plain text", log),
@@ -808,13 +897,41 @@ public final class MsgToEmlConverter {
                 due,
                 percent,
                 complete,
-                method);
+                method,
+                organizerName,
+                organizerEmail,
+                attendees);
         serializer.addAttachment(
                 "task.ics",
-                "text/calendar; charset=UTF-8; method=" + method,
+                "text/calendar; charset=UTF-8; method="
+                        + ICalendarGenerator.effectiveTodoMethod(method, organizerEmail, attendees),
                 todo.getBytes(StandardCharsets.UTF_8),
                 null,
                 false);
+    }
+
+    /**
+     * The visible ATTENDEE list (RFC 5546) for a meeting or assigned-task scheduling object: every
+     * recipient with a resolvable address except BCC-class recipients, which are hidden from the other
+     * participants and must not leak into a property they can all read.
+     */
+    private static List<ICalendarGenerator.Attendee> visibleAttendees(MAPIMessage message) {
+        var attendees = new ArrayList<ICalendarGenerator.Attendee>();
+        var details = message.getRecipientDetailsChunks();
+        if (details != null) {
+            var limit = Math.min(details.length, MAX_RECIPIENTS);
+            for (var index = 0; index < limit; index++) {
+                var type = readRecipientType(details[index]);
+                if (type != null && type == EmlSerializer.RECIPIENT_TYPE_BCC) {
+                    continue;
+                }
+                var address = resolveRecipientAddress(details[index]);
+                if (address != null && !address.isBlank()) {
+                    attendees.add(new ICalendarGenerator.Attendee(details[index].getRecipientName(), address));
+                }
+            }
+        }
+        return attendees;
     }
 
     /**
@@ -870,12 +987,13 @@ public final class MsgToEmlConverter {
      * {@code PidLidDistributionListMembers}. Returns {@code false} when nothing decodes, so the caller
      * falls back to the regular body pass.
      */
-    private static boolean populateDistributionList(MAPIMessage message, EmlSerializer serializer) {
+    private static boolean populateDistributionList(
+            MAPIMessage message, EmlSerializer serializer, Charset ansiCharset) {
         var blobs = readNamedMultiBytes(message, PSETID_ADDRESS, 0x8054); // PidLidDistributionListOneOffMembers
         if (blobs.length == 0) {
             blobs = readNamedMultiBytes(message, PSETID_ADDRESS, 0x8055); // PidLidDistributionListMembers
         }
-        var members = DistributionListMembers.parse(blobs);
+        var members = DistributionListMembers.parse(blobs, ansiCharset);
         if (members.isEmpty()) {
             return false;
         }
@@ -904,8 +1022,16 @@ public final class MsgToEmlConverter {
      * {@code PidTagSupplementaryInfo} text becomes the {@code Diagnostic-Code} (rfc3464 §2.3.6) — it
      * is human-readable transport text and must not be fed into the strictly-formatted {@code Status}.
      */
-    private static void emitReport(MAPIMessage message, String messageClass, EmlSerializer serializer) {
+    private static boolean emitReport(MAPIMessage message, String messageClass, EmlSerializer serializer) {
         var deliveryReport = messageClass.endsWith(".NDR") || messageClass.endsWith(".DR");
+        // Only NDR/DR delivery reports and IPNRN/IPNNRN read receipts carry a structured status. Any
+        // other REPORT.* (delay/relay/etc.) is neither a DSN nor an MDN, so it must not be emitted as a
+        // disposition-notification claiming the message was "displayed" (rfc8098 §3.2.6). Decline it and
+        // let the caller fall back to the generic body.
+        var readReceipt = messageClass.endsWith(".IPNRN") || messageClass.endsWith(".IPNNRN");
+        if (!deliveryReport && !readReceipt) {
+            return false;
+        }
         var action = messageClass.endsWith(".NDR") ? "failed" : messageClass.endsWith(".DR") ? "delivered" : null;
         var dispositionType = messageClass.endsWith(".IPNNRN") ? "deleted" : "displayed";
         // The free-form supplementary info is the transport diagnostic, not a status code.
@@ -917,9 +1043,17 @@ public final class MsgToEmlConverter {
             finalRecipient = reportFailedRecipient(message);
             status = reportStatusCode(message, supplementaryInfo, messageClass.endsWith(".NDR"));
             diagnosticCode = supplementaryInfo;
+        } else {
+            // rfc8098 §3.2.4: an MDN's Final-Recipient is the party who read the message and is issuing
+            // the receipt — the receipt's own author/sender (PR_SENT_REPRESENTING_*/PR_SENDER_*), not its
+            // To recipient (PidTagDisplayTo holds the original sender who requested the receipt).
+            finalRecipient = resolveAuthorIdentity(message).email();
+            if (finalRecipient == null || finalRecipient.isBlank()) {
+                finalRecipient = resolveSenderIdentity(message).email();
+            }
         }
         if (finalRecipient == null || finalRecipient.isBlank()) {
-            // Last resort only: the report carried no per-recipient address at all.
+            // Last resort only: no per-recipient (DSN) or reader (MDN) address was available.
             finalRecipient = readMainStringById(message, 0x0E04); // PidTagDisplayTo
         }
         var info = new ReportGenerator.ReportInfo(
@@ -930,10 +1064,11 @@ public final class MsgToEmlConverter {
                 action,
                 status,
                 diagnosticCode,
-                readMainStringById(message, 0x1046), // PidTagInternetMessageId of the original
+                readMainStringById(message, 0x1046), // PidTagOriginalMessageId of the original
                 dispositionType);
         var report = ReportGenerator.generate(info);
         serializer.setRawEntity(report.contentType(), null, null, report.body().getBytes(StandardCharsets.UTF_8));
+        return true;
     }
 
     /**
@@ -967,62 +1102,12 @@ public final class MsgToEmlConverter {
     }
 
     /**
-     * The DSN {@code Status} {@code d.d.d} code (rfc3464 §2.3.4). MAPI does not store the field
-     * verbatim, so it is recovered, in order of preference, from: the enhanced status code embedded
-     * in {@code PidTagSupplementaryInfo} text (the most precise source), then a sane class-derived
-     * default ({@code 5.0.0} for a permanent {@code .NDR} failure, {@code 2.0.0} for a {@code .DR}
-     * success). The supplementary text itself never becomes the status — it is free-form and would
-     * violate the {@code DIGIT "." 1*3DIGIT "." 1*3DIGIT} grammar.
+     * The DSN {@code Status} {@code d.d.d} code (rfc3464 §2.3.4) for this report: the enhanced-status
+     * token embedded in {@code PidTagSupplementaryInfo} or {@code PidTagReportText}, else a class
+     * default. Delegates to {@link ReportGenerator#statusCode} so MSG and PST derive it identically.
      */
     private static String reportStatusCode(MAPIMessage message, String supplementaryInfo, boolean failed) {
-        var fromText = extractStatusCode(supplementaryInfo);
-        if (fromText != null) {
-            return fromText;
-        }
-        var reportText = readMainStringById(message, 0x1001); // PidTagReportText
-        var fromReport = extractStatusCode(reportText);
-        if (fromReport != null) {
-            return fromReport;
-        }
-        return failed ? "5.0.0" : "2.0.0";
-    }
-
-    /**
-     * Extracts the first {@code d.d.d} enhanced-status token (rfc3464 §2.3.4 grammar) embedded in
-     * free-form report/diagnostic text — Outlook commonly writes it as {@code "... #5.1.1 ..."}.
-     * Returns {@code null} when the text holds no such token.
-     */
-    private static String extractStatusCode(String text) {
-        if (text == null) {
-            return null;
-        }
-        var matcher = STATUS_CODE_PATTERN.matcher(text);
-        return matcher.find() ? matcher.group(1) : null;
-    }
-
-    /**
-     * Normalizes a stored {@code In-Reply-To}/{@code References} value to the angle-bracketed msg-id
-     * list RFC 5322 §3.6.4 requires, mirroring how {@link EmlSerializer#setMessageId} normalizes
-     * {@code Message-ID}. The value is a whitespace-separated list of message ids; an already-bracketed
-     * token is kept verbatim and a bare token is wrapped in {@code <...>}, then the tokens are rejoined
-     * with a single space. Per rfc5322 §3.6.4 a {@code msg-id} is an {@code addr-spec} (it must contain
-     * an {@code "@"}), so a token without one is free text some clients store in the field rather than a
-     * real id — it is dropped instead of being turned into a bogus {@code <token>}. Returns an empty
-     * string when no token is a usable msg-id (the caller then omits the header).
-     */
-    private static String angleBracketMessageIds(String value) {
-        var ids = new ArrayList<String>();
-        for (var token : value.trim().split("\\s+")) {
-            if (token.isEmpty()) {
-                continue;
-            }
-            var inner = token.startsWith("<") ? token.substring(1) : token;
-            inner = inner.endsWith(">") ? inner.substring(0, inner.length() - 1) : inner;
-            if (inner.contains("@")) {
-                ids.add("<" + inner + ">");
-            }
-        }
-        return String.join(" ", ids);
+        return ReportGenerator.statusCode(failed, supplementaryInfo, readMainStringById(message, 0x1001));
     }
 
     /**
@@ -1160,7 +1245,13 @@ public final class MsgToEmlConverter {
     /**
      * The recipient's address: PR_SMTP_ADDRESS when present (POI exposes it as its own chunk — a map
      * lookup with a MAPIProperty.createCustom key can never match, no equals/hashCode), otherwise the
-     * IMCEA-encapsulated PR_EMAIL_ADDRESS, or {@code null} when the entry stores no address at all.
+     * IMCEA-encapsulated raw PR_EMAIL_ADDRESS, or {@code null} when the entry stores no address at all.
+     *
+     * <p>The raw {@code getRecipientEmailChunk()} value is read deliberately instead of POI's
+     * {@code getRecipientEmailAddress()}: when PR_EMAIL_ADDRESS holds an Exchange legacyDN the latter
+     * returns only the substring after the first {@code /CN=}, dropping the mandatory {@code /O=}/{@code
+     * /OU=} X.500 prefix and yielding a non-roundtrippable IMCEAEX address. The PST path encapsulates
+     * the full DN (Message.resolveRecipientEmail), so reading the raw chunk keeps MSG and PST in step.
      */
     private static String resolveRecipientAddress(RecipientChunks chunks) {
         var smtpChunk = chunks.getRecipientSMTPChunk();
@@ -1168,8 +1259,9 @@ public final class MsgToEmlConverter {
         if (smtpAddress != null && !smtpAddress.isBlank()) {
             return smtpAddress;
         }
-        var address = chunks.getRecipientEmailAddress();
-        if (address == null) {
+        var emailChunk = chunks.getRecipientEmailChunk();
+        var address = emailChunk == null ? null : emailChunk.getValue();
+        if (address == null || address.isBlank()) {
             return null;
         }
         return EmlSerializer.imceaEncapsulate(chunkValue(chunks.getDeliveryTypeChunk()), address);
@@ -1244,16 +1336,13 @@ public final class MsgToEmlConverter {
     }
 
     private static Date safeDate(MAPIMessage message) {
-        var deliveryDate = readTimeProperty(message, MAPIProperty.MESSAGE_DELIVERY_TIME);
-        if (deliveryDate != null) {
-            return deliveryDate;
-        }
-        try {
-            var calendar = message.getMessageDate();
-            return calendar == null ? null : calendar.getTime();
-        } catch (ChunkNotFoundException ignored) {
-            return null;
-        }
+        // RFC 5322 §3.6.1: the Date header is the origination time, "specifically not ... the time that
+        // the message was actually transported". Prefer PR_CLIENT_SUBMIT_TIME and fall back to
+        // PR_MESSAGE_DELIVERY_TIME, mirroring the PST pipeline (Message.getMessageDate). Reading the two
+        // time properties directly also avoids POI getMessageDate()'s further fallback to the
+        // modification/creation time, which corresponds to no Date: source.
+        var submitDate = readTimeProperty(message, MAPIProperty.CLIENT_SUBMIT_TIME);
+        return submitDate != null ? submitDate : readTimeProperty(message, MAPIProperty.MESSAGE_DELIVERY_TIME);
     }
 
     private static Date readTimeProperty(MAPIMessage message, MAPIProperty property) {
@@ -1358,6 +1447,32 @@ public final class MsgToEmlConverter {
         }
     }
 
+    /**
+     * The 8-bit charset for this message's legacy (non-Unicode) one-off strings — the code page
+     * Outlook wrote reply-to entries and distribution-list member addresses in. Resolves
+     * PR_MESSAGE_CODEPAGE, then PR_INTERNET_CPID, and falls back to windows-1252 ({@link #RTF_CHARSET})
+     * when neither is present or supported, which preserves the previous behavior for messages that
+     * declare no code page. Only matters where a one-off's MAE_UNICODE bit is clear; Unicode one-offs
+     * are UTF-16LE regardless. Codepage diagnostics are left to {@link #applySourceCodepage} (which
+     * already reports them for the ANSI messages this affects), so resolution here is silent.
+     */
+    private static Charset resolveMessageAnsiCharset(MAPIMessage message) {
+        var name = charsetForCodepage(
+                readMainLong(message, MAPIProperty.MESSAGE_CODEPAGE.id), "PR_MESSAGE_CODEPAGE", ConversionLog.NOOP);
+        if (name == null) {
+            name = charsetForCodepage(
+                    readMainLong(message, MAPIProperty.INTERNET_CPID.id), "PR_INTERNET_CPID", ConversionLog.NOOP);
+        }
+        if (name != null) {
+            try {
+                return Charset.forName(name);
+            } catch (RuntimeException ignored) {
+                // An unsupported/illegal charset name from the codepage table — fall back to the default.
+            }
+        }
+        return RTF_CHARSET;
+    }
+
     private static String findStringChunk(Chunks mainChunks, MAPIProperty property) {
         var list = mainChunks.getAll().get(property);
         if (list == null || list.isEmpty()) {
@@ -1450,18 +1565,24 @@ public final class MsgToEmlConverter {
             return null;
         }
         var first = values.get(0);
+        Integer rawType;
         if (first instanceof PropertyValue.LongPropertyValue longValue) {
-            var raw = longValue.getValue();
-            return raw == null ? null : raw.intValue();
+            var value = longValue.getValue();
+            rawType = value == null ? null : value.intValue();
+        } else if (first.getValue() instanceof Number number) {
+            rawType = number.intValue();
+        } else {
+            try {
+                rawType = Integer.parseInt(Objects.toString(first.getValue(), ""));
+            } catch (NumberFormatException ignored) {
+                rawType = null;
+            }
         }
-        var raw = first.getValue();
-        if (raw instanceof Number number) {
-            return number.intValue();
-        }
-        try {
-            return Integer.parseInt(Objects.toString(raw, ""));
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
+        // [MS-OXOMSG] §2.2.3.1: only the low bits carry the recipient class (MAPI_TO/CC/BCC); the high
+        // bits are flags (e.g. 0x10000000 "already processed") that Exchange/transport set on resent and
+        // saved sent/received items. Mask them off — otherwise a flagged "To" (0x10000001) matches none
+        // of TO/CC/BCC and the row falls through to the PR_DISPLAY_TO/CC/BCC string fallback, dropping the
+        // recipient's SMTP address and collapsing the To/Cc/Bcc split.
+        return rawType == null ? null : rawType & 0x0FFFFFFF;
     }
 }

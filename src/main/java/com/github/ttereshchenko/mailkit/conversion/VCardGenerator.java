@@ -94,9 +94,10 @@ public final class VCardGenerator {
     }
 
     /**
-     * Appends one content line, folded at 75 octets of UTF-8 (RFC 6350 §3.2 / RFC 2426 §2.6 measure
-     * octets, not chars) with a continuation {@code CRLF + SPACE}, never splitting inside a code point
-     * (a fold between the halves of a surrogate pair would corrupt the character).
+     * Appends one content line, folded at 75 octets of UTF-8 (RFC 2426 §2.6 / RFC 2425 §5.8.1 for the
+     * 3.0 output emitted here — the RFC 6350 §3.2 rule is identical; all measure octets, not chars) with
+     * a continuation {@code CRLF + SPACE}, never splitting inside a code point (a fold between the halves
+     * of a surrogate pair would corrupt the character).
      */
     private static void appendFolded(StringBuilder card, String line) {
         var octets = 0;

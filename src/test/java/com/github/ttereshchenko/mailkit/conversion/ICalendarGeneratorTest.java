@@ -362,18 +362,84 @@ class ICalendarGeneratorTest {
     // -----------------------------------------------------------------------
 
     @Test
-    void todoWithRequestMethodEmitsMethodRequest() {
-        var todo = ICalendarGenerator.generateTodo("Assigned task", null, null, null, null, null, "REQUEST");
+    void todoWithRequestMethodEmitsMethodRequestAndParticipants() {
+        var todo = ICalendarGenerator.generateTodo(
+                "Assigned task",
+                null,
+                null,
+                null,
+                null,
+                null,
+                "REQUEST",
+                "Boss",
+                "boss@example.com",
+                List.of(new ICalendarGenerator.Attendee("Worker", "worker@example.com")));
 
         assertTrue(todo.contains("METHOD:REQUEST\r\n"), "task request must emit METHOD:REQUEST: " + todo);
         assertTrue(todo.contains("BEGIN:VTODO"), todo);
+        assertTrue(
+                todo.contains("ORGANIZER") && todo.contains("mailto:boss@example.com"),
+                "a REQUEST VTODO must carry an ORGANIZER (RFC 5546 §3.4): " + todo);
+        assertTrue(
+                todo.contains("ATTENDEE") && todo.contains("mailto:worker@example.com"),
+                "a REQUEST VTODO must carry an ATTENDEE (RFC 5546 §3.4): " + todo);
     }
 
     @Test
-    void todoWithReplyMethodEmitsMethodReply() {
-        var todo = ICalendarGenerator.generateTodo("Task accepted", null, null, null, null, null, "REPLY");
+    void todoWithReplyMethodEmitsMethodReplyAndPartStat() {
+        var todo = ICalendarGenerator.generateTodo(
+                "Task accepted",
+                null,
+                null,
+                null,
+                null,
+                null,
+                "REPLY",
+                "Boss",
+                "boss@example.com",
+                List.of(new ICalendarGenerator.Attendee("Worker", "worker@example.com", "ACCEPTED")));
 
         assertTrue(todo.contains("METHOD:REPLY\r\n"), "task response must emit METHOD:REPLY: " + todo);
+        assertTrue(todo.contains("PARTSTAT=ACCEPTED"), "a REPLY VTODO must carry the responder's PARTSTAT: " + todo);
+    }
+
+    @Test
+    void todoSchedulingMethodWithoutParticipantsDowngradesToPublish() {
+        // RFC 5546 §3.4: a REQUEST/REPLY VTODO needs an ORGANIZER and ATTENDEE; without them the
+        // participant-free overload must downgrade rather than emit an invalid scheduling object.
+        var request = ICalendarGenerator.generateTodo("Assigned task", null, null, null, null, null, "REQUEST");
+        assertTrue(request.contains("METHOD:PUBLISH\r\n"), "REQUEST without participants must downgrade: " + request);
+        assertFalse(request.contains("ATTENDEE"), "a PUBLISH VTODO must not carry attendees: " + request);
+
+        var reply = ICalendarGenerator.generateTodo("Task accepted", null, null, null, null, null, "REPLY");
+        assertTrue(reply.contains("METHOD:PUBLISH\r\n"), "REPLY without participants must downgrade: " + reply);
+    }
+
+    @Test
+    void effectiveMethodMatchesTheGeneratedBodyMethod() {
+        // rfc6047 §2.4: the text/calendar method= parameter must equal the body METHOD. A REQUEST with
+        // no resolvable organizer downgrades to PUBLISH in the body, so effectiveMethod() (which a caller
+        // uses for the parameter) must report PUBLISH too — and REQUEST when the organizer is present.
+        var noOrganizer = new ICalendarGenerator.EventDetails(
+                "REQUEST", new Date(), null, null, "Meeting", "Boss", "", "body", List.of(), false, null, null);
+        assertEquals("PUBLISH", ICalendarGenerator.effectiveMethod(noOrganizer));
+        assertTrue(ICalendarGenerator.generate(noOrganizer).contains("METHOD:PUBLISH\r\n"));
+
+        var withOrganizer = new ICalendarGenerator.EventDetails(
+                "REQUEST",
+                new Date(),
+                null,
+                null,
+                "Meeting",
+                "Boss",
+                "boss@example.com",
+                "body",
+                List.of(new ICalendarGenerator.Attendee("W", "w@example.com")),
+                false,
+                null,
+                null);
+        assertEquals("REQUEST", ICalendarGenerator.effectiveMethod(withOrganizer));
+        assertTrue(ICalendarGenerator.generate(withOrganizer).contains("METHOD:REQUEST\r\n"));
     }
 
     @Test
@@ -441,5 +507,26 @@ class ICalendarGeneratorTest {
         var ical = generate("REPLY", List.of(new ICalendarGenerator.Attendee("Dave", "dave@example.com", "TENTATIVE")));
 
         assertTrue(ical.contains("PARTSTAT=TENTATIVE"), "TENTATIVE partStat must appear: " + ical);
+    }
+
+    // F6 (audit follow-up): a scheduling method (REQUEST/REPLY/CANCEL) with no resolvable ORGANIZER
+    // address must downgrade to PUBLISH rather than emit a scheduling VEVENT carrying ATTENDEEs but no
+    // ORGANIZER line (invalid iTIP, RFC 5546 §3.2).
+    @Test
+    void schedulingMethodWithoutOrganizerDowngradesToPublish() {
+        var ical = ICalendarGenerator.generate(
+                "REQUEST",
+                START,
+                END,
+                "Room 1",
+                "Subject",
+                "Organizer",
+                "",
+                "Description",
+                List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")));
+
+        assertTrue(ical.contains("METHOD:PUBLISH\r\n"), "must downgrade to PUBLISH without an organizer: " + ical);
+        assertFalse(ical.contains("ATTENDEE"), "a publication must not carry attendees: " + ical);
+        assertFalse(ical.contains("ORGANIZER"), "no organizer address means no ORGANIZER line: " + ical);
     }
 }

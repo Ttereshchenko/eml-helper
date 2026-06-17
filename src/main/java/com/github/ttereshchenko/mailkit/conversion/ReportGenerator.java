@@ -3,6 +3,7 @@ package com.github.ttereshchenko.mailkit.conversion;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Generates an RFC 6522 {@code multipart/report} body for Outlook {@code REPORT.*} messages —
@@ -171,7 +172,7 @@ public final class ReportGenerator {
         // optional and is dropped when blank.
         appendField(body, "Final-Recipient", defaulted(prefixed("rfc822", info.finalRecipient()), "rfc822; unknown"));
         appendField(body, "Action", defaulted(lower(info.action()), "failed"));
-        appendField(body, "Status", defaulted(clean(info.status()), "5.0.0"));
+        appendField(body, "Status", defaulted(normalizeStatus(clean(info.status())), "5.0.0"));
         appendField(body, "Diagnostic-Code", prefixed("smtp", info.diagnosticCode()));
         body.append(CRLF);
     }
@@ -214,10 +215,23 @@ public final class ReportGenerator {
         appendFolded(body, name + ": " + value);
     }
 
-    /** Prefixes a value with a {@code type;} qualifier (e.g. {@code rfc822;}) when the value is present. */
+    // A value that already carries an RFC 3464 "type;" qualifier (e.g. "smtp; 550 ...",
+    // "rfc822; user@host"): Outlook sometimes stores the diagnostic/recipient/MTA with its type token
+    // already present, and re-prefixing would emit a malformed doubled token ("smtp; smtp; ...").
+    private static final Pattern TYPE_PREFIXED = Pattern.compile("[A-Za-z0-9][A-Za-z0-9.-]*;");
+
+    /**
+     * Prefixes a value with a {@code type;} qualifier (e.g. {@code rfc822;}) when the value is present,
+     * unless it already carries one. rfc3464 §2.2.2/§2.3.2/§2.3.6 each define the field as
+     * {@code <type> ";" <rest>}, so a value that already begins with a {@code word;} token must not be
+     * prefixed a second time.
+     */
     private static String prefixed(String type, String value) {
         var cleaned = clean(value);
-        return cleaned == null || cleaned.isBlank() ? null : type + "; " + cleaned;
+        if (cleaned == null || cleaned.isBlank()) {
+            return null;
+        }
+        return TYPE_PREFIXED.matcher(cleaned).lookingAt() ? cleaned : type + "; " + cleaned;
     }
 
     private static String lower(String value) {
@@ -231,6 +245,65 @@ public final class ReportGenerator {
             return null;
         }
         return value.replace("\r", " ").replace("\n", " ").strip();
+    }
+
+    /**
+     * Normalizes an enhanced status code to the rfc3464 §2.3.4 canonical form, where each of the three
+     * {@code class.subject.detail} sub-fields is expressed without leading zeros ({@code 5.01.001} →
+     * {@code 5.1.1}). A value that is not a three-part numeric code is returned unchanged.
+     */
+    private static String normalizeStatus(String value) {
+        if (value == null || value.isBlank()) {
+            return value;
+        }
+        var parts = value.split("\\.");
+        if (parts.length != 3) {
+            return value;
+        }
+        try {
+            return Integer.parseInt(parts[0]) + "." + Integer.parseInt(parts[1]) + "." + Integer.parseInt(parts[2]);
+        } catch (NumberFormatException ignored) {
+            return value;
+        }
+    }
+
+    // An RFC 3464 §2.3.4 enhanced-status code (class.subject.detail) embedded in free-form report
+    // text — Outlook writes it inline, e.g. "... #5.1.1 ...". The class digit is constrained to 2/4/5,
+    // and the (?<![\d.]) / (?![\d.]) boundaries require the token to stand alone: without them a 2/4/5
+    // sitting inside a longer dotted number — an Exchange version/build banner such as
+    // "Microsoft Exchange Server 15.2.1544.5" — would be mined as a fabricated status (5.2.154).
+    private static final Pattern STATUS_CODE_PATTERN =
+            Pattern.compile("(?<![\\d.])([245]\\.\\d{1,3}\\.\\d{1,3})(?![\\d.])");
+
+    /**
+     * The DSN {@code Status} {@code d.d.d} code (rfc3464 §2.3.4) for a delivery report. MAPI does not
+     * store it verbatim, so it is recovered, in order of preference, from the first enhanced-status
+     * token embedded in the supplied free-form texts (supplementary info, report text — the most
+     * precise source), then a class default ({@code 5.0.0} for a permanent failure, {@code 2.0.0} for
+     * a success). The free-form text itself never becomes the status — it would violate the
+     * {@code DIGIT "." 1*3DIGIT "." 1*3DIGIT} grammar; pass it as the {@code diagnosticCode} instead.
+     */
+    public static String statusCode(boolean failed, String... candidateTexts) {
+        for (var text : candidateTexts) {
+            var code = extractStatusCode(text);
+            if (code != null) {
+                return code;
+            }
+        }
+        return failed ? "5.0.0" : "2.0.0";
+    }
+
+    /**
+     * The first {@code d.d.d} enhanced-status token (rfc3464 §2.3.4 grammar) embedded in free-form
+     * report/diagnostic text — Outlook commonly writes it inline, e.g. {@code "... #5.1.1 ..."}.
+     * Returns {@code null} when the text holds no such token.
+     */
+    public static String extractStatusCode(String text) {
+        if (text == null) {
+            return null;
+        }
+        var matcher = STATUS_CODE_PATTERN.matcher(text);
+        return matcher.find() ? matcher.group(1) : null;
     }
 
     private static void appendBoundary(StringBuilder body, String boundary, boolean closing) {

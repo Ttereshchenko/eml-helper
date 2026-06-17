@@ -130,6 +130,24 @@ public final class ICalendarGenerator {
     }
 
     /**
+     * The iTIP {@code PARTSTAT} (RFC 5545 §3.2.12) a task-response message class conveys:
+     * {@code IPM.TaskRequest.Accept}→ACCEPTED, {@code IPM.TaskRequest.Decline}→DECLINED. Returns
+     * {@code null} for a status update or anything unrecognised (NEEDS-ACTION is then implied).
+     */
+    public static String taskResponsePartStat(String messageClass) {
+        if (messageClass == null) {
+            return null;
+        }
+        if (messageClass.startsWith("IPM.TaskRequest.Accept")) {
+            return "ACCEPTED";
+        }
+        if (messageClass.startsWith("IPM.TaskRequest.Decline")) {
+            return "DECLINED";
+        }
+        return null;
+    }
+
+    /**
      * Builds a folded VCALENDAR/VEVENT document. {@code startTime} is expected to be non-null (a
      * caller that has no real start time should not emit an invite at all rather than fabricate
      * one); when it is null the DTSTART line is omitted. A null {@code endTime} omits DTEND.
@@ -160,6 +178,23 @@ public final class ICalendarGenerator {
     }
 
     /**
+     * The iTIP {@code METHOD} {@link #generate(EventDetails)} will actually emit for {@code event}: a
+     * scheduling method (REQUEST/REPLY/CANCEL) requires both a DTSTART and a resolvable ORGANIZER
+     * (RFC 5546 §3.2), and downgrades to {@code PUBLISH} otherwise. A caller stamping the
+     * {@code text/calendar; method=} parameter (rfc6047 §2.4) must use this, not the requested method,
+     * so the MIME parameter and the body {@code METHOD} agree.
+     */
+    public static String effectiveMethod(EventDetails event) {
+        var requestedMethod = event.method() == null || event.method().isBlank()
+                ? "PUBLISH"
+                : escapeParameterValue(event.method().trim()).toUpperCase(Locale.ROOT);
+        var hasOrganizer = !sanitizeCalAddress(event.organizerEmail()).isEmpty();
+        return "PUBLISH".equals(requestedMethod) || (event.startTime() != null && hasOrganizer)
+                ? requestedMethod
+                : "PUBLISH";
+    }
+
+    /**
      * Builds a folded VCALENDAR/VEVENT document. Timed events with a known {@link WindowsTimeZone}
      * get a VTIMEZONE plus {@code TZID}-anchored local times, so a recurring event keeps its
      * wall-clock hour across DST changes; without one, times stay UTC (correct for single
@@ -171,17 +206,17 @@ public final class ICalendarGenerator {
         var utcFormat = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'");
         utcFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
 
-        var requestedMethod = event.method() == null || event.method().isBlank()
-                ? "PUBLISH"
-                : escapeParameterValue(event.method().trim()).toUpperCase(Locale.ROOT);
-        // RFC 5546 §3.2: a scheduling object (REQUEST/REPLY/CANCEL) requires a DTSTART. When the store
-        // gave us no start time, fall back to PUBLISH rather than emit an invalid scheduling VEVENT
-        // (which also correctly drops the ATTENDEE list a publication must not carry).
-        var safeMethod = "PUBLISH".equals(requestedMethod) || event.startTime() != null ? requestedMethod : "PUBLISH";
+        // RFC 5546 §3.2: a scheduling object (REQUEST/REPLY/CANCEL) requires both a DTSTART and an
+        // ORGANIZER, else it downgrades to PUBLISH (which also correctly drops the ATTENDEE list a
+        // publication must not carry). effectiveMethod() is the single source of truth, so the body
+        // METHOD and the caller's text/calendar; method= parameter (rfc6047 §2.4) cannot disagree.
+        var safeMethod = effectiveMethod(event);
         String dtStamp = utcFormat.format(new Date());
         String uid = UUID.randomUUID().toString();
 
-        // The zone only matters for timed events; all-day events are pure dates.
+        // The zone only matters for timed events; all-day events are pure dates. (Real Outlook all-day
+        // appointments — see MsgSampleCorpusTest — store a start whose UTC calendar date is already the
+        // intended day, so re-interpreting it through the event zone shifts the date by one and is wrong.)
         var timeZone = event.allDay() ? null : event.timeZone();
 
         StringBuilder builder = new StringBuilder();
@@ -247,10 +282,10 @@ public final class ICalendarGenerator {
     }
 
     /**
-     * Builds a folded VCALENDAR/VTODO document with an explicit iTIP {@code METHOD} (RFC 5546 §3.4):
-     * {@code REQUEST} for an assigned task request ({@code IPM.TaskRequest}), {@code REPLY} for its
-     * accept/decline/update responses, or {@code PUBLISH} for a plain task. All fields except the
-     * subject may be {@code null}; {@code percentComplete} is clamped to 0–100.
+     * Builds a folded VCALENDAR/VTODO document with an explicit iTIP {@code METHOD} (RFC 5546 §3.4) but
+     * no participants — so a {@code REQUEST}/{@code REPLY} downgrades to {@code PUBLISH} (a scheduling
+     * VTODO requires an ORGANIZER and ATTENDEE). Prefer the participant-aware overload for an assigned
+     * task; this one suits a plain task. All fields except the subject may be {@code null}.
      */
     public static String generateTodo(
             String subject,
@@ -260,12 +295,55 @@ public final class ICalendarGenerator {
             Double percentComplete,
             Boolean complete,
             String method) {
+        return generateTodo(
+                subject, description, startDate, dueDate, percentComplete, complete, method, null, null, null);
+    }
+
+    /**
+     * The iTIP {@code METHOD} a VTODO will actually carry (RFC 5546 §3.4): a scheduling method
+     * ({@code REQUEST}/{@code REPLY}) needs a resolvable ORGANIZER and at least one ATTENDEE, and
+     * downgrades to {@code PUBLISH} otherwise. A caller stamping {@code text/calendar; method=}
+     * (rfc6047 §2.4) must use this, not the requested method, so the parameter and the body agree.
+     */
+    public static String effectiveTodoMethod(String method, String organizerEmail, List<Attendee> attendees) {
+        var requested = method == null || method.isBlank()
+                ? "PUBLISH"
+                : escapeParameterValue(method.trim()).toUpperCase(Locale.ROOT);
+        if ("PUBLISH".equals(requested)) {
+            return "PUBLISH";
+        }
+        var hasOrganizer = !sanitizeCalAddress(organizerEmail).isEmpty();
+        var hasAttendee = attendees != null
+                && attendees.stream()
+                        .anyMatch(attendee ->
+                                !sanitizeCalAddress(attendee.email()).isEmpty());
+        return hasOrganizer && hasAttendee ? requested : "PUBLISH";
+    }
+
+    /**
+     * Builds a folded VCALENDAR/VTODO document with an explicit iTIP {@code METHOD} (RFC 5546 §3.4):
+     * {@code REQUEST} for an assigned task request ({@code IPM.TaskRequest}), {@code REPLY} for its
+     * accept/decline/update responses, or {@code PUBLISH} for a plain task. A scheduling method emits the
+     * ORGANIZER (the assigner) and ATTENDEE(s) (the assignee[s]); when those cannot be resolved it
+     * downgrades to {@code PUBLISH} rather than emit an invalid scheduling object (see
+     * {@link #effectiveTodoMethod}). All fields except the subject may be {@code null};
+     * {@code percentComplete} is clamped to 0–100.
+     */
+    public static String generateTodo(
+            String subject,
+            String description,
+            Date startDate,
+            Date dueDate,
+            Double percentComplete,
+            Boolean complete,
+            String method,
+            String organizerName,
+            String organizerEmail,
+            List<Attendee> attendees) {
         var utcFormat = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'");
         utcFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
 
-        var safeMethod = method == null || method.isBlank()
-                ? "PUBLISH"
-                : escapeParameterValue(method.trim()).toUpperCase(Locale.ROOT);
+        var safeMethod = effectiveTodoMethod(method, organizerEmail, attendees);
 
         var todo = new StringBuilder();
         todo.append("BEGIN:VCALENDAR\r\n");
@@ -295,6 +373,15 @@ public final class ICalendarGenerator {
             var percent = (int) Math.round(Math.clamp(percentComplete * 100, 0, 100));
             todo.append("PERCENT-COMPLETE:").append(percent).append("\r\n");
         }
+        // RFC 5546 §3.4: a scheduling VTODO carries an ORGANIZER and ATTENDEE(s); effectiveTodoMethod has
+        // already downgraded to PUBLISH when those are absent. Emit the ORGANIZER whenever it resolves and
+        // the ATTENDEE list only for an actual scheduling method (a PUBLISH must not carry attendees).
+        appendParticipant(todo, "ORGANIZER", organizerName, organizerEmail, null);
+        if (attendees != null && !"PUBLISH".equals(safeMethod)) {
+            for (var attendee : attendees) {
+                appendParticipant(todo, "ATTENDEE", attendee.name(), attendee.email(), attendee.partStat());
+            }
+        }
         todo.append("END:VTODO\r\n");
         todo.append("END:VCALENDAR\r\n");
         return foldLines(todo.toString());
@@ -322,7 +409,12 @@ public final class ICalendarGenerator {
         }
     }
 
-    /** True when {@code value} falls on a UTC midnight boundary — the MAPI convention for a date-only task date. */
+    /**
+     * True when {@code value} falls on a UTC midnight boundary. Its only callers pass
+     * {@code PidLidTaskStartDate}/{@code PidLidTaskDueDate}, which [MS-OXOTASK] §2.2.2.2.4–.5 stores as
+     * date-only midnight-UTC values, so a midnight result here is unambiguously a date-only task date
+     * rather than a task that merely happens to be timed for 00:00 UTC (tasks carry no time of day).
+     */
     private static boolean isDateOnly(Date value) {
         return value.toInstant().toEpochMilli() % 86_400_000L == 0L;
     }
@@ -425,7 +517,7 @@ public final class ICalendarGenerator {
             builder.append(";CN=\"").append(escapeParameterValue(name)).append('"');
         }
         if (partStat != null && !partStat.isBlank()) {
-            builder.append(";PARTSTAT=").append(escapeParameterValue(partStat));
+            builder.append(";PARTSTAT=").append(escapeUnquotedParameterValue(partStat));
         }
         builder.append(":mailto:").append(safeEmail).append("\r\n");
     }
@@ -441,6 +533,28 @@ public final class ICalendarGenerator {
         for (var index = 0; index < value.length(); index++) {
             var character = value.charAt(index);
             if (character != '"' && character >= 0x20 && character != 0x7F) {
+                builder.append(character);
+            }
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Like {@link #escapeParameterValue} but for an <em>unquoted</em> param-value: additionally drops
+     * {@code ;}, {@code :} and {@code ,}, each of which would otherwise start another parameter or
+     * terminate the parameter section (RFC 5545 §3.1). {@code PARTSTAT} is emitted unquoted, so its
+     * value must not carry these.
+     */
+    private static String escapeUnquotedParameterValue(String value) {
+        var builder = new StringBuilder(value.length());
+        for (var index = 0; index < value.length(); index++) {
+            var character = value.charAt(index);
+            if (character != '"'
+                    && character >= 0x20
+                    && character != 0x7F
+                    && character != ';'
+                    && character != ':'
+                    && character != ',') {
                 builder.append(character);
             }
         }

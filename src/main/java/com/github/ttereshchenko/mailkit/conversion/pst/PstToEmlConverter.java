@@ -1,6 +1,7 @@
 package com.github.ttereshchenko.mailkit.conversion.pst;
 
 import com.github.ttereshchenko.mailkit.conversion.AppointmentRecurrence;
+import com.github.ttereshchenko.mailkit.conversion.AttachmentBudget;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
 import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
 import com.github.ttereshchenko.mailkit.conversion.HtmlMetaCharset;
@@ -20,8 +21,8 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -60,7 +61,9 @@ public final class PstToEmlConverter {
     // A PST folder hierarchy is a tree on disk with no depth bound ([MS-PST] §2.4.4); a hostile archive
     // can declare a deep linear acyclic chain whose distinct NIDs never trip the cycle guard, so cap the
     // recursion depth to keep the folder walk from overflowing the stack (an Error escapes catch).
-    private static final int MAX_FOLDER_DEPTH = 256;
+    // Package-private (not private) so the depth-guard regression test can drive the recursive
+    // processFolder past the cap without fabricating a 256-deep folder hierarchy.
+    static final int MAX_FOLDER_DEPTH = 256;
     private static final int MAX_SUBJECT_LENGTH = 100;
     // Keep the full output path within Windows' 260-char MAX_PATH (with headroom for the long-path API).
     private static final int MAX_PATH_LENGTH = 255;
@@ -68,11 +71,6 @@ public final class PstToEmlConverter {
     // PR_ATTACH_METHOD values whose content lives outside the store ([MS-OXCMSG] §2.2.2.9).
     private static final int ATTACH_BY_REFERENCE = 2; // afByReference
     private static final int ATTACH_BY_REFERENCE_ONLY = 4; // afByRefOnly (3 = afByReferenceResolve)
-    // maxNodeSize bounds a single attachment, but a crafted message can declare many of them and the
-    // serializer holds every part in memory before writing — the aggregate can OutOfMemoryError, which
-    // (like the folder-depth Error) escapes catch(Exception). Cap the per-message total bytes and count.
-    private static final long MAX_TOTAL_ATTACHMENT_BYTES = 256L * 1024 * 1024;
-    private static final int MAX_ATTACHMENT_COUNT = 1000;
 
     private static final List<String> ALLOWED_MESSAGE_CLASSES = List.of(
             "IPM.Note",
@@ -103,6 +101,7 @@ public final class PstToEmlConverter {
     private static final UUID PSETID_APPOINTMENT = UUID.fromString("00062002-0000-0000-C000-000000000046");
     private static final UUID PSETID_TASK = UUID.fromString("00062003-0000-0000-C000-000000000046");
     private static final UUID PSETID_ADDRESS = UUID.fromString("00062004-0000-0000-C000-000000000046");
+    private static final UUID PS_PUBLIC_STRINGS = UUID.fromString("00020329-0000-0000-C000-000000000046");
 
     private static final int ATTACH_OLE = 6; // afStorage: an embedded OLE object
 
@@ -331,6 +330,10 @@ public final class PstToEmlConverter {
                 break;
             }
             indicator.checkCanceled();
+            // Recovery scans the whole node database, so without per-iteration text the progress UI shows
+            // only the stale folder-walk message and looks hung on a large store ("scan orphans" is on by
+            // default). Mirror processFolderContents and report ongoing progress.
+            indicator.setText("Recovering deleted/orphaned messages — " + stats.converted + " recovered so far");
 
             var dumpster = candidate.fromVisitedFolder();
             if (dumpster && !options.recoverDeletedItems()) {
@@ -384,13 +387,7 @@ public final class PstToEmlConverter {
                     if (options.duplicateHandling() == DuplicateHandling.SKIP) {
                         continue;
                     } else if (options.duplicateHandling() == DuplicateHandling.SUFFIX_COUNTER) {
-                        int suffixCount = 1;
-                        while (Files.exists(recoveryDir.resolve(
-                                boundedEmlFileName(recoveryDir, safeSubject, nid + "_" + suffixCount)))) {
-                            suffixCount++;
-                        }
-                        emlFile = recoveryDir.resolve(
-                                boundedEmlFileName(recoveryDir, safeSubject, nid + "_" + suffixCount));
+                        emlFile = nextFreeEmlFile(recoveryDir, safeSubject, String.valueOf(nid), nameCounters);
                     }
                 }
 
@@ -442,7 +439,9 @@ public final class PstToEmlConverter {
                 0);
     }
 
-    private static void processFolder(
+    // Package-private (not private) so the cycle- and depth-guard regression tests can pre-seed the
+    // visited set / depth without needing a crafted cyclic or 256-deep PST hierarchy.
+    static void processFolder(
             PstFile pstFile,
             int folderNid,
             Path targetDir,
@@ -608,13 +607,7 @@ public final class PstToEmlConverter {
                             log.info("Skipping duplicate message: " + fileName);
                             continue;
                         } else if (options.duplicateHandling() == DuplicateHandling.SUFFIX_COUNTER) {
-                            int suffixCount = 1;
-                            while (Files.exists(folderDir.resolve(
-                                    boundedEmlFileName(folderDir, safeSubject, msgNid + "_" + suffixCount)))) {
-                                suffixCount++;
-                            }
-                            emlFile = folderDir.resolve(
-                                    boundedEmlFileName(folderDir, safeSubject, msgNid + "_" + suffixCount));
+                            emlFile = nextFreeEmlFile(folderDir, safeSubject, String.valueOf(msgNid), nameCounters);
                         }
                     }
 
@@ -681,6 +674,19 @@ public final class PstToEmlConverter {
 
     static EmlSerializer createSerializer(
             Message message, Options options, PstFile pstFile, int depth, ConversionLog log, Stats stats) {
+        // Each top-level message gets a fresh attachment budget; the recursive overload threads the
+        // same instance through embedded messages so the caps bound the whole tree (see AttachmentBudget).
+        return createSerializer(message, options, pstFile, depth, log, stats, new AttachmentBudget());
+    }
+
+    private static EmlSerializer createSerializer(
+            Message message,
+            Options options,
+            PstFile pstFile,
+            int depth,
+            ConversionLog log,
+            Stats stats,
+            AttachmentBudget budget) {
         if (depth > MAX_EMBEDDED_DEPTH) {
             // The replaced content is lost, so this is a failure worth counting, not just a note.
             stats.failedAttachments++;
@@ -732,11 +738,20 @@ public final class PstToEmlConverter {
 
         String inReplyTo = message.getStringProperty(MapiProperties.PR_IN_REPLY_TO_ID_W);
         if (inReplyTo != null && !inReplyTo.isBlank()) {
-            serializer.addCustomHeader("In-Reply-To", inReplyTo.trim());
+            // RFC 5322 §3.6.4: In-Reply-To/References are angle-bracketed msg-id lists, but MAPI stores
+            // them unbracketed. Normalize through the shared helper the MSG path uses (bare tokens get
+            // <...>, @-less tokens dropped) instead of emitting the raw value.
+            var normalized = EmlSerializer.normalizeMessageIdList(inReplyTo);
+            if (!normalized.isEmpty()) {
+                serializer.addCustomHeader("In-Reply-To", normalized);
+            }
         }
         String references = message.getStringProperty(MapiProperties.PR_INTERNET_REFERENCES_W);
         if (references != null && !references.isBlank()) {
-            serializer.addCustomHeader("References", references.trim());
+            var normalized = EmlSerializer.normalizeMessageIdList(references);
+            if (!normalized.isEmpty()) {
+                serializer.addCustomHeader("References", normalized);
+            }
         }
         if (message.getProperty(MapiProperties.PR_IMPORTANCE) instanceof Number importance) {
             // MAPI importance: 0 = low, 1 = normal, 2 = high; normal is the default and stays implicit.
@@ -772,27 +787,56 @@ public final class PstToEmlConverter {
 
         var senderName = message.getSenderName();
         var senderEmail = message.getSenderEmail();
+        var authorName = message.getSentRepresentingName();
+        var authorEmail = message.getSentRepresentingEmail();
         var fromName = senderName;
         var fromEmail = senderEmail;
-        var authorEmail = message.getSentRepresentingEmail();
-        if (!authorEmail.isBlank() && !senderEmail.isBlank() && !authorEmail.equalsIgnoreCase(senderEmail)) {
-            // Sent on behalf of someone else: RFC 5322 §3.6.2 puts the author (sent-representing)
-            // in From: and the actual transmitter in Sender:.
-            fromName = message.getSentRepresentingName();
+        if (!authorEmail.isBlank()) {
+            if (senderEmail.isBlank()) {
+                // Only the represented author has a usable address (e.g. a delegated/draft item with no
+                // PR_SENDER_EMAIL): promote it to From: rather than dropping it and emitting the
+                // undisclosed placeholder (RFC 5322 §3.6.2). Matches the MSG path.
+                fromName = authorName;
+                fromEmail = authorEmail;
+            } else if (!authorEmail.equalsIgnoreCase(senderEmail)) {
+                // Sent on behalf of someone else: the author (sent-representing) goes in From: and the
+                // actual transmitter in Sender:.
+                fromName = authorName;
+                fromEmail = authorEmail;
+                serializer.setTransmitter(senderName, senderEmail);
+            }
+        } else if (senderName.isBlank() && senderEmail.isBlank() && !(authorName.isBlank() && authorEmail.isBlank())) {
+            // The sender identity is entirely empty but a represented author exists (display-name only):
+            // use it so From: is not the undisclosed placeholder. Matches the MSG path.
+            fromName = authorName;
             fromEmail = authorEmail;
-            serializer.setTransmitter(senderName, senderEmail);
         }
         serializer.setSender(fromName, fromEmail);
 
         var recipients = message.getRecipients();
+        var seenTypes = new HashSet<Integer>();
         for (Message.Recipient recipient : recipients) {
-            serializer.addRecipient(recipient.type, recipient.name, recipient.email);
+            // Mask PR_RECIPIENT_TYPE to its class bits ([MS-OXOMSG] §2.2.3.1) before the To/Cc/Bcc
+            // compare, matching the MSG path: a recipient Exchange-flagged as already-processed
+            // (e.g. 0x10000001 on a resent item) otherwise matches no class and is silently dropped.
+            var maskedType = recipient.type & 0x0FFFFFFF;
+            serializer.addRecipient(maskedType, recipient.name, recipient.email);
+            if ((recipient.name != null && !recipient.name.isBlank())
+                    || (recipient.email != null && !recipient.email.isBlank())) {
+                seenTypes.add(maskedType);
+            }
         }
-        if (recipients.isEmpty()) {
-            // The recipient table was empty or unreadable; fall back to the display strings
-            // so the To:/Cc:/Bcc: headers are not silently lost.
+        // Fall back to the PR_DISPLAY_* strings for each recipient type the structured table did not
+        // supply, matching the MSG path (MsgToEmlConverter#populateRecipients): a table carrying a usable
+        // To but only display-string Cc/Bcc would otherwise lose those headers. An empty/unreadable table
+        // (no type seen) falls back for all three.
+        if (!seenTypes.contains(EmlSerializer.RECIPIENT_TYPE_TO)) {
             addDisplayFallback(serializer, message.getTo(), EmlSerializer.RECIPIENT_TYPE_TO);
+        }
+        if (!seenTypes.contains(EmlSerializer.RECIPIENT_TYPE_CC)) {
             addDisplayFallback(serializer, message.getDisplayCc(), EmlSerializer.RECIPIENT_TYPE_CC);
+        }
+        if (!seenTypes.contains(EmlSerializer.RECIPIENT_TYPE_BCC)) {
             addDisplayFallback(serializer, message.getDisplayBcc(), EmlSerializer.RECIPIENT_TYPE_BCC);
         }
 
@@ -807,13 +851,27 @@ public final class PstToEmlConverter {
             serializer.addCustomHeader("Reply-To", String.join(", ", replyTo));
         }
 
+        // Categories: PidNameKeywords is a string-named property in PS_PUBLIC_STRINGS (PT_MV_UNICODE).
+        Integer keywordsId = pstFile.namedPropertyId(PS_PUBLIC_STRINGS, "Keywords");
+        if (keywordsId != null) {
+            var categories = collectStrings(message.getProperty(keywordsId));
+            if (!categories.isEmpty()) {
+                serializer.addCustomHeader("Keywords", String.join(", ", categories));
+            }
+        }
+        // PR_READ_RECEIPT_REQUESTED -> Disposition-Notification-To (rfc8098), addressed to the From author.
+        if (message.getProperty(MapiProperties.PR_READ_RECEIPT_REQUESTED) instanceof Boolean requested
+                && requested
+                && !fromEmail.isBlank()) {
+            serializer.addCustomHeader("Disposition-Notification-To", EmlSerializer.formatAddress(fromName, fromEmail));
+        }
+
         String msgClass = message.getMessageClass();
 
         // REPORT.* (NDR/DSN and read/non-read receipts) become an RFC 6522 multipart/report so the
         // structured delivery-status / disposition-notification survives instead of being flattened to
         // a plain body — reusing the POI-free generator the MSG path adopted.
-        if (msgClass != null && msgClass.startsWith("REPORT.")) {
-            emitReport(message, msgClass, serializer);
+        if (msgClass != null && msgClass.startsWith("REPORT.") && emitReport(message, msgClass, serializer)) {
             return serializer;
         }
         // IPM.Note.SMIME* / IPM.Note.Secure* keep their complete original MIME envelope in a single
@@ -874,10 +932,53 @@ public final class PstToEmlConverter {
             // IPM.TaskRequest* is a task-assignment message, not a plain task: emit the matching iTIP
             // METHOD (REQUEST / REPLY) instead of letting startsWith("IPM.Task") mislabel it PUBLISH.
             String taskMethod = taskMethod(msgClass);
+            // RFC 5546 §3.4: a task REQUEST/REPLY carries an ORGANIZER and ATTENDEE(s). For a REQUEST the
+            // ORGANIZER is the assigner (From) and the ATTENDEE(s) the assignee recipients. For a REPLY the
+            // roles swap (mirroring the meeting path): the ORGANIZER is the original assigner (the To
+            // recipient) and the single ATTENDEE is the responding sender, with the accept/decline
+            // PARTSTAT. A plain task keeps neither. effectiveTodoMethod downgrades to PUBLISH when the
+            // parties a scheduling object needs are missing.
+            String taskOrganizerName = null;
+            String taskOrganizerEmail = null;
+            List<ICalendarGenerator.Attendee> taskAttendees = List.of();
+            if ("REQUEST".equals(taskMethod)) {
+                taskOrganizerName = fromName;
+                taskOrganizerEmail = fromEmail;
+                taskAttendees = visibleAttendees(recipients);
+            } else if ("REPLY".equals(taskMethod)) {
+                var replyAttendees = visibleAttendees(recipients);
+                if (!replyAttendees.isEmpty()) {
+                    var assigner = recipients.stream()
+                            .filter(recipient -> (recipient.type & 0x0FFFFFFF) == EmlSerializer.RECIPIENT_TYPE_TO
+                                    && recipient.email != null
+                                    && !recipient.email.isBlank())
+                            .findFirst()
+                            .orElseGet(() -> recipients.stream()
+                                    .filter(recipient -> recipient.email != null && !recipient.email.isBlank())
+                                    .findFirst()
+                                    .orElse(null));
+                    if (assigner != null) {
+                        taskOrganizerName = assigner.name;
+                        taskOrganizerEmail = assigner.email;
+                        taskAttendees = List.of(new ICalendarGenerator.Attendee(
+                                fromName, fromEmail, ICalendarGenerator.taskResponsePartStat(msgClass)));
+                    }
+                }
+                // else: no recipient identifies the assigner — leave participants empty to downgrade.
+            }
             serializer.addAttachment(
                     "task.ics",
-                    "text/calendar; charset=UTF-8; method=" + taskMethod,
-                    buildTaskTodo(message, pstFile, subject, taskMethod).getBytes(StandardCharsets.UTF_8),
+                    "text/calendar; charset=UTF-8; method="
+                            + ICalendarGenerator.effectiveTodoMethod(taskMethod, taskOrganizerEmail, taskAttendees),
+                    buildTaskTodo(
+                                    message,
+                                    pstFile,
+                                    subject,
+                                    taskMethod,
+                                    taskOrganizerName,
+                                    taskOrganizerEmail,
+                                    taskAttendees)
+                            .getBytes(StandardCharsets.UTF_8),
                     null,
                     false);
         }
@@ -898,12 +999,7 @@ public final class PstToEmlConverter {
                 // MSG converter's decision, no invite is emitted at all.
                 log.info("Skipping calendar invite for message " + message.getNid() + ": no start time stored");
             } else {
-                var attendees = new ArrayList<ICalendarGenerator.Attendee>();
-                for (Message.Recipient recipient : recipients) {
-                    if (recipient.email != null && !recipient.email.isBlank()) {
-                        attendees.add(new ICalendarGenerator.Attendee(recipient.name, recipient.email));
-                    }
-                }
+                var attendees = visibleAttendees(recipients);
                 String method = ICalendarGenerator.method(msgClass, !attendees.isEmpty());
                 String organizerName = fromName;
                 String organizerEmail = fromEmail;
@@ -918,7 +1014,7 @@ public final class PstToEmlConverter {
                     // real organizer would be lost). Fall back to the first usable recipient only when no
                     // explicit To recipient carries an address.
                     var meetingOrganizer = recipients.stream()
-                            .filter(recipient -> recipient.type == EmlSerializer.RECIPIENT_TYPE_TO
+                            .filter(recipient -> (recipient.type & 0x0FFFFFFF) == EmlSerializer.RECIPIENT_TYPE_TO
                                     && recipient.email != null
                                     && !recipient.email.isBlank())
                             .findFirst()
@@ -961,7 +1057,7 @@ public final class PstToEmlConverter {
                 int sequence = sequenceId != null && message.getProperty(sequenceId) instanceof Number sequenceValue
                         ? sequenceValue.intValue()
                         : 0;
-                String ical = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
+                var eventDetails = new ICalendarGenerator.EventDetails(
                         method,
                         Date.from(start),
                         end != null ? Date.from(end) : null,
@@ -974,10 +1070,13 @@ public final class PstToEmlConverter {
                         allDay,
                         timeZone,
                         recurrence,
-                        sequence));
+                        sequence);
+                String ical = ICalendarGenerator.generate(eventDetails);
                 serializer.addAttachment(
                         "invite.ics",
-                        "text/calendar; charset=UTF-8; method=" + method,
+                        // Stamp method= with what generate() actually emitted (it downgrades to PUBLISH
+                        // without a resolvable organizer/start), so it equals the body METHOD (rfc6047 §2.4).
+                        "text/calendar; charset=UTF-8; method=" + ICalendarGenerator.effectiveMethod(eventDetails),
                         ical.getBytes(StandardCharsets.UTF_8),
                         null,
                         false);
@@ -991,8 +1090,6 @@ public final class PstToEmlConverter {
             log.info("No specialized handler for message class " + msgClass + "; exported as a generic message");
         }
 
-        long totalAttachmentBytes = 0;
-        int attachmentCount = 0;
         List<Attachment> messageAttachments = message.getAttachments();
         if (messageAttachments.isEmpty() && message.hasAttachments()) {
             // PR_HASATTACH says there are attachments but the attachment table yielded none —
@@ -1003,12 +1100,12 @@ public final class PstToEmlConverter {
                     + " read from its attachment table; they were not exported");
         }
         for (Attachment attachment : messageAttachments) {
-            if (attachmentCount >= MAX_ATTACHMENT_COUNT) {
-                log.error("Message has more than " + MAX_ATTACHMENT_COUNT
-                        + " attachments; remaining attachments were skipped");
+            if (budget.atCountLimit()) {
+                log.error("Message has more than " + AttachmentBudget.MAX_ATTACHMENT_COUNT
+                        + " attachments (including nested messages); remaining attachments were skipped");
                 break;
             }
-            attachmentCount++;
+            budget.recordAttachment();
 
             String attachName = attachment.getLongFilename();
             if (attachName.isEmpty()) attachName = attachment.getFilename();
@@ -1042,11 +1139,23 @@ public final class PstToEmlConverter {
                         continue;
                     }
                     log.info("Found embedded message attachment: " + attachName);
-                    var embedSerializer = createSerializer(embedMessage, options, pstFile, depth + 1, log, stats);
-                    var stringWriter = new StringWriter();
-                    embedSerializer.writeTo(stringWriter);
+                    var embedSerializer =
+                            createSerializer(embedMessage, options, pstFile, depth + 1, log, stats, budget);
+                    // Serialize the child to BYTES (not a char sink) so a nested clear-signed S/MIME entity
+                    // reaches the parent EML byte-for-byte and keeps its signature; EmlSerializer emits these
+                    // bytes through its byte-exact raw-body path.
+                    var embedStream = new ByteArrayOutputStream();
+                    embedSerializer.writeTo(embedStream);
+                    var nestedEml = embedStream.toByteArray();
+                    // Count the serialized nested EML against the aggregate byte cap (parity with the
+                    // regular-attachment path below); its own nested-attachment bytes were already recorded.
+                    if (budget.recordBytes(nestedEml.length)) {
+                        log.error("Message attachments exceed " + AttachmentBudget.maxTotalMegabytes()
+                                + " MB in aggregate (including nested messages); remaining attachments were skipped");
+                        break;
+                    }
                     if (!attachName.toLowerCase(Locale.ROOT).endsWith(".eml")) attachName += ".eml";
-                    serializer.addEmbeddedMessage(attachName, stringWriter.toString());
+                    serializer.addEmbeddedMessage(attachName, nestedEml);
                 } catch (ProcessCanceledException canceled) {
                     // Never demote a cancellation to a failed-attachment count; let it unwind so the
                     // whole conversion stops (mirrors the per-message guard in processFolderContents).
@@ -1104,10 +1213,9 @@ public final class PstToEmlConverter {
                 continue;
             }
 
-            totalAttachmentBytes += data.length;
-            if (totalAttachmentBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
-                log.error("Message attachments exceed " + (MAX_TOTAL_ATTACHMENT_BYTES / (1024 * 1024))
-                        + " MB in aggregate; remaining attachments were skipped");
+            if (budget.recordBytes(data.length)) {
+                log.error("Message attachments exceed " + AttachmentBudget.maxTotalMegabytes()
+                        + " MB in aggregate (including nested messages); remaining attachments were skipped");
                 break;
             }
 
@@ -1137,7 +1245,14 @@ public final class PstToEmlConverter {
         // the accurate source when available.
         for (String name : displayList.split("\\s*;\\s*")) {
             var trimmed = name.trim();
-            if (!trimmed.isEmpty()) {
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            if (EmlSerializer.looksLikeSmtpAddress(trimmed)) {
+                // A bare SMTP address in the display string belongs in the address slot, not the name slot
+                // (which would emit an unparseable quoted-name with no address), matching the MSG path.
+                serializer.addRecipient(recipientType, null, trimmed);
+            } else {
                 serializer.addRecipient(recipientType, trimmed, "");
             }
         }
@@ -1181,7 +1296,14 @@ public final class PstToEmlConverter {
     }
 
     /** A VTODO for an {@code IPM.Task}/{@code IPM.TaskRequest} item: dates, completion state and iTIP method. */
-    private static String buildTaskTodo(Message message, PstFile pstFile, String subject, String method) {
+    private static String buildTaskTodo(
+            Message message,
+            PstFile pstFile,
+            String subject,
+            String method,
+            String organizerName,
+            String organizerEmail,
+            List<ICalendarGenerator.Attendee> attendees) {
         Instant start = namedInstant(message, pstFile, 0x8104); // PidLidTaskStartDate
         Instant due = namedInstant(message, pstFile, 0x8105); // PidLidTaskDueDate
         Integer percentId = pstFile.namedPropertyId(PSETID_TASK, 0x8102); // PidLidPercentComplete
@@ -1196,7 +1318,28 @@ public final class PstToEmlConverter {
                 due != null ? Date.from(due) : null,
                 percent,
                 complete,
-                method);
+                method,
+                organizerName,
+                organizerEmail,
+                attendees);
+    }
+
+    /**
+     * The visible ATTENDEE list (RFC 5546) for a meeting/assigned-task scheduling object: every
+     * recipient with a resolvable address except BCC-class recipients (PR_RECIPIENT_TYPE masked to its
+     * class bits, [MS-OXOMSG] §2.2.3.1), which are hidden from the other participants and must not leak
+     * into a property they can all read.
+     */
+    private static List<ICalendarGenerator.Attendee> visibleAttendees(List<Message.Recipient> recipients) {
+        var attendees = new ArrayList<ICalendarGenerator.Attendee>();
+        for (Message.Recipient recipient : recipients) {
+            if (recipient.email != null
+                    && !recipient.email.isBlank()
+                    && (recipient.type & 0x0FFFFFFF) != EmlSerializer.RECIPIENT_TYPE_BCC) {
+                attendees.add(new ICalendarGenerator.Attendee(recipient.name, recipient.email));
+            }
+        }
+        return attendees;
     }
 
     private static Instant namedInstant(Message message, PstFile pstFile, int namedId) {
@@ -1211,23 +1354,103 @@ public final class PstToEmlConverter {
      * read receipt ({@code .IPNRN}/{@code .IPNNRN}) a {@code message/disposition-notification} part
      * (RFC 8098). The class suffix selects the branch and supplies the {@code Action} /
      * {@code disposition-type} that MAPI does not store verbatim.
+     *
+     * <p>The per-recipient fields mirror the MSG path: {@code Final-Recipient} (rfc3464 §2.3.2) is the
+     * address that actually failed (the report's recipient-table entry, not its own PidTagDisplayTo),
+     * the {@code Status} {@code d.d.d} code (§2.3.4) is recovered from the report's enhanced-status
+     * text, and the free-form {@code PidTagSupplementaryInfo} becomes the {@code Diagnostic-Code}
+     * (§2.3.6) — it is human-readable transport text and must not sit in the strict {@code Status}.
      */
-    private static void emitReport(Message message, String messageClass, EmlSerializer serializer) {
+    private static boolean emitReport(Message message, String messageClass, EmlSerializer serializer) {
         boolean deliveryReport = messageClass.endsWith(".NDR") || messageClass.endsWith(".DR");
+        // Only NDR/DR delivery reports and IPNRN/IPNNRN read receipts carry a structured status. Any
+        // other REPORT.* (delay/relay/etc.) is neither a DSN nor an MDN, so it must not be emitted as a
+        // disposition-notification claiming the message was "displayed" (rfc8098 §3.2.6). Decline it and
+        // let the caller fall back to the generic body.
+        boolean readReceipt = messageClass.endsWith(".IPNRN") || messageClass.endsWith(".IPNNRN");
+        if (!deliveryReport && !readReceipt) {
+            return false;
+        }
         String action = messageClass.endsWith(".NDR") ? "failed" : messageClass.endsWith(".DR") ? "delivered" : null;
         String dispositionType = messageClass.endsWith(".IPNNRN") ? "deleted" : "displayed";
+        var supplementaryInfo = message.getStringProperty(0x0C1B); // PidTagSupplementaryInfo (transport text)
+        String status = null;
+        String diagnosticCode = null;
+        String finalRecipient = null;
+        if (deliveryReport) {
+            finalRecipient = reportFailedRecipient(message);
+            status = ReportGenerator.statusCode(
+                    messageClass.endsWith(".NDR"), supplementaryInfo, message.getStringProperty(0x1001));
+            diagnosticCode = supplementaryInfo;
+        } else {
+            // rfc8098 §3.2.4: an MDN's Final-Recipient is the reader issuing the receipt — the receipt's
+            // own author/sender, not its To recipient (PR_DISPLAY_TO is the original sender who requested
+            // the receipt).
+            finalRecipient = message.getSentRepresentingEmail();
+            if (finalRecipient == null || finalRecipient.isBlank()) {
+                finalRecipient = message.getSenderEmail();
+            }
+        }
+        if (finalRecipient == null || finalRecipient.isBlank()) {
+            // Last resort only: no per-recipient (DSN) or reader (MDN) address was available.
+            finalRecipient = message.getStringProperty(MapiProperties.PR_DISPLAY_TO_W);
+        }
         var info = new ReportGenerator.ReportInfo(
                 deliveryReport,
                 message.getStringProperty(0x1001), // PidTagReportText
                 message.getStringProperty(0x6820), // PidTagReportingMessageTransferAgent
-                message.getStringProperty(MapiProperties.PR_DISPLAY_TO_W), // final recipient
+                finalRecipient,
                 action,
-                message.getStringProperty(0x0C1B), // PidTagSupplementaryInfo (DSN status text)
-                null,
+                status,
+                diagnosticCode,
                 message.getStringProperty(0x1046), // PidTagOriginalMessageId of the original
                 dispositionType);
         var report = ReportGenerator.generate(info);
         serializer.setRawEntity(report.contentType(), null, null, report.body().getBytes(StandardCharsets.UTF_8));
+        return true;
+    }
+
+    /**
+     * Flattens a property value into its non-blank string elements: a multi-valued string property
+     * (e.g. PidNameKeywords) arrives as a {@code List}, a single-valued one as a bare {@code String}.
+     */
+    private static List<String> collectStrings(Object value) {
+        var strings = new ArrayList<String>();
+        if (value instanceof List<?> values) {
+            for (var element : values) {
+                if (element instanceof String text && !text.isBlank()) {
+                    strings.add(text);
+                }
+            }
+        } else if (value instanceof String text && !text.isBlank()) {
+            strings.add(text);
+        }
+        return strings;
+    }
+
+    /**
+     * The address that actually failed (rfc3464 §2.3.2): the recipient-table entry of the report
+     * message holding the failed recipient — preferring a To-type row, then the first row with any
+     * resolvable address — not the bounce's own PidTagDisplayTo. Returns {@code null} when the report
+     * stores no recipient table or no resolvable address. Mirrors the MSG path's reportFailedRecipient.
+     */
+    private static String reportFailedRecipient(Message message) {
+        String firstWithAddress = null;
+        for (var recipient : message.getRecipients()) {
+            if (recipient.email == null || recipient.email.isBlank()) {
+                continue;
+            }
+            // Mask PR_RECIPIENT_TYPE to its class bits ([MS-OXOMSG] §2.2.3.1) before the To compare,
+            // matching the To/Cc/Bcc split and the MSG path: a flag-stamped To row (e.g. 0x10000001 on a
+            // resent/saved bounce) otherwise misses and the first non-To address is reported instead.
+            if ((recipient.type & 0x0FFFFFFF) == EmlSerializer.RECIPIENT_TYPE_TO) {
+                return recipient.email;
+            }
+            if (firstWithAddress == null) {
+                firstWithAddress = recipient.email;
+            }
+        }
+        return firstWithAddress;
     }
 
     /**
@@ -1301,30 +1524,35 @@ public final class PstToEmlConverter {
                 || messageClass.startsWith("REPORT.");
     }
 
-    /**
-     * Writes the EML to a sibling {@code .part} file and atomically renames it into place, so a
-     * mid-conversion failure never leaves a truncated {@code .eml} behind on the user's filesystem.
-     */
     private static void writeSerializerAtomically(EmlSerializer serializer, Path emlFile) throws IOException {
         var tempFile = emlFile.resolveSibling(emlFile.getFileName() + ".part");
+        var written = false;
         try {
             // Write through an OutputStream (not a Writer) so a hoisted clear-signed S/MIME entity's
             // 8-bit body is emitted byte-for-byte rather than re-encoded by the UTF-8 char writer.
             try (var outputStream = new BufferedOutputStream(Files.newOutputStream(tempFile))) {
                 serializer.writeTo(outputStream);
             }
+            written = true;
             try {
                 Files.move(tempFile, emlFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException unsupported) {
-                // Some filesystems (e.g. certain network mounts) cannot rename atomically; fall back to a
-                // best-effort replace so conversion still completes.
+                // Some filesystems (e.g. certain network mounts) cannot rename atomically. A plain
+                // REPLACE_EXISTING move is the best available there, but it is not crash-safe: a power loss
+                // mid-replace can lose both the prior export and the new bytes. The fully written .part is
+                // kept on failure (see the catch below) so the converted message stays recoverable.
                 Files.move(tempFile, emlFile, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException | RuntimeException failure) {
-            try {
-                Files.deleteIfExists(tempFile);
-            } catch (IOException cleanupFailure) {
-                failure.addSuppressed(cleanupFailure);
+            // Clean up only a partially written .part. A .part that was written in full but whose final
+            // rename failed (e.g. the non-atomic fallback above) is deliberately left on disk so the
+            // converted message can be recovered by renaming it, rather than silently lost.
+            if (!written) {
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (IOException cleanupFailure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
             }
             throw failure;
         }
@@ -1474,6 +1702,31 @@ public final class PstToEmlConverter {
         } while (counters.containsKey(candidate) || Files.exists(candidate));
         counters.put(base, next);
         counters.put(candidate, 1);
+        return candidate;
+    }
+
+    /**
+     * The next free {@code <subject>_<nid>[_N].eml} path under {@code folderDir} for a SUFFIX_COUNTER
+     * duplicate. Shares the per-base counter map with {@link #uniqueDirectory} (keys are disjoint — those
+     * are directories, these are {@code .eml} files) so repeated collisions on one base resume the
+     * {@code _N} probe from the last value used instead of re-probing from {@code _1}, turning O(K^2)
+     * filesystem stats into O(K). The produced {@code _1, _2, …} naming is unchanged.
+     */
+    private static Path nextFreeEmlFile(
+            Path folderDir, String safeSubject, String nidPart, Map<Path, Integer> counters) {
+        var base = folderDir.resolve(boundedEmlFileName(folderDir, safeSubject, nidPart));
+        if (!counters.containsKey(base) && !Files.exists(base)) {
+            counters.put(base, 0);
+            return base;
+        }
+        var next = counters.getOrDefault(base, 0);
+        Path candidate;
+        do {
+            next++;
+            candidate = folderDir.resolve(boundedEmlFileName(folderDir, safeSubject, nidPart + "_" + next));
+        } while (counters.containsKey(candidate) || Files.exists(candidate));
+        counters.put(base, next);
+        counters.put(candidate, 0);
         return candidate;
     }
 

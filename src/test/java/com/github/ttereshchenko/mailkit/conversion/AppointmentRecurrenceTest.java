@@ -172,6 +172,41 @@ class AppointmentRecurrenceTest {
         assertNull(AppointmentRecurrence.parse(null));
     }
 
+    @Test
+    void emptyWeeklyDayMaskYieldsNoPatternInsteadOfEmptyByDay() {
+        // A corrupt weekly pattern with a zero day-of-week mask would otherwise emit a "BYDAY=" with no
+        // value (invalid rfc5545 §3.3.10), making the whole RRULE unparseable; treat it as no recurrence.
+        assertNull(AppointmentRecurrence.parse(blob(
+                0x200B,
+                1,
+                1,
+                new int[] {0x00},
+                0x2023,
+                0,
+                0,
+                new long[0],
+                new long[0],
+                date(2024, 1, 2),
+                date(2024, 1, 2))));
+    }
+
+    @Test
+    void emptyMonthlyNthDayMaskYieldsNoPattern() {
+        // A PATTERN_MONTH_NTH with a zero day-of-week mask likewise has no valid BYDAY rule-part.
+        assertNull(AppointmentRecurrence.parse(blob(
+                0x200C,
+                3,
+                1,
+                new int[] {0x00, 3},
+                0x2023,
+                0,
+                0,
+                new long[0],
+                new long[0],
+                date(2024, 1, 19),
+                date(2024, 1, 19))));
+    }
+
     /** Minutes since 1601-01-01 (local) for midnight of the given date. */
     private static long date(int year, int month, int day) {
         return java.time.Duration.between(

@@ -786,6 +786,35 @@ class EmlSerializerTest {
         assertEquals(0, countByte(eml, (byte) 0xC3), "no UTF-8 re-encoding of the high bytes may occur");
     }
 
+    /**
+     * Byte-fidelity regression for a NESTED entity: an embedded {@code message/rfc822} part is emitted
+     * verbatim, so an 8-bit octet in the nested message (e.g. a nested clear-signed S/MIME entity) must
+     * survive byte-for-byte through {@link EmlSerializer#writeTo(java.io.OutputStream)}. The old
+     * String-based embedded body routed the bytes through the UTF-8 char writer, doubling every octet
+     * &ge; 0x80 and invalidating a nested signature.
+     */
+    @Test
+    void embeddedMessageWithEightBitOctetsIsWrittenByteExactViaOutputStream() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.setSubject("outer");
+        serializer.setSender("A", "a@example.com");
+        serializer.addBody("outer body", "text/plain; charset=UTF-8");
+        byte[] nested = {
+            'C', 'o', 'n', 't', 'e', 'n', 't', '-', 'T', 'y', 'p', 'e', ':', ' ',
+            't', 'e', 'x', 't', '/', 'p', 'l', 'a', 'i', 'n', '\r', '\n', '\r', '\n',
+            's', 'i', 'g', (byte) 0xE9, (byte) 0x80, (byte) 0xFF, '\r', '\n'
+        };
+        serializer.addEmbeddedMessage("inner.eml", nested);
+
+        var bytes = new java.io.ByteArrayOutputStream();
+        serializer.writeTo(bytes);
+        var eml = bytes.toByteArray();
+
+        assertTrue(indexOfSubarray(eml, nested) >= 0, "the nested message bytes must appear verbatim");
+        assertEquals(1, countByte(eml, (byte) 0xE9), "0xE9 must appear once, not be re-encoded to 0xC3 0xA9");
+        assertEquals(0, countByte(eml, (byte) 0xC3), "no UTF-8 re-encoding of the nested high bytes may occur");
+    }
+
     private static int indexOfSubarray(byte[] haystack, byte[] needle) {
         outer:
         for (var index = 0; index <= haystack.length - needle.length; index++) {

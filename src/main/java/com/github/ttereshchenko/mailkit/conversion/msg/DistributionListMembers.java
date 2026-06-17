@@ -62,10 +62,18 @@ public final class DistributionListMembers {
     /** Bit {@code 0x8000} (MAE_UNICODE / "U") in the 2-byte entry-flags field: strings are UTF-16LE. */
     private static final int MAE_UNICODE = 0x8000;
 
-    /** The 8-bit charset for non-Unicode one-off strings (the legacy code page Outlook writes). */
+    /** The default 8-bit charset for non-Unicode one-off strings when the message declares no code page. */
     private static final Charset ANSI_CHARSET = Charset.forName("windows-1252");
 
     private DistributionListMembers() {}
+
+    /**
+     * Decodes every one-off member using the windows-1252 default code page for non-Unicode inline
+     * strings. Equivalent to {@link #parse(byte[][], Charset)} with {@link #ANSI_CHARSET}.
+     */
+    public static List<Member> parse(byte[][] memberBlobs) {
+        return parse(memberBlobs, ANSI_CHARSET);
+    }
 
     /**
      * Decodes every one-off member from the given multi-valued binary property values. Null-safe,
@@ -73,15 +81,17 @@ public final class DistributionListMembers {
      *
      * @param memberBlobs the {@code PT_MV_BINARY} values (typically of 0x8054 / 0x8055); may be
      *     {@code null} or contain {@code null} elements
+     * @param ansiCharset the code page for non-Unicode (MAE_UNICODE-clear) inline strings — the
+     *     message's PR_MESSAGE_CODEPAGE/PR_INTERNET_CPID; Unicode entries ignore it (they are UTF-16LE)
      * @return the decoded members in encounter order; empty when nothing decodes
      */
-    public static List<Member> parse(byte[][] memberBlobs) {
+    public static List<Member> parse(byte[][] memberBlobs, Charset ansiCharset) {
         if (memberBlobs == null) {
             return List.of();
         }
         var members = new ArrayList<Member>();
         for (var blob : memberBlobs) {
-            var member = parseOneOffEntry(blob);
+            var member = parseOneOffEntry(blob, ansiCharset);
             if (member != null) {
                 members.add(member);
             }
@@ -93,7 +103,7 @@ public final class DistributionListMembers {
      * Decodes a single EntryID as a One-Off EntryID, or returns {@code null} when the blob is not a
      * one-off entry (e.g. a store or Address-Book EntryID) or is too short/malformed to decode.
      */
-    private static Member parseOneOffEntry(byte[] blob) {
+    private static Member parseOneOffEntry(byte[] blob, Charset ansiCharset) {
         if (blob == null || blob.length < STRINGS_OFFSET) {
             return null;
         }
@@ -105,7 +115,7 @@ public final class DistributionListMembers {
         var entryFlags = (blob[22] & 0xFF) | ((blob[23] & 0xFF) << 8);
         var unicode = (entryFlags & MAE_UNICODE) != 0;
 
-        var strings = readTerminatedStrings(blob, STRINGS_OFFSET, unicode, 3);
+        var strings = readTerminatedStrings(blob, STRINGS_OFFSET, unicode, 3, ansiCharset);
         if (strings == null) {
             return null;
         }
@@ -134,10 +144,11 @@ public final class DistributionListMembers {
 
     /**
      * Reads {@code count} consecutive null-terminated strings starting at {@code offset}. Unicode
-     * strings are UTF-16LE with a 2-byte terminator; otherwise the charset is the legacy 8-bit
-     * Windows-1252. Returns {@code null} if the blob runs out before all strings are read.
+     * strings are UTF-16LE with a 2-byte terminator; otherwise the charset is the supplied
+     * {@code ansiCharset}. Returns {@code null} if the blob runs out before all strings are read.
      */
-    private static List<String> readTerminatedStrings(byte[] blob, int offset, boolean unicode, int count) {
+    private static List<String> readTerminatedStrings(
+            byte[] blob, int offset, boolean unicode, int count, Charset ansiCharset) {
         var strings = new ArrayList<String>(count);
         var position = offset;
         for (var index = 0; index < count; index++) {
@@ -145,7 +156,7 @@ public final class DistributionListMembers {
             if (terminator < 0) {
                 return null;
             }
-            var charset = unicode ? StandardCharsets.UTF_16LE : ANSI_CHARSET;
+            var charset = unicode ? StandardCharsets.UTF_16LE : ansiCharset;
             strings.add(new String(blob, position, terminator - position, charset).trim());
             position = terminator + (unicode ? 2 : 1);
         }
