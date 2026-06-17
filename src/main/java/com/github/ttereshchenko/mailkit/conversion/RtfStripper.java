@@ -1,7 +1,9 @@
 package com.github.ttereshchenko.mailkit.conversion;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -30,6 +32,11 @@ public final class RtfStripper {
         var output = new StringBuilder(source.length());
         var skipDepth = 0;
         var unicodeSkip = 1;
+        // The RTF "uc" control word (the Unicode fallback-skip count) is a group-scoped character
+        // property: a uc value set inside {...} must revert at the closing brace. Save it on '{' and
+        // restore on '}' (mirrors deEncapsulateHtml) so a per-group uc count does not leak out and
+        // mis-skip the ANSI fallback of later Unicode escapes.
+        var groupState = new ArrayDeque<Integer>();
         var index = 0;
         while (index < source.length()) {
             var character = source.charAt(index);
@@ -52,22 +59,14 @@ public final class RtfStripper {
                     continue;
                 }
                 if (next == '\'') {
-                    var hex = source.substring(index + 2, Math.min(index + 4, source.length()));
-                    if (hex.length() == 2) {
-                        try {
-                            var value = Integer.parseInt(hex, 16);
-                            if (skipDepth == 0) {
-                                var bytes = new byte[] {(byte) value};
-                                output.append(new String(bytes, charset));
-                            }
-                            index += 4;
-                            continue;
-                        } catch (NumberFormatException ignored) {
-                            index += 2;
-                            continue;
-                        }
+                    // Decode the whole run of consecutive \'hh escapes together: a DBCS or UTF-8
+                    // (\ansicpg65001) code page stores one character as several adjacent bytes, so
+                    // decoding each \'hh in isolation would mojibake every multibyte character.
+                    var run = decodeHexRun(source, index, charset);
+                    if (skipDepth == 0) {
+                        output.append(run.text());
                     }
-                    index += 2;
+                    index = run.nextIndex();
                     continue;
                 }
                 if (next == 'u'
@@ -160,6 +159,7 @@ public final class RtfStripper {
                 continue;
             }
             if (character == '{') {
+                groupState.push(unicodeSkip);
                 if (skipDepth > 0) {
                     skipDepth++;
                 }
@@ -167,6 +167,9 @@ public final class RtfStripper {
                 continue;
             }
             if (character == '}') {
+                if (!groupState.isEmpty()) {
+                    unicodeSkip = groupState.pop();
+                }
                 if (skipDepth > 0) {
                     skipDepth--;
                 }
@@ -197,6 +200,9 @@ public final class RtfStripper {
         var index = 0;
         var inHtmlRtf = false;
         var unicodeSkip = 1;
+        // RTF group state ({inHtmlRtf, unicodeSkip}) is saved on '{' and restored on '}' so a toggle or
+        // \\ucN set inside a group does not leak past its closing brace (RTF spec / MS-OXRTFEX grouping).
+        var groupState = new ArrayDeque<int[]>();
         while (index < rtfText.length()) {
             if (rtfText.startsWith("\\htmlrtf0", index)) {
                 inHtmlRtf = false;
@@ -211,28 +217,37 @@ public final class RtfStripper {
             }
 
             if (rtfText.startsWith("{\\*\\htmltag", index)) {
-                index = appendHtmlTag(rtfText, index, charset, html);
+                index = appendHtmlTag(rtfText, index, charset, html, unicodeSkip);
+                continue;
+            }
+            var character = rtfText.charAt(index);
+            // Maintain the group-state stack even inside an \htmlrtf-suppressed run so it stays balanced;
+            // a '{' saves the current state and the matching '}' restores it.
+            if (character == '{') {
+                groupState.push(new int[] {inHtmlRtf ? 1 : 0, unicodeSkip});
+                index++;
+                continue;
+            }
+            if (character == '}') {
+                if (!groupState.isEmpty()) {
+                    var restored = groupState.pop();
+                    inHtmlRtf = restored[0] != 0;
+                    unicodeSkip = restored[1];
+                }
+                index++;
                 continue;
             }
             if (inHtmlRtf) {
                 index++;
                 continue;
             }
-            var character = rtfText.charAt(index);
-            if (character == '{' || character == '}') {
-                index++;
-                continue;
-            }
             if (character == '\\') {
-                if (index + 3 < rtfText.length() && rtfText.charAt(index + 1) == '\'') {
-                    var hex = rtfText.substring(index + 2, index + 4);
-                    try {
-                        var bytes = new byte[] {(byte) Integer.parseInt(hex, 16)};
-                        html.append(new String(bytes, charset));
-                    } catch (NumberFormatException ignored) {
-                        // malformed \'hh escape — skip this byte
-                    }
-                    index += 4;
+                if (index + 1 < rtfText.length() && rtfText.charAt(index + 1) == '\'') {
+                    // Decode the whole run of consecutive \'hh escapes together so multibyte
+                    // (DBCS / UTF-8) characters are not split into per-byte U+FFFD / '?' mojibake.
+                    var run = decodeHexRun(rtfText, index, charset);
+                    html.append(run.text());
+                    index = run.nextIndex();
                     continue;
                 }
                 // \\ucN sets how many fallback characters trail each \\uN escape; it must be matched
@@ -306,7 +321,8 @@ public final class RtfStripper {
      * closing brace, or {@code startIndex + 1} when the group never closes so the caller resumes
      * ordinary scanning.
      */
-    private static int appendHtmlTag(String rtfText, int startIndex, Charset charset, StringBuilder html) {
+    private static int appendHtmlTag(
+            String rtfText, int startIndex, Charset charset, StringBuilder html, int unicodeSkip) {
         var cursor = startIndex + "{\\*\\htmltag".length();
         // Skip the numeric destination argument (the tag kind) and its delimiter space.
         while (cursor < rtfText.length() && Character.isDigit(rtfText.charAt(cursor))) cursor++;
@@ -339,14 +355,12 @@ public final class RtfStripper {
                 cursor += 2;
                 continue;
             }
-            if (next == '\'' && cursor + 3 < rtfText.length()) {
-                try {
-                    var value = Integer.parseInt(rtfText.substring(cursor + 2, cursor + 4), 16);
-                    tag.append(new String(new byte[] {(byte) value}, charset));
-                } catch (NumberFormatException ignored) {
-                    // malformed \'hh escape — drop it
-                }
-                cursor += 4;
+            if (next == '\'') {
+                // Decode the whole run of consecutive \'hh escapes together so a multibyte
+                // (DBCS / UTF-8) attribute value is not split into per-byte mojibake.
+                var run = decodeHexRun(rtfText, cursor, charset);
+                tag.append(run.text());
+                cursor = run.nextIndex();
                 continue;
             }
             if (Character.isLetter(next)) {
@@ -383,7 +397,7 @@ public final class RtfStripper {
                         } catch (NumberFormatException ignored) {
                             // malformed \\uN escape — skip it
                         }
-                        cursor = skipUnicodeFallback(rtfText, cursor, 1);
+                        cursor = skipUnicodeFallback(rtfText, cursor, unicodeSkip);
                     }
                     default -> {
                         // other control words carry no literal content inside an htmltag
@@ -474,4 +488,34 @@ public final class RtfStripper {
             default -> null;
         };
     }
+
+    /**
+     * Decodes a maximal run of consecutive {@code \'hh} hex escapes starting at {@code index} (which
+     * must point at the backslash of the first escape) as one byte sequence through {@code charset}.
+     * A DBCS or UTF-8 ({@code \ansicpg65001}) code page stores a single character as several adjacent
+     * {@code \'hh} bytes, so the run must be decoded together — decoding each byte in isolation yields
+     * U+FFFD / {@code '?'} mojibake. A malformed or truncated escape ends the run. Always advances at
+     * least past the first escape, so callers cannot loop.
+     */
+    private static HexRun decodeHexRun(String rtf, int index, Charset charset) {
+        var bytes = new ByteArrayOutputStream();
+        var cursor = index;
+        while (cursor + 1 < rtf.length() && rtf.charAt(cursor) == '\\' && rtf.charAt(cursor + 1) == '\'') {
+            if (cursor + 4 > rtf.length()) {
+                cursor += 2; // truncated \'h at end of input — consume the marker and stop
+                break;
+            }
+            try {
+                bytes.write(Integer.parseInt(rtf.substring(cursor + 2, cursor + 4), 16));
+            } catch (NumberFormatException ignored) {
+                cursor += 4; // malformed hex — skip this escape and stop the run
+                break;
+            }
+            cursor += 4;
+        }
+        return new HexRun(new String(bytes.toByteArray(), charset), cursor);
+    }
+
+    /** Decoded text of a {@code \'hh} escape run and the index just past it. */
+    private record HexRun(String text, int nextIndex) {}
 }

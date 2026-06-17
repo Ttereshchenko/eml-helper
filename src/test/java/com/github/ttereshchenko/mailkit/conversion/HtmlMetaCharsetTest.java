@@ -40,4 +40,22 @@ class HtmlMetaCharsetTest {
         var html = "<p>the word charset=latin1 in prose</p>";
         assertSame(html, HtmlMetaCharset.rewriteToUtf8(html));
     }
+
+    @Test
+    void unrelatedAttributeEndingInCharsetIsNotRewritten() {
+        // charset must be preceded by a real separator: a different attribute that merely ends in
+        // "charset" (data-charset=) is left intact, while the genuine <meta charset> is still normalized.
+        var html = "<meta data-charset=\"latin1\" charset=\"windows-1251\">";
+        assertEquals("<meta data-charset=\"latin1\" charset=\"UTF-8\">", HtmlMetaCharset.rewriteToUtf8(html));
+    }
+
+    @Test
+    void multiParameterContentTypeKeepsSeparatorAfterCharset() {
+        // The ';' is the MIME parameter separator (rfc2045 §5.1); rewriting the charset must stop at it
+        // rather than swallow it and merge the following parameter into the charset value.
+        assertEquals(
+                "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8; format=flowed\">",
+                HtmlMetaCharset.rewriteToUtf8(
+                        "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1250; format=flowed\">"));
+    }
 }

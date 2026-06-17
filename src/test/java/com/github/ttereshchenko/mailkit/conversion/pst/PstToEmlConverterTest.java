@@ -23,6 +23,8 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -117,6 +119,67 @@ class PstToEmlConverterTest {
             assertTrue(eml.contains("Alice"), "Alice should appear in the To header");
             assertTrue(eml.contains("Bob"), "Bob should appear in the To header");
             assertTrue(eml.contains("Cc:") && eml.contains("Carol"), "Cc should come from the display-cc fallback");
+        }
+    }
+
+    // Audit: the display-string fallback is per recipient type, not all-or-nothing — a table that carries
+    // a usable To but only a display-string Cc must still emit the Cc (parity with the MSG path). The
+    // pre-fix code gated the whole fallback on an *empty* table, so this Cc was silently dropped.
+    @Test
+    void partialRecipientTableStillFallsBackToDisplayCc() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Subject";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Sender";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "sender@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // A usable To recipient — the structured table is non-empty.
+                    return List.of(new Recipient(1, "Alice", "alice@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getDisplayCc() {
+                    return "Carol";
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("alice@example.com"), "the structured To recipient must be present: " + eml);
+            assertTrue(
+                    eml.contains("Cc:") && eml.contains("Carol"),
+                    "a display-only Cc must still fall back per type even when the To table is populated: " + eml);
         }
     }
 
@@ -322,6 +385,263 @@ class PstToEmlConverterTest {
 
             assertTrue(eml.contains("From: \"Boss\" <boss@example.com>"), eml);
             assertTrue(eml.contains("Sender: \"Assistant\" <assistant@example.com>"), eml);
+        }
+    }
+
+    // P2: when PR_SENDER_EMAIL is blank but the sent-representing author has an address, the author is
+    // promoted to From: rather than dropped to the undisclosed placeholder (RFC 5322 §3.6.2). No Sender:
+    // is emitted because there is no distinct transmitter address.
+    @Test
+    void blankSenderEmailPromotesSentRepresentingAuthorToFrom() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Author only";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "";
+                }
+
+                @Override
+                public String getSentRepresentingName() {
+                    return "Boss";
+                }
+
+                @Override
+                public String getSentRepresentingEmail() {
+                    return "boss@example.com";
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("From: \"Boss\" <boss@example.com>"), eml);
+            assertFalse(eml.contains("Sender:"), "no Sender without a distinct transmitter address: " + eml);
+        }
+    }
+
+    // P3: PR_RECIPIENT_TYPE may carry high-order flag bits (e.g. 0x10000001 on a resent/saved item).
+    // After masking to the class bits ([MS-OXOMSG] §2.2.3.1) the recipient still classifies as To and
+    // keeps its address, instead of matching no class and being silently dropped.
+    @Test
+    void recipientTypeHighFlagBitsStillClassifyAsTo() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Flagged recipient";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of(new Recipient(0x10000001, "Bob", "bob@example.com"));
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("To: \"Bob\" <bob@example.com>"), "flagged To recipient must survive: " + eml);
+        }
+    }
+
+    // P4: PR_READ_RECEIPT_REQUESTED surfaces as Disposition-Notification-To addressed to the From author
+    // (rfc8098), matching the MSG path.
+    @Test
+    void readReceiptRequestedEmitsDispositionNotificationTo() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Receipt please";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Alice";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "alice@example.com";
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    return propertyId == MapiProperties.PR_READ_RECEIPT_REQUESTED ? Boolean.TRUE : null;
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("Disposition-Notification-To: \"Alice\" <alice@example.com>"),
+                    "read-receipt request must emit Disposition-Notification-To: " + eml);
+        }
+    }
+
+    // P4: categories (PidNameKeywords, a string-named PS_PUBLIC_STRINGS property) surface as the Keywords
+    // header, matching the MSG path.
+    @Test
+    void categoriesEmitAsKeywordsHeader() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var psPublicStrings = UUID.fromString("00020329-0000-0000-C000-000000000046");
+            var keywordsId = pstFile.namedPropertyId(psPublicStrings, "Keywords");
+            org.junit.jupiter.api.Assertions.assertNotNull(
+                    keywordsId, "sample PST must register the Keywords named property for this test");
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Categorized";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    return propertyId == keywordsId ? List.of("Red", "Blue") : null;
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("Keywords: Red, Blue"), "categories must surface as the Keywords header: " + eml);
+        }
+    }
+
+    // M4: a REPORT.* class that is neither a delivery report (.NDR/.DR) nor a read/non-read receipt
+    // (.IPNRN/.IPNNRN) must not be emitted as a disposition-notification claiming the message was
+    // "displayed" (rfc8098 §3.2.6) from the PST path either; it falls back to the generic body.
+    @Test
+    void unrecognizedReportClassFallsBackToBody() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "REPORT.IPM.Note.Delayed";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Delivery delayed";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Your message has been delayed.";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertFalse(eml.contains("disposition-notification"), "non-receipt report must not become an MDN: " + eml);
+            assertFalse(eml.contains("Disposition:"), "must not fabricate a disposition: " + eml);
+            assertTrue(eml.contains("Your message has been delayed."), "falls back to the generic body: " + eml);
         }
     }
 
@@ -2160,6 +2480,12 @@ class PstToEmlConverterTest {
                 public String getMessageClass() {
                     return "IPM.TaskRequest";
                 }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // The assignee — a task REQUEST's ATTENDEE (RFC 5546 §3.4); the sender is the ORGANIZER.
+                    return List.of(new Recipient(1, "Assignee", "assignee@example.com"));
+                }
             };
 
             var writer = new StringWriter();
@@ -2189,6 +2515,13 @@ class PstToEmlConverterTest {
                 @Override
                 public String getMessageClass() {
                     return "IPM.TaskRequest.Accept";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // The original assigner — a task REPLY's ORGANIZER (RFC 5546 §3.4); the responding
+                    // sender is the ATTENDEE.
+                    return List.of(new Recipient(1, "Assigner", "assigner@example.com"));
                 }
             };
 
@@ -2368,6 +2701,169 @@ class PstToEmlConverterTest {
         }
     }
 
+    /**
+     * Audit 03-M4: the recovery pass has its own checkCanceled() / ProcessCanceledException re-throw,
+     * separate from the folder walk. An empty knownMessages set makes every message node an unreferenced
+     * (orphan) candidate, so recovery actually processes items and reaches its cancel checkpoint;
+     * cancelling there must propagate the exception and never miscount it as a failed message.
+     */
+    @Test
+    void recoveryCancellationPropagatesAndIsNotCountedAsFailure() throws Exception {
+        var multiMessagePst = Paths.get("src/test/resources/samples/pst/testPST_variousBodyTypes.pst");
+        var tempDir = Files.createTempDirectory("pst_recover_cancel");
+        try (var pstFile = new PstFile(multiMessagePst)) {
+            // recoverUnreferencedMessages calls checkCanceled() then setText() per candidate, so setText
+            // fires for candidate #1 and arms cancellation; the checkCanceled() guarding candidate #2 then
+            // throws. isCancelable() is overridden to true so the (final) checkCanceled() throws via the
+            // cancel() flag alone, without the default isCancelable() path that calls
+            // ProgressManager.getInstance() — which needs an IntelliJ Application this plain unit test
+            // does not start.
+            var indicator = new ProgressIndicatorBase() {
+                @Override
+                public void setText(String text) {
+                    super.setText(text);
+                    cancel();
+                }
+
+                @Override
+                protected boolean isCancelable() {
+                    return true;
+                }
+            };
+            var stats = new PstToEmlConverter.Stats();
+
+            var thrown = org.junit.jupiter.api.Assertions.assertThrows(
+                    ProcessCanceledException.class,
+                    () -> PstToEmlConverter.recoverUnreferencedMessages(
+                            pstFile,
+                            tempDir,
+                            recoveryOptions(null),
+                            stats,
+                            indicator,
+                            ConversionLog.NOOP,
+                            new HashSet<>(),
+                            new HashSet<>(),
+                            new HashMap<>()),
+                    "checkCanceled()'s ProcessCanceledException must propagate out of the recovery pass");
+            org.junit.jupiter.api.Assertions.assertNotNull(thrown);
+
+            assertEquals(
+                    0,
+                    stats.failedMessages(),
+                    "A cancellation during recovery must not be counted as a failed message: "
+                            + stats.failedMessages());
+            assertTrue(
+                    stats.converted() < 4,
+                    "Recovery must stop early on cancellation rather than recover every message, got "
+                            + stats.converted());
+        }
+    }
+
+    /** Audit 03-M4: the recovery pass honors the message-count limit independently of the folder walk. */
+    @Test
+    void recoveryHonorsMessageCountLimit() throws Exception {
+        var multiMessagePst = Paths.get("src/test/resources/samples/pst/testPST_variousBodyTypes.pst");
+        var tempDir = Files.createTempDirectory("pst_recover_limit");
+        try (var pstFile = new PstFile(multiMessagePst)) {
+            var stats = new PstToEmlConverter.Stats();
+
+            PstToEmlConverter.recoverUnreferencedMessages(
+                    pstFile,
+                    tempDir,
+                    recoveryOptions(1),
+                    stats,
+                    new ProgressIndicatorBase(),
+                    ConversionLog.NOOP,
+                    new HashSet<>(),
+                    new HashSet<>(),
+                    new HashMap<>());
+
+            assertEquals(1, stats.converted(), "Recovery must stop at the message-count limit");
+        }
+    }
+
+    /**
+     * Audit 03-M4: a corrupt/hostile hierarchy can reference a folder as its own ancestor. The cycle
+     * guard (a visited-NID set) must skip a folder already on the path instead of recursing forever;
+     * the root NID is pre-seeded as visited to stand in for that self-ancestry without a crafted cyclic
+     * store.
+     */
+    @Test
+    void folderCycleGuardSkipsAnAlreadyVisitedFolder() throws Exception {
+        var tempDir = Files.createTempDirectory("pst_cycle");
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var stats = new PstToEmlConverter.Stats();
+            var log = new RecordingLog();
+            var visited = new HashSet<Integer>();
+            visited.add(0x122); // the root folder is already on the path
+
+            PstToEmlConverter.processFolder(
+                    pstFile,
+                    0x122,
+                    tempDir,
+                    defaultOptions(),
+                    stats,
+                    new ProgressIndicatorBase(),
+                    "",
+                    log,
+                    visited,
+                    new HashSet<>(),
+                    new HashMap<>(),
+                    0);
+
+            assertEquals(0, stats.converted(), "an already-visited folder must not be processed again");
+            assertTrue(
+                    log.infos.stream().anyMatch(info -> info.contains("cycle guard")),
+                    "the cycle guard must log when it skips an already-visited folder: " + log.infos);
+        }
+    }
+
+    /**
+     * Audit 03-M4: a deep linear (acyclic) folder chain slips past the cycle guard, so a depth cap stops
+     * it before a StackOverflowError. Driving the recursion past MAX_FOLDER_DEPTH must log, count a
+     * failed folder and return rather than descend.
+     */
+    @Test
+    void folderDepthGuardStopsBeyondMaxDepth() throws Exception {
+        var tempDir = Files.createTempDirectory("pst_depth");
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var stats = new PstToEmlConverter.Stats();
+            var log = new RecordingLog();
+
+            PstToEmlConverter.processFolder(
+                    pstFile,
+                    0x122,
+                    tempDir,
+                    defaultOptions(),
+                    stats,
+                    new ProgressIndicatorBase(),
+                    "",
+                    log,
+                    new HashSet<>(),
+                    new HashSet<>(),
+                    new HashMap<>(),
+                    PstToEmlConverter.MAX_FOLDER_DEPTH + 1);
+
+            assertEquals(0, stats.converted(), "no folder may be processed past the depth cap");
+            assertEquals(1, stats.failedFolders(), "the over-deep folder is counted as a failed folder");
+            assertTrue(
+                    log.errors.stream().anyMatch(error -> error.contains("exceeded depth")),
+                    "the depth guard must log when it stops: " + log.errors);
+        }
+    }
+
+    private static PstToEmlConverter.Options recoveryOptions(Integer limit) {
+        return new PstToEmlConverter.Options(
+                PstToEmlConverter.DuplicateHandling.OVERWRITE,
+                limit,
+                false,
+                true,
+                Message.AddressPreference.PREFER_SMTP,
+                true, // recoverDeletedItems
+                true, // scanOrphans
+                64L * 1024 * 1024);
+    }
+
     private static int countOccurrences(String haystack, String needle) {
         int count = 0;
         int from = 0;
@@ -2376,5 +2872,330 @@ class PstToEmlConverterTest {
             from += needle.length();
         }
         return count;
+    }
+
+    // F2 (audit follow-up): MAPI stores In-Reply-To/References unbracketed; the PST path must normalize
+    // them to RFC 5322 §3.6.4 angle-bracketed msg-ids (dropping @-less tokens) like the MSG path does,
+    // rather than emit the raw stored value.
+    @Test
+    void bareThreadingHeaderValuesAreAngleBracketedAndAtlessTokensDropped() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Threaded";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getStringProperty(int propertyId) {
+                    if (propertyId == MapiProperties.PR_IN_REPLY_TO_ID_W) {
+                        return "parent@example.com"; // bare, unbracketed
+                    }
+                    if (propertyId == MapiProperties.PR_INTERNET_REFERENCES_W) {
+                        return "root@example.com freetext parent@example.com"; // ids + an @-less token
+                    }
+                    return null;
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("In-Reply-To: <parent@example.com>"), eml);
+            assertTrue(eml.contains("References: <root@example.com> <parent@example.com>"), eml);
+            assertFalse(eml.contains("freetext"), "an @-less token is not a msg-id and must be dropped: " + eml);
+        }
+    }
+
+    // F3 (audit follow-up): on a delivery report a To-recipient row flag-stamped with high
+    // PR_RECIPIENT_TYPE bits must still be recognized (masked) as the DSN Final-Recipient instead of
+    // falling through to a non-To address.
+    @Test
+    void ndrFinalRecipientPrefersFlaggedToRowOverOtherRows() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "REPORT.IPM.Note.NDR";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Undeliverable: Hello";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // A Cc row precedes a flag-stamped To row (0x10000001). The unmasked compare missed the
+                    // To row and reported the Cc address; masking recovers the real failed To recipient.
+                    return List.of(
+                            new Recipient(2, "Cc Person", "cc@example.com"),
+                            new Recipient(0x10000001, "To Person", "to@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getStringProperty(int propertyId) {
+                    return switch (propertyId) {
+                        case 0x1001 -> "Your message could not be delivered.";
+                        case 0x6820 -> "mail.relay.example.com";
+                        case 0x0C1B -> "5.1.1";
+                        default -> null;
+                    };
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("Final-Recipient: rfc822; to@example.com"),
+                    "the flagged To row must be the Final-Recipient: " + eml);
+            assertFalse(
+                    eml.contains("Final-Recipient: rfc822; cc@example.com"),
+                    "the Cc row must not be reported as the failed recipient: " + eml);
+        }
+    }
+
+    // F4 (audit follow-up): the meeting-response REPLY organizer is the To recipient even when that row
+    // carries high PR_RECIPIENT_TYPE flag bits — the compare must mask first, matching the MSG path.
+    @Test
+    void meetingResponseOrganizerSurvivesFlaggedToRecipientType() throws Exception {
+        var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
+        try (var pstFile = new PstFile(distListPst)) {
+            var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
+            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Schedule.Meeting.Resp.Pos";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Accepted: Sync";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Bob";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "bob@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // Carol (Cc) precedes Alice (the organizer), and Alice's To row is flag-stamped
+                    // (0x10000001). The unmasked filter missed Alice and promoted Carol; masking fixes it.
+                    return List.of(
+                            new Recipient(2, "Carol", "carol@example.com"),
+                            new Recipient(0x10000001, "Alice", "alice@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    if (propertyId == startId) {
+                        return Instant.parse("2026-07-01T15:00:00Z");
+                    }
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var ics = new String(
+                    Base64.getMimeDecoder()
+                            .decode(Pattern.compile("(?s)name=\"invite\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                                    .matcher(writer.toString())
+                                    .results()
+                                    .findFirst()
+                                    .orElseThrow()
+                                    .group(1)),
+                    StandardCharsets.UTF_8);
+
+            var organizerLine = ics.lines()
+                    .filter(line -> line.startsWith("ORGANIZER"))
+                    .findFirst()
+                    .orElse("");
+            assertTrue(organizerLine.contains("alice@example.com"), "ORGANIZER must be the flagged To row: " + ics);
+            assertFalse(organizerLine.contains("carol@example.com"), "Cc must not be promoted to organizer: " + ics);
+        }
+    }
+
+    // F5 (audit follow-up): a meeting REQUEST must not list a Bcc-class recipient as an iCal ATTENDEE
+    // (RFC 5546) — a blind copy would otherwise leak into a property every invitee can read.
+    @Test
+    void meetingRequestExcludesBccRecipientsFromAttendees() throws Exception {
+        var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
+        try (var pstFile = new PstFile(distListPst)) {
+            var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
+            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Schedule.Meeting.Request";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Sync";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Organizer";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "org@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // 1 = To, 3 = Bcc. The blind copy (Dave) must not surface as an ATTENDEE.
+                    return List.of(
+                            new Recipient(1, "Alice", "alice@example.com"),
+                            new Recipient(3, "Dave", "dave@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    if (propertyId == startId) {
+                        return Instant.parse("2026-07-01T15:00:00Z");
+                    }
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var ics = new String(
+                    Base64.getMimeDecoder()
+                            .decode(Pattern.compile("(?s)name=\"invite\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                                    .matcher(writer.toString())
+                                    .results()
+                                    .findFirst()
+                                    .orElseThrow()
+                                    .group(1)),
+                    StandardCharsets.UTF_8);
+
+            assertTrue(ics.contains("METHOD:REQUEST"), "method must be REQUEST: " + ics);
+            assertTrue(
+                    ics.lines().anyMatch(line -> line.startsWith("ATTENDEE") && line.contains("alice@example.com")),
+                    "the To recipient must be an attendee: " + ics);
+            assertFalse(ics.contains("dave@example.com"), "the Bcc recipient must not leak into the invite: " + ics);
+        }
+    }
+
+    // F7 (audit follow-up): when the recipient table is empty and a display string holds a bare SMTP
+    // address, it belongs in the address slot (not the display-name slot), matching the MSG path.
+    @Test
+    void displayStringFallbackPutsBareAddressInTheAddressSlot() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Subject";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getTo() {
+                    return "bare@example.com; Plain Name";
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("<bare@example.com>"),
+                    "a bare SMTP address must be emitted as an address, not a quoted name: " + eml);
+            assertFalse(
+                    eml.contains("\"bare@example.com\""),
+                    "the address must not be placed in the display-name slot: " + eml);
+        }
     }
 }

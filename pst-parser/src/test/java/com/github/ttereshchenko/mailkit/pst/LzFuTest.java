@@ -46,6 +46,24 @@ class LzFuTest {
         assertEquals(LzFu.LZFU_HEADER.substring(0, 10), LzFu.decode(data));
     }
 
+    /**
+     * M2 regression: a dictionary reference whose offset is past the write cursor before the 4096-byte
+     * ring has filled points at uninitialized dictionary slots — a forward reference no conformant
+     * [MS-OXRTFCP] compressor emits. It must be rejected (decoding stops) rather than copying stale zero
+     * bytes as if they were body content (the old code emitted the zero slots).
+     */
+    @Test
+    void forwardDictionaryReferenceBeforeRingFillsIsRejected() {
+        byte[] data = header(16, LZFU_SIGNATURE, 3);
+        data[16] = 0x01; // flags: first token is a reference
+        data[17] = 0x12; // offset high bits
+        data[18] = (byte) 0xC0; // offset low nibble + size nibble 0: referenceOffset = 0x12C (300), size 2
+        // 300 is past the ~207-byte preloaded header (the initial write cursor), so it is a forward
+        // reference into not-yet-written dictionary slots.
+
+        assertEquals("", LzFu.decode(data), "a forward reference before the ring fills must stop decoding");
+    }
+
     @Test
     void decodesUncompressedMela() {
         byte[] payload = "{\\rtf1 hi}".getBytes(StandardCharsets.US_ASCII);

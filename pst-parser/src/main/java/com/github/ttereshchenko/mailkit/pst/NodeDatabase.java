@@ -106,7 +106,13 @@ final class NodeDatabase {
     BlockEntry getBlock(long bid) throws IOException {
         long target = bid & BID_FLAG_MASK;
         long offset = bbtRootOffset;
+        // Track visited page offsets so a corrupt branch page pointing back at an ancestor is reported
+        // as a cycle rather than silently re-walked until the depth cap (mirrors collectNodes).
+        var visited = new HashSet<Long>();
         for (int depth = 0; depth <= MAX_BTREE_DEPTH; depth++) {
+            if (!visited.add(offset)) {
+                throw new PstException("Cyclic BBT reference detected at offset " + offset);
+            }
             var page = readBTreePage(offset, "BBT");
             var buffer = ByteBuffer.wrap(page.bytes()).order(ByteOrder.LITTLE_ENDIAN);
             if (page.level() > 0) {
@@ -143,9 +149,20 @@ final class NodeDatabase {
                         : Integer.toUnsignedLong(buffer.getInt(entryOffset + 4));
                 int size =
                         Short.toUnsignedInt(buffer.getShort(entryOffset + ((format != PstFile.Format.ANSI) ? 16 : 8)));
-                int refCount =
-                        Short.toUnsignedInt(buffer.getShort(entryOffset + ((format != PstFile.Format.ANSI) ? 18 : 10)));
-                int inflatedSize = (format == PstFile.Format.UNICODE_2013) ? buffer.getInt(entryOffset + 24) : 0;
+                // A UNICODE_2013 BBTENTRY is cb@16, cbInflated@18, cRef@20 (24 bytes total — verified by
+                // decoding every BBT leaf entry of example-2013.ost, where a +24 read lands on the *next*
+                // entry's BID). The documented Unicode/ANSI entries instead carry cRef at +18/+10 and no
+                // inflated size ([MS-PST] §2.2.2.7.7.3).
+                int refCountOffset =
+                        (format == PstFile.Format.UNICODE_2013) ? 20 : ((format != PstFile.Format.ANSI) ? 18 : 10);
+                int refCount = Short.toUnsignedInt(buffer.getShort(entryOffset + refCountOffset));
+                // cbInflated is the uint16 at +18 (not a uint32 at +24). It drives the uncompressed-block
+                // guard below, so reading the wrong field silently defeats that guard. validatePageEntries
+                // keeps +18/+20 in-bounds: it rejects a cbEnt below the 24-byte minimum and enforces
+                // numEntries*cbEnt <= the page-trailer offset; preserve that coupling if either changes.
+                int inflatedSize = (format == PstFile.Format.UNICODE_2013)
+                        ? Short.toUnsignedInt(buffer.getShort(entryOffset + 18))
+                        : 0;
                 // The leaf BREF file offset is otherwise unchecked; validate it (a negative ANSI
                 // offset would throw IllegalArgumentException at channel.read) before the block is
                 // ever read. When CRC verification is on the BLOCKTRAILER in the 64-byte-aligned slot
@@ -155,8 +172,7 @@ final class NodeDatabase {
                 // whose final block's slot padding is not present on disk.
                 long requiredEnd = fileOffset + size;
                 if (verifyCrc) {
-                    int trailerLength = format == PstFile.Format.ANSI ? 12 : 16;
-                    requiredEnd = fileOffset + (((long) size + trailerLength + 63) / 64) * 64L;
+                    requiredEnd = fileOffset + alignedSlotSize(size);
                 }
                 if (fileOffset < 0 || requiredEnd > channelSize) {
                     throw new PstException("Block BREF offset out of range: offset=" + fileOffset + " size=" + size);
@@ -176,7 +192,13 @@ final class NodeDatabase {
     NodeEntry getNode(int nid) throws IOException {
         long target = Integer.toUnsignedLong(nid);
         long offset = nbtRootOffset;
+        // Track visited page offsets so a corrupt branch page pointing back at an ancestor is reported
+        // as a cycle rather than silently re-walked until the depth cap (mirrors collectNodes).
+        var visited = new HashSet<Long>();
         for (int depth = 0; depth <= MAX_BTREE_DEPTH; depth++) {
+            if (!visited.add(offset)) {
+                throw new PstException("Cyclic NBT reference detected at offset " + offset);
+            }
             var page = readBTreePage(offset, "NBT");
             var buffer = ByteBuffer.wrap(page.bytes()).order(ByteOrder.LITTLE_ENDIAN);
             if (page.level() > 0) {
@@ -433,9 +455,11 @@ final class NodeDatabase {
                     array = tryDecompress(array, block, true);
                 } catch (DataFormatException | RuntimeException secondFailure) {
                     // Both inflate attempts failed; keep the raw (still-compressed) bytes as a
-                    // best-effort fallback, but log so the resulting garbage is traceable.
+                    // best-effort fallback. WARNING, not DEBUG: a store with genuinely broken block
+                    // compression yields garbage downstream, which the user should see without enabling
+                    // debug output (mirrors the short-decompress warning in LzFu).
                     LOG.log(
-                            System.Logger.Level.DEBUG,
+                            System.Logger.Level.WARNING,
                             () -> "Failed to decompress 2013 block " + bid + "; using raw bytes",
                             secondFailure);
                 }
@@ -595,7 +619,7 @@ final class NodeDatabase {
 
         // cEnt and cbEnt come straight from the page trailer ([MS-PST] §2.2.2.7.7.1); a crafted page
         // could otherwise drive offset = i * entrySize past the fixed page buffer (IndexOutOfBounds).
-        validatePageEntries(entryCount, entrySize, trailerOffset, which);
+        validatePageEntries(entryCount, entrySize, trailerOffset, format, which);
         return new BTreePage(bytes, entryCount, entrySize, level);
     }
 
@@ -637,6 +661,18 @@ final class NodeDatabase {
     }
 
     /**
+     * The 64-byte-aligned on-disk slot size for a block of {@code blockSize} data bytes, including its
+     * {@code BLOCKTRAILER} ([MS-PST] §2.2.2.8): 16 bytes (Unicode) or 12 (ANSI). {@link #getBlock} uses
+     * it to bound-check the whole slot before reading and {@link #verifyBlockCrc} uses it to locate the
+     * trailer; centralizing the alignment math keeps those two in lockstep so the validated bound can
+     * never drift from the offset actually read.
+     */
+    private long alignedSlotSize(long blockSize) {
+        var trailerLength = format == PstFile.Format.ANSI ? 12 : 16;
+        return ((blockSize + trailerLength + 63) / 64) * 64L;
+    }
+
+    /**
      * Verifies the BLOCKTRAILER CRC ([MS-PST] §2.2.2.8.1): blocks are stored in 64-byte-aligned
      * slots with the trailer in the last 16 (Unicode) / 12 (ANSI) bytes; the CRC covers the
      * {@code cb} data bytes as stored (still encrypted), and {@code dwCRC} sits at trailer offset 4
@@ -645,7 +681,7 @@ final class NodeDatabase {
     private void verifyBlockCrc(BlockEntry block, byte[] data) throws IOException {
         var ansi = format == PstFile.Format.ANSI;
         var trailerLength = ansi ? 12 : 16;
-        var slotSize = ((block.size() + trailerLength + 63) / 64) * 64L;
+        var slotSize = alignedSlotSize(block.size());
         var trailer = ByteBuffer.allocate(trailerLength).order(ByteOrder.LITTLE_ENDIAN);
         readFully(channel, trailer, block.offset() + slotSize - trailerLength);
         var stored = trailer.getInt(ansi ? 8 : 4);
@@ -657,14 +693,22 @@ final class NodeDatabase {
         }
     }
 
-    private static void validatePageEntries(int numEntries, int entrySize, int trailerOffset, String which)
-            throws PstException {
+    private static void validatePageEntries(
+            int numEntries, int entrySize, int trailerOffset, PstFile.Format format, String which) throws PstException {
         if (numEntries < 0) {
             throw new PstException(which + " page has a negative entry count: " + numEntries);
         }
-        // An empty page is legitimate; only a non-empty one must declare a positive entry size whose
-        // table fits before the page trailer.
-        if (numEntries > 0 && (entrySize <= 0 || (long) numEntries * entrySize > trailerOffset)) {
+        // An empty page is legitimate; only a non-empty one is constrained.
+        if (numEntries == 0) {
+            return;
+        }
+        // The smallest legitimate b-tree entry is a Unicode BTENTRY/BBTENTRY at 24 bytes (ANSI 12);
+        // an NBTENTRY is larger still ([MS-PST] §2.2.2.7.7.2/§2.2.2.7.7.3). Reject a cbEnt below that
+        // floor: the per-entry reads use hardcoded sub-offsets (the BREF at +16, the 2013 inflated
+        // size at +24, …), so a too-small stride would make them read adjacent entries or the page
+        // trailer instead of the intended fields. The entry table must also fit before the trailer.
+        int minEntrySize = (format == PstFile.Format.ANSI) ? 12 : 24;
+        if (entrySize < minEntrySize || (long) numEntries * entrySize > trailerOffset) {
             throw new PstException(
                     which + " page entry table out of range: cEnt=" + numEntries + " cbEnt=" + entrySize);
         }

@@ -76,7 +76,16 @@ public final class AppointmentRecurrence {
         String byParts;
         switch (patternType) {
             case PATTERN_DAY -> byParts = null;
-            case PATTERN_WEEK -> byParts = ";BYDAY=" + byDayList(buffer.getInt());
+            case PATTERN_WEEK -> {
+                var byDay = byDayList(buffer.getInt());
+                if (byDay.isEmpty()) {
+                    // A zero day-of-week mask has no valid BYDAY rule-part (rfc5545 §3.3.10); emitting
+                    // "BYDAY=" would make the whole RRULE unparseable. Treat the (corrupt) blob as
+                    // carrying no usable recurrence, exactly like the unknown-pattern arm below.
+                    return null;
+                }
+                byParts = ";BYDAY=" + byDay;
+            }
             case PATTERN_MONTH -> {
                 var dayOfMonth = buffer.getInt();
                 // Outlook stores 31 for "the last day of the month" — RRULE expresses that as -1
@@ -86,7 +95,12 @@ public final class AppointmentRecurrence {
             case PATTERN_MONTH_NTH -> {
                 var dayOfWeekMask = buffer.getInt();
                 var occurrence = buffer.getInt();
-                byParts = ";BYDAY=" + byDayList(dayOfWeekMask) + ";BYSETPOS=" + (occurrence == 5 ? -1 : occurrence);
+                var byDay = byDayList(dayOfWeekMask);
+                if (byDay.isEmpty()) {
+                    // As above: an empty BYDAY is invalid, so drop the unusable recurrence.
+                    return null;
+                }
+                byParts = ";BYDAY=" + byDay + ";BYSETPOS=" + (occurrence == 5 ? -1 : occurrence);
             }
             case PATTERN_MONTH_END -> byParts = ";BYMONTHDAY=-1";
             default -> {

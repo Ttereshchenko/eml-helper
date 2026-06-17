@@ -42,6 +42,50 @@ class MsgToEmlConverterTest {
         assertTrue(eml.contains("Content-Transfer-Encoding: quoted-printable"), eml);
     }
 
+    // M1: the Date header is the origination time (rfc5322 §3.6.1). When both PR_CLIENT_SUBMIT_TIME and
+    // PR_MESSAGE_DELIVERY_TIME are present, Date must be the submit time, not the delivery time (the old
+    // code preferred delivery, diverging from the PST pipeline).
+    @Test
+    void dateHeaderPrefersClientSubmitTimeOverDeliveryTime() throws Exception {
+        var submitTime = new Date(1_577_900_000_000L); // 2020
+        var deliveryTime = new Date(1_630_000_000_000L); // 2021
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Date precedence")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .clientSubmitTime(submitTime)
+                .messageDate(deliveryTime)
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        var dateLine =
+                eml.lines().filter(line -> line.startsWith("Date:")).findFirst().orElse("");
+        assertTrue(dateLine.contains("2020"), "Date should be the submit (origination) time: " + dateLine);
+        assertFalse(dateLine.contains("2021"), "Date must not be the delivery time: " + dateLine);
+    }
+
+    // M4: a REPORT.* class that is neither a delivery report (.NDR/.DR) nor a read/non-read receipt
+    // (.IPNRN/.IPNNRN) must not be emitted as a disposition-notification claiming the message was
+    // "displayed" (rfc8098 §3.2.6); it falls back to the generic body instead.
+    @Test
+    void unrecognizedReportClassIsNotEmittedAsDisplayedMdn() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("REPORT.IPM.Note.Delayed")
+                .subject("Delivery delayed")
+                .sender("Mailer Daemon", "postmaster@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("Your message has been delayed.")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(eml.contains("disposition-notification"), "a non-receipt report must not become an MDN: " + eml);
+        assertFalse(eml.contains("Disposition:"), "a non-receipt report must not fabricate a disposition: " + eml);
+        assertTrue(eml.contains("Your message has been delayed."), "falls back to the generic body: " + eml);
+    }
+
     @Test
     void htmlBodyDrivesContentType() throws Exception {
         var bytes = MsgFixtureBuilder.topLevel()
@@ -156,6 +200,28 @@ class MsgToEmlConverterTest {
         var toLine =
                 eml.lines().filter(line -> line.startsWith("To: ")).findFirst().orElseThrow();
         assertEquals("To: \"ToOne\" <to1@x>", toLine);
+    }
+
+    @Test
+    void recipientTypeHighBitFlagsStillClassifyToCcBcc() throws Exception {
+        // [MS-OXOMSG] §2.2.3.1: Exchange sets high-bit flags on PR_RECIPIENT_TYPE for resent / saved-sent
+        // items (e.g. 0x10000000 "already processed"). The low bits still hold MAPI_TO/CC/BCC, so a
+        // flagged "To" (0x10000001) must classify as To rather than fall through to the display-name
+        // fallback and lose the SMTP address.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .sender("S", "s@x")
+                .recipientOrdered("ToOne", "to1@x", 0x10000001)
+                .recipientOrdered("CcOne", "cc1@x", 0x10000002)
+                .recipientOrdered("BccOne", "bcc1@x", 0x10000003)
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("To: \"ToOne\" <to1@x>"), eml);
+        assertTrue(eml.contains("Cc: \"CcOne\" <cc1@x>"), eml);
+        assertTrue(eml.contains("Bcc: \"BccOne\" <bcc1@x>"), eml);
     }
 
     @Test
@@ -419,6 +485,23 @@ class MsgToEmlConverterTest {
 
         assertTrue(eml.contains("IMCEAEX-"), eml);
         assertFalse(eml.contains("</O="), eml);
+    }
+
+    @Test
+    void exchangeRecipientKeepsFullLegacyDnNotPoiTruncatedFragment() throws Exception {
+        // POI's getRecipientEmailAddress() returns only the substring after the first "/CN=", dropping
+        // the mandatory /O= and /OU= X.500 prefix. Reading the raw PR_EMAIL_ADDRESS keeps the full DN so
+        // the IMCEAEX address matches the PST path and stays roundtrippable. In the encapsulation "="
+        // escapes to _x003D_ and "/" to _, so the /O=ORG and /OU=EXG segments POI drops must survive.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("S")
+                .textBody("body")
+                .recipientToWithoutSmtp("Jane Doe", "/O=ORG/OU=EXG/CN=RECIPIENTS/CN=JDOE", "EX")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("IMCEAEX-_O_x003D_ORG_OU_x003D_EXG_CN_x003D_RECIPIENTS_CN_x003D_JDOE@invalid"), eml);
     }
 
     @Test
@@ -952,6 +1035,25 @@ class MsgToEmlConverterTest {
     }
 
     @Test
+    void readReceiptFinalRecipientIsTheReaderNotTheOriginalSender() throws Exception {
+        // rfc8098 §3.2.4: an MDN's Final-Recipient is the party who read the message and issues the
+        // receipt — the receipt's own sender — not its To recipient (the original sender who requested
+        // the receipt). The pre-fix code used PidTagDisplayTo and emitted "rfc822; unknown" here.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Read: Hello")
+                .sender("Reader", "reader@example.com")
+                .recipientTo("Original Sender", "origin@example.com")
+                .messageClass("REPORT.IPM.Note.IPNRN")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(
+                eml.contains("Final-Recipient: rfc822; reader@example.com"),
+                "MDN Final-Recipient must be the reader (receipt sender), not the original sender: " + eml);
+    }
+
+    @Test
     void readReceiptNoteClassConvertAsPlainEmail() throws Exception {
         // IPM.Note.IPNRN is NOT a REPORT.* class, so it goes through the normal body path.
         var bytes = MsgFixtureBuilder.topLevel()
@@ -1289,6 +1391,26 @@ class MsgToEmlConverterTest {
                 "the windows-1251 filename must be decoded with the message codepage: " + eml);
     }
 
+    @Test
+    void genuineRtfBodyPreservesWindows1252UndefinedBytes() throws Exception {
+        // Audit M2: a genuine RTF body is preserved as a byte-faithful body.rtf attachment. The previous
+        // code re-encoded POI's decoded RTF String through windows-1252, which maps that code page's five
+        // undefined octets (0x81/0x8D/0x8F/0x90/0x9D) to '?' (0x3F) and corrupted the attachment. The fix
+        // decompresses the raw PR_RTF_COMPRESSED chunk straight to bytes, so the original octet survives.
+        var prefix = "{\\rtf1\\ansi\\ansicpg1252 Hello".getBytes(StandardCharsets.US_ASCII);
+        var suffix = "World}".getBytes(StandardCharsets.US_ASCII);
+        var rtf = new byte[prefix.length + 1 + suffix.length];
+        System.arraycopy(prefix, 0, rtf, 0, prefix.length);
+        rtf[prefix.length] = (byte) 0x81; // undefined in windows-1252
+        System.arraycopy(suffix, 0, rtf, prefix.length + 1, suffix.length);
+
+        var bytes = MsgFixtureBuilder.topLevel().subject("S").rtfBodyRaw(rtf).toBytes();
+        var bodyRtf = decodeAttachmentBytes(convertString(bytes), "body.rtf");
+
+        assertTrue(containsByte(bodyRtf, (byte) 0x81), "body.rtf lost the windows-1252-undefined byte 0x81");
+        assertFalse(containsByte(bodyRtf, (byte) 0x3F), "0x81 was corrupted to '?' (0x3F)");
+    }
+
     private String convertString(byte[] input) throws Exception {
         var out = new java.io.ByteArrayOutputStream();
         MsgToEmlConverter.convert(new ByteArrayInputStream(input), out, ConversionLog.NOOP);
@@ -1310,5 +1432,26 @@ class MsgToEmlConverterTest {
         var base64 = eml.substring(payloadStart, payloadEnd < 0 ? eml.length() : payloadEnd)
                 .replace("\r\n", "");
         return new String(java.util.Base64.getDecoder().decode(base64), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** Decodes the base64-encoded attachment part with the given filename out of the EML, as raw bytes. */
+    private static byte[] decodeAttachmentBytes(String eml, String filename) {
+        var marker = "filename=\"" + filename + "\"";
+        var markerIndex = eml.indexOf(marker);
+        assertTrue(markerIndex >= 0, "no " + filename + " attachment:\r\n" + eml);
+        var payloadStart = eml.indexOf("\r\n\r\n", markerIndex) + 4;
+        var payloadEnd = eml.indexOf("\r\n--", payloadStart);
+        var base64 = eml.substring(payloadStart, payloadEnd < 0 ? eml.length() : payloadEnd)
+                .replace("\r\n", "");
+        return java.util.Base64.getMimeDecoder().decode(base64);
+    }
+
+    private static boolean containsByte(byte[] data, byte value) {
+        for (var element : data) {
+            if (element == value) {
+                return true;
+            }
+        }
+        return false;
     }
 }

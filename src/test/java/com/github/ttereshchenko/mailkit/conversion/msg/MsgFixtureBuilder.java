@@ -54,6 +54,7 @@ final class MsgFixtureBuilder {
     private static final int TAG_MESSAGE_CLASS = (0x001A << 16) | TYPE_UNICODE;
     private static final int TAG_TRANSPORT_HEADERS = (0x007D << 16) | TYPE_UNICODE;
     private static final int TAG_MESSAGE_DELIVERY_TIME = (0x0E06 << 16) | TYPE_SYSTIME;
+    private static final int TAG_CLIENT_SUBMIT_TIME = (0x0039 << 16) | TYPE_SYSTIME;
     private static final int TAG_SENT_REPRESENTING_NAME = (0x0042 << 16) | TYPE_UNICODE;
     private static final int TAG_SENT_REPRESENTING_SMTP_ADDRESS = (0x5D02 << 16) | TYPE_UNICODE;
     private static final int TAG_IMPORTANCE = (0x0017 << 16) | TYPE_LONG;
@@ -198,6 +199,15 @@ final class MsgFixtureBuilder {
         return setBinary(TAG_RTF_COMPRESSED, wrapUncompressedRtf(rtf.getBytes(StandardCharsets.US_ASCII)));
     }
 
+    /**
+     * PR_RTF_COMPRESSED carrying the given raw RTF bytes (verbatim, no charset encoding) wrapped in an
+     * uncompressed ("MELA") LZFu envelope — used to exercise byte values that String-based encoding
+     * would mangle, such as the windows-1252-undefined octets.
+     */
+    MsgFixtureBuilder rtfBodyRaw(byte[] rtfBytes) {
+        return setBinary(TAG_RTF_COMPRESSED, wrapUncompressedRtf(rtfBytes));
+    }
+
     /** PR_RTF_COMPRESSED whose LZFu envelope has a bogus compression signature — POI fails decompression. */
     MsgFixtureBuilder corruptRtfBody() {
         var envelope = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN);
@@ -327,6 +337,12 @@ final class MsgFixtureBuilder {
 
     MsgFixtureBuilder messageDate(Date date) {
         fixedProperties.add(new FixedProperty(TAG_MESSAGE_DELIVERY_TIME, fileTime(date)));
+        return this;
+    }
+
+    /** PR_CLIENT_SUBMIT_TIME (origination time) — the RFC 5322 §3.6.1 Date source. */
+    MsgFixtureBuilder clientSubmitTime(Date date) {
+        fixedProperties.add(new FixedProperty(TAG_CLIENT_SUBMIT_TIME, fileTime(date)));
         return this;
     }
 

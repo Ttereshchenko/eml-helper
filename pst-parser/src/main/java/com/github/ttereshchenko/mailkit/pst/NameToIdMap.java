@@ -58,6 +58,12 @@ class NameToIdMap {
             return;
         }
 
+        if (guidStream != null && guidStream.length % 16 != 0) {
+            LOG.log(
+                    System.Logger.Level.DEBUG,
+                    () -> "Named-property GUID stream length " + guidStream.length
+                            + " is not a multiple of 16; the trailing partial GUID was ignored");
+        }
         var guids = new UUID[guidStream != null ? guidStream.length / 16 : 0];
         if (guidStream != null) {
             var guidBuffer = ByteBuffer.wrap(guidStream).order(ByteOrder.LITTLE_ENDIAN);
@@ -92,6 +98,12 @@ class NameToIdMap {
 
         var entryBuffer = ByteBuffer.wrap(entryStream).order(ByteOrder.LITTLE_ENDIAN);
         int entryCount = entryStream.length / 8;
+        if (entryStream.length % 8 != 0) {
+            LOG.log(
+                    System.Logger.Level.DEBUG,
+                    () -> "Named-property entry stream length " + entryStream.length
+                            + " is not a multiple of 8; the trailing partial entry was ignored");
+        }
 
         for (int i = 0; i < entryCount; i++) {
             int propertyIdOrOffset = entryBuffer.getInt();

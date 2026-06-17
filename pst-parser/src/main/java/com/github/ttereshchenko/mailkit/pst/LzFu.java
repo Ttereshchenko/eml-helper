@@ -82,6 +82,12 @@ final class LzFu {
 
             int bufferPosition = headerBytes.length;
             int currentDataPosition = 16;
+            // Bytes written into lzBuffer since the header. Until this reaches the fill threshold the
+            // 4096-slot dictionary ring is only partially populated — slots at or past bufferPosition are
+            // uninitialized — so a forward reference into them is corruption (see the guard below). Once it
+            // reaches the threshold every slot holds produced data and any reference is a valid back-ref.
+            int ringWrites = 0;
+            int ringFillThreshold = 4096 - headerBytes.length;
 
             // Run to the end of the input: stopping 2 bytes early (an old guard) dropped up to two
             // trailing literals when the final flag byte sat near the tail. The token reads below
@@ -108,12 +114,27 @@ final class LzFu {
                             break decode;
                         }
 
+                        if (ringWrites < ringFillThreshold && referenceOffset > bufferPosition) {
+                            // Before the dictionary ring first fills, only [0, bufferPosition) holds bytes
+                            // the stream has actually produced (the header preamble plus the literals
+                            // written so far). A reference past the write cursor — a forward reference —
+                            // would copy uninitialized dictionary slots as if they were data. A conformant
+                            // [MS-OXRTFCP] compressor never emits one, so treat it as a corrupt stream and
+                            // stop, matching the truncated-token handling.
+                            LOG.log(
+                                    System.Logger.Level.WARNING,
+                                    () -> "LZFu forward dictionary reference (offset past the write cursor) before "
+                                            + "the ring filled; the RTF body is corrupt and decoding stopped early");
+                            break decode;
+                        }
+
                         int index = referenceOffset;
                         for (int y = 0; y < referenceSize && output.size() < uncompressedSize; y++) {
                             output.write(lzBuffer[index]);
                             lzBuffer[bufferPosition] = lzBuffer[index];
                             bufferPosition = (bufferPosition + 1) % 4096;
                             index = (index + 1) % 4096;
+                            ringWrites++;
                         }
                     } else {
                         if (currentDataPosition >= data.length) {
@@ -121,6 +142,7 @@ final class LzFu {
                         }
                         lzBuffer[bufferPosition] = data[currentDataPosition];
                         bufferPosition = (bufferPosition + 1) % 4096;
+                        ringWrites++;
                         output.write(data[currentDataPosition++]);
                     }
                 }

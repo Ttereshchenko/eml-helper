@@ -2,12 +2,53 @@
 
 ## Unreleased
 
+## 1.2.2 - 2026-06-18
+
 ### Fixed (conversion charset fidelity)
 
 - Attachment file names written in a non-Latin code page (Cyrillic, Greek, CJK, …) in a legacy `.msg` now keep their original characters instead of turning into garbled text — they are decoded with the message's own code page rather than always Western European.
 - A `.msg` plain-text body stored as UTF-8 is now decoded as UTF-8 instead of being mangled into mojibake.
 - Clear-signed S/MIME messages converted from `.msg`/`.pst`/`.ost` keep their signature verifiable even when the signed content contains 8-bit (non-ASCII) bytes: the original bytes are now written through verbatim instead of being silently altered.
 - An RTF body preserved as a `body.rtf` attachment from `.pst`/`.ost` now carries the source RTF bytes exactly, with no rare byte substitutions.
+- An RTF body preserved as a `body.rtf` attachment from a `.msg` now carries the source RTF bytes exactly too — the same guarantee, without the rare byte substitutions the previous Western-European round-trip could introduce.
+- Personal distribution-list member names and reply-to names in a legacy `.msg` written in a non-Latin code page now keep their original characters, decoded with the message's own code page instead of always Western European (the same fix attachment file names received).
+- Converting an RTF body written in a multi-byte code page (CJK, or UTF-8) from a `.msg`, or via the RTF→plain-text fallback used for `.pst`/`.ost`, no longer garbles its text: a character's consecutive bytes are now decoded together instead of one at a time (which turned each character into replacement/`?` marks).
+
+### Fixed (conversion correctness)
+
+- Exchange recipients in a converted `.msg` that have no cached SMTP address now keep their full Exchange (X.500) address in `To`/`Cc`/`Bcc`, meeting attendees and bounce reports, instead of a truncated fragment that no client can resolve — the `.pst`/`.ost` conversion already kept the full address.
+- Bounce messages and delivery/read receipts converted from `.pst`/`.ost` now carry the proper machine-readable `Status` code (with the human-readable transport text moved to `Diagnostic-Code`) and name the recipient that actually failed, matching the `.msg` conversion.
+- A recurring appointment whose stored recurrence pattern is corrupt (an empty day-of-week set) is now exported as a single occurrence instead of producing an unparseable calendar recurrence rule.
+- A signed (S/MIME) message attached *inside* another converted message now keeps its signature verifiable too: the byte-exact guarantee that already protected a top-level signed message now extends to a signed message forwarded or embedded as an attachment, which previously had its 8-bit signed bytes altered (breaking the signature) when its parent was converted.
+- Recipients of a resent or saved sent `.msg` are now sorted into `To`/`Cc`/`Bcc` correctly and keep their addresses: a recipient that Exchange had tagged as already-processed (a high-order flag on the recipient type) is no longer dropped to a names-only fallback that lost the real SMTP address and collapsed the To/Cc/Bcc split.
+- A converted delivery report whose stored diagnostic already names its own type (e.g. `smtp; 550 …`) no longer doubles the type token (`smtp; smtp; …`), and a non-canonical enhanced status code with leading zeros (`5.01.001`) is normalized to its standard form (`5.1.1`).
+- Rewriting an HTML body's charset declaration to UTF-8 no longer disturbs an unrelated attribute that merely ends in `charset` (such as `data-charset`); only the genuine `<meta charset=…>` / `http-equiv` declaration is changed.
+- A converted `.msg` now stamps the `Date:` header with when the message was sent (its origination time) rather than when it was delivered, matching the `.pst`/`.ost` conversion and the standard meaning of `Date:`.
+- A `.pst`/`.ost` message sent only on another person's behalf — with no separate sender address of its own — now keeps that author in `From:` instead of collapsing to an `undisclosed` placeholder.
+- Recipients of a resent or saved sent `.pst`/`.ost` message are now sorted into `To`/`Cc`/`Bcc` correctly and keep their addresses even when Exchange had tagged one as already-processed (a high-order flag on the recipient type) — the same fix the `.msg` conversion already received.
+- Categories and read-receipt requests stored in a `.pst`/`.ost` message now survive conversion as the `Keywords` and `Disposition-Notification-To` headers, matching the `.msg` conversion.
+- A delay, relay, or other non-receipt report converted from `.msg`/`.pst`/`.ost` is no longer mislabeled as a read receipt asserting the message was "displayed"; it is exported as a plain report message instead.
+- Threading headers (`In-Reply-To`/`References`) in a converted `.pst`/`.ost` message are now angle-bracket-normalized — and free-text tokens that are not real message ids dropped — like `Message-ID`, so reply threading is recognized by mail clients, matching the `.msg` conversion.
+- A meeting invitation converted from `.pst`/`.ost` no longer lists a blind-copied (`Bcc`) recipient among the calendar attendees, and a meeting response names the organizer correctly even when Exchange had tagged the organizer's recipient row as already-processed (a high-order flag on the recipient type) — the same fixes the `.msg` conversion already received.
+- A bounce or delivery report converted from `.pst`/`.ost` now names the recipient that actually failed even when that recipient row carries the Exchange already-processed flag, instead of falling back to a different (e.g. `Cc`) address.
+- A calendar invitation with no resolvable organizer address (from any store) is now exported as a published event instead of an invalid meeting request/response that listed attendees but no organizer, which strict calendar clients refuse to render.
+- When a `.pst`/`.ost` message has no structured recipient list, a bare email address recovered from its display-string fallback is now placed as the address rather than the display name, keeping the recipient usable — matching the `.msg` conversion.
+- Recovering an HTML body from HTML-encapsulated RTF (`.msg`/`.pst`/`.ost`) now respects RTF group nesting: a formatting-suppression toggle set inside a group no longer suppresses text after the group closes, and a Unicode escape inside an HTML-tag fragment consumes the document's declared number of fallback characters instead of always one.
+- An assigned-task request, or its accept/decline response, converted from `.msg`/`.pst`/`.ost` is now a valid calendar object that names the assigner (organizer) and assignee (attendee), instead of a task request/reply with no participants that strict calendar clients refuse to import; when those parties cannot be identified it is exported as a plain published task.
+- A converted calendar invitation now declares the same scheduling method in its attachment's `Content-Type` header as in the calendar body — so when an invite is downgraded to a published event (for lacking an organizer or start time) the part is no longer mislabeled as a request/reply over a published-event body.
+- A bounce or delivery report converted from `.msg`/`.pst`/`.ost` no longer reports a fabricated `Status` code mined from a server version or build number in its text (for example an Exchange `…15.2.1544.5` banner that surfaced as `5.2.154`); a genuine enhanced-status code in the text is still used.
+- A read receipt converted from `.msg`/`.pst`/`.ost` now names the person who read the message (the receipt's own sender) as the notification's recipient, instead of an `unknown` placeholder or the original sender who requested the receipt.
+- A `.pst`/`.ost` message that lists some recipients in its structured recipient table but others only in its display fields no longer drops those display-only `Cc`/`Bcc` recipients: the display-field fallback now fills in each missing recipient type instead of only when the whole table is empty — matching the `.msg` conversion.
+- Rewriting an HTML body's charset declaration to UTF-8 no longer swallows the `;` that separates it from a following parameter in a multi-parameter `Content-Type` (e.g. `…; charset=…; format=flowed`), which had merged the two parameters together.
+- Converting an Outlook item that has only an RTF body (the RTF→plain-text fallback for `.msg`/`.pst`/`.ost`) now respects RTF group nesting for the Unicode fallback-character count, so a count set inside a group no longer leaks past it and drops or leaks a character — the same guarantee the HTML-from-RTF path already received.
+
+### Fixed (conversion robustness)
+
+- Converting a malformed or hostile `.msg` that declares an extreme number of attachments — or attachments far larger than available memory — no longer risks exhausting memory and aborting: the converter now caps the aggregate attachment size and count it will buffer (shared across nested messages), logging and truncating the excess, exactly as the `.pst`/`.ost` conversion already did.
+- A corrupt `.pst`/`.ost` whose internal index pages declare an impossible entry size, or whose page references form a cycle, is now reported as a clean conversion error instead of being walked into.
+- A corrupt compressed RTF body that references dictionary data ahead of what it has produced (a forward reference no valid Outlook RTF emits) is now detected and decoding stops, instead of emitting stale bytes as garbled body text; a folder that lists itself as its own sub-folder is skipped.
+- Recovering deleted/orphaned messages from a large `.pst`/`.ost` now reports ongoing progress instead of appearing to hang, and chooses non-colliding output file names faster.
+- An Outlook 2013+ `.ost`/`.pst` no longer risks silently replacing an uncompressed internal block's contents with garbage: whether a stored block is compressed is now read from the correct field, so a block whose raw bytes merely happen to resemble compressed data is left intact.
 
 ## 1.2.1 - 2026-06-16
 

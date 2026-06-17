@@ -2,6 +2,7 @@ package com.github.ttereshchenko.mailkit.conversion.msg;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -240,6 +241,44 @@ class DistributionListMembersTest {
     // -----------------------------------------------------------------------
     // Helpers — build One-Off EntryID byte arrays
     // -----------------------------------------------------------------------
+
+    @Test
+    void ansiOneOffDecodesWithMessageCodePageNotAlwaysWindows1252() {
+        // Audit L3: a non-Unicode one-off carries its display name in the message's ANSI code page, not
+        // necessarily windows-1252. Here the name is Cyrillic encoded in windows-1251; decoding the same
+        // bytes as windows-1252 (the previous hard-coded behavior) mojibakes it, while the message's real
+        // code page recovers it. The ASCII email is code-page-agnostic and decodes the same either way.
+        var cyrillicName = "Иван";
+        var cp1251 = Charset.forName("windows-1251");
+        var blob = buildAnsiOneOff(cyrillicName, "SMTP", "ivan@example.com", cp1251);
+
+        var withCodePage = DistributionListMembers.parse(new byte[][] {blob}, cp1251);
+        assertEquals(1, withCodePage.size());
+        assertEquals(cyrillicName, withCodePage.get(0).name());
+        assertEquals("ivan@example.com", withCodePage.get(0).email());
+
+        // The default (windows-1252) overload cannot recover the Cyrillic name from windows-1251 bytes.
+        var withDefault = DistributionListMembers.parse(new byte[][] {blob});
+        assertEquals(1, withDefault.size());
+        assertNotEquals(cyrillicName, withDefault.get(0).name());
+        assertEquals("ivan@example.com", withDefault.get(0).email());
+    }
+
+    /** A well-formed ANSI (MAE_UNICODE-clear) one-off whose inline strings are encoded in the given code page. */
+    private static byte[] buildAnsiOneOff(String displayName, String addressType, String email, Charset charset) {
+        var terminator = new byte[] {0};
+        var strings = concat(
+                concat(displayName.getBytes(charset), terminator),
+                concat(addressType.getBytes(charset), terminator),
+                concat(email.getBytes(charset), terminator));
+        var buffer = ByteBuffer.allocate(24 + strings.length).order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putInt(0); // abFlags
+        buffer.put(ONE_OFF_MUID);
+        buffer.putShort((short) 0); // Version
+        buffer.putShort((short) 0); // Pad flags: ANSI (MAE_UNICODE clear)
+        buffer.put(strings);
+        return buffer.array();
+    }
 
     /**
      * Builds a well-formed One-Off EntryID with the production one-off MUID, the given strings, and
