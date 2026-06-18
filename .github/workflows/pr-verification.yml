@@ -85,7 +85,7 @@ jobs:
       TESTCONTAINERS_RYUK_DISABLED: "false"
       TESTCONTAINERS_REUSE_ENABLE: "false"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
 
@@ -122,7 +122,7 @@ jobs:
     needs: resolve
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
 
