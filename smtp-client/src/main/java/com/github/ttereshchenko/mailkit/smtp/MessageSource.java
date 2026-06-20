@@ -12,8 +12,10 @@ import java.util.OptionalLong;
 /**
  * Abstraction over "the bytes that go through DATA". Implementations open a fresh {@link InputStream}
  * each call so the client can retry a send without the caller re-reading the file. The bytes are
- * streamed onto the wire as-is — the SMTP client only applies LF→CRLF normalization, dot-stuffing,
- * and the terminating {@code <CRLF>.<CRLF>}, never re-encoding the body.
+ * streamed onto the wire as-is — the SMTP client never re-encodes the body. LF→CRLF normalization
+ * is optional (on by default, see {@code SmtpConfig#normalizeLineEndings()}); when disabled the CR
+ * and LF bytes are transmitted exactly as they appear. Dot-stuffing and the terminating
+ * {@code <CRLF>.<CRLF>} framing are always applied regardless of that flag.
  *
  * <p>Implementations that know their length up front should override {@link #size()} so the client
  * can honour the server's SIZE advertisement and emit {@code MAIL FROM:<...> SIZE=...} without

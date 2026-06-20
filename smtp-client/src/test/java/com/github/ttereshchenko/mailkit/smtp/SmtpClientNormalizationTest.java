@@ -111,4 +111,133 @@ class SmtpClientNormalizationTest {
         var result = SmtpClient.normalizeAndDotStuff(input, input.length, false, true);
         assertEquals("data\r\n..dotline\r\n", new String(result.bytes(), StandardCharsets.UTF_8));
     }
+
+    // --- normalizeLineEndings=TRUE regression guard ---
+
+    @Test
+    void normalizeEnabledLfOnlyInputIsRewrittenToCrlfRegressionGuard() {
+        // Explicit regression guard: the normalize=true path (default) must still expand bare LF to
+        // CRLF. If someone flips the default this test catches the regression.
+        var input = "Subject: hi\n\nbody line\n".getBytes(StandardCharsets.UTF_8);
+        var result = SmtpClient.normalize(input, input.length, false, true, true, true);
+        assertEquals("Subject: hi\r\n\r\nbody line\r\n", new String(result.bytes(), StandardCharsets.UTF_8));
+        assertTrue(result.endsAtLineStart(), "must end at a line start after a CRLF");
+        assertTrue(result.endsWithCrlf(), "must end with CRLF in normalize mode");
+    }
+
+    @Test
+    void normalizeEnabledLeadingDotIsStuffed() {
+        // Regression guard: dot-stuffing must still work with normalizeLineEndings=true.
+        var input = ".top\n".getBytes(StandardCharsets.UTF_8);
+        var result = SmtpClient.normalize(input, input.length, false, true, true, true);
+        assertEquals("..top\r\n", new String(result.bytes(), StandardCharsets.UTF_8));
+    }
+
+    // --- normalizeLineEndings=FALSE ---
+
+    @Test
+    void noNormalizeLfIsEmittedVerbatimWithoutCrlfPromotion() {
+        // When normalizeLineEndings=false, a bare LF must be emitted as-is (no CRLF expansion).
+        // The caller (streamPayload) is responsible for the terminator framing; the chunk itself
+        // carries the raw byte.
+        var input = "From: a@example.com\nTo: b@example.com\n\nhi\n".getBytes(StandardCharsets.UTF_8);
+        var result = SmtpClient.normalize(input, input.length, false, true, true, false);
+        var rendered = new String(result.bytes(), StandardCharsets.UTF_8);
+        // The LFs must NOT have been promoted to CRLF — the string must still contain bare LFs.
+        assertEquals("From: a@example.com\nTo: b@example.com\n\nhi\n", rendered);
+        assertFalse(result.endedWithCr(), "endedWithCr must be false in verbatim mode (CR is emitted immediately)");
+        assertTrue(result.endsAtLineStart(), "endsAtLineStart must be true (last byte was LF)");
+        // A bare-LF ending is NOT a CRLF ending: the framing guard in streamPayload depends on this.
+        assertFalse(
+                result.endsWithCrlf(),
+                "endsWithCrlf must be false for a bare-LF ending so the framing CRLF is still emitted"
+                        + " (rfc5321 §4.1.1.4)");
+    }
+
+    @Test
+    void noNormalizeLeadingDotIsStillDotStuffed() {
+        // Dot-stuffing applies in both normalize modes (rfc5321 §4.5.2). Even with
+        // normalizeLineEndings=false the leading dot must get an extra dot prepended.
+        var input = ".verbatim\nline\n".getBytes(StandardCharsets.UTF_8);
+        var result = SmtpClient.normalize(input, input.length, false, true, true, false);
+        var rendered = new String(result.bytes(), StandardCharsets.UTF_8);
+        assertEquals("..verbatim\nline\n", rendered);
+    }
+
+    @Test
+    void noNormalizeExistingCrlfIsPreservedNotDoubled() {
+        // An already-correct CRLF pair must be transmitted as a single CRLF even in no-normalize
+        // mode — the verbatim path must not synthesize an extra CR.
+        var input = "Subject: hi\r\n\r\nbody\r\n".getBytes(StandardCharsets.UTF_8);
+        var result = SmtpClient.normalize(input, input.length, false, true, true, false);
+        assertEquals(
+                "Subject: hi\r\n\r\nbody\r\n",
+                new String(result.bytes(), StandardCharsets.UTF_8),
+                "CRLF pairs must be preserved verbatim (not doubled)");
+        assertTrue(result.endsWithCrlf(), "must end with CRLF so no framing CRLF is added");
+    }
+
+    @Test
+    void noNormalizeCrlfEndingSetEndsWithCrlfTrue() {
+        // A body ending with CRLF sets endsWithCrlf=true so streamPayload does NOT emit the
+        // redundant framing CRLF. This is the no-normalize mirror of the normalize mode.
+        var input = "tail\r\n".getBytes(StandardCharsets.UTF_8);
+        var result = SmtpClient.normalize(input, input.length, false, true, true, false);
+        assertTrue(result.endsWithCrlf(), "endsWithCrlf must be true so streamPayload skips the framing CRLF");
+    }
+
+    // --- Terminator framing (via endsWithCrlf flag) ---
+
+    @Test
+    void terminatorFramingCrlfEmittedWhenBodyEndsInBareLf() {
+        // rfc5321 §4.1.1.4: the terminating <CRLF>.<CRLF> requires the stream to already be at a
+        // CRLF boundary. When normalizeLineEndings=false and the body ends in a bare LF, the wire
+        // is NOT positioned after a CRLF, so streamPayload emits a framing CRLF before the dot.
+        // This test exercises the NormalizedChunk flag that drives that decision.
+        //
+        // Body: "line\n" — bare-LF ending.
+        var input = "line\n".getBytes(StandardCharsets.UTF_8);
+        var result = SmtpClient.normalize(input, input.length, false, true, true, false);
+        assertTrue(result.endsAtLineStart(), "endsAtLineStart must be true (last byte was LF)");
+        assertFalse(
+                result.endsWithCrlf(),
+                "endsWithCrlf must be false for bare-LF: the framing CRLF must be emitted before .<CRLF>");
+        // streamPayload will emit CRLF + ".\r\n"; without the guard the server would see "line\n.\r\n"
+        // and never find the required <CRLF>.<CRLF> terminator sequence.
+    }
+
+    @Test
+    void terminatorFramingNotDoubledWhenBodyEndsInCrlf() {
+        // Conversely, when the body already ends with CRLF (even in no-normalize mode) the flag
+        // endsWithCrlf=true tells streamPayload NOT to add another CRLF, avoiding a spurious blank
+        // line before the terminating dot.
+        var input = "line\r\n".getBytes(StandardCharsets.UTF_8);
+        var result = SmtpClient.normalize(input, input.length, false, true, true, false);
+        assertTrue(
+                result.endsWithCrlf(), "endsWithCrlf must be true so the framing CRLF is NOT doubled before .<CRLF>");
+    }
+
+    // --- SIZE preflight (rfc1870 §6) ---
+
+    @Test
+    void wireLengthIsSmallerWithNormalizeDisabledForLfOnlyBody() {
+        // rfc1870 §6: SIZE declared in MAIL FROM must match the bytes actually transmitted.
+        // computeWireMetrics uses the same normalize flag as streamPayload, so a LF-only body
+        // measures SMALLER with normalizeLineEndings=false (each LF stays 1 byte) than with
+        // =true (each LF becomes CRLF, 2 bytes). We verify this at the chunk level by comparing
+        // the output lengths of the two normalize paths for the same LF-only input.
+        var input = "line one\nline two\n".getBytes(StandardCharsets.UTF_8);
+
+        var withNormalize = SmtpClient.normalize(input, input.length, false, true, false, true);
+        var withoutNormalize = SmtpClient.normalize(input, input.length, false, true, false, false);
+
+        assertTrue(
+                withNormalize.bytes().length > withoutNormalize.bytes().length,
+                "normalized output must be longer than verbatim (2 LFs → 2×CRLF adds 2 bytes)");
+        // Exact delta: 2 bare LFs each expand to CRLF → +2 bytes.
+        assertEquals(
+                withoutNormalize.bytes().length + 2,
+                withNormalize.bytes().length,
+                "each bare LF adds exactly 1 extra byte when normalized");
+    }
 }

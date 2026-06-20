@@ -27,7 +27,8 @@ public record SmtpConfig(
         EsmtpConfig esmtp,
         TransportConfig transport,
         ProxyConfig proxy,
-        XclientConfig xclient) {
+        XclientConfig xclient,
+        boolean normalizeLineEndings) {
 
     public enum Protocol {
         /** Plain rfc5321 HELO, no extensions. */
@@ -82,19 +83,44 @@ public record SmtpConfig(
                 EsmtpConfig.defaults(),
                 TransportConfig.defaults(),
                 ProxyConfig.disabled(),
-                XclientConfig.disabled());
+                XclientConfig.disabled(),
+                true);
     }
 
     public SmtpConfig withHost(String newHost) {
         return new SmtpConfig(
-                newHost, port, ehloHost, protocol, timeout, stopAfter, dropAfter, tls, auth, esmtp, transport, proxy,
-                xclient);
+                newHost,
+                port,
+                ehloHost,
+                protocol,
+                timeout,
+                stopAfter,
+                dropAfter,
+                tls,
+                auth,
+                esmtp,
+                transport,
+                proxy,
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withPort(int newPort) {
         return new SmtpConfig(
-                host, newPort, ehloHost, protocol, timeout, stopAfter, dropAfter, tls, auth, esmtp, transport, proxy,
-                xclient);
+                host,
+                newPort,
+                ehloHost,
+                protocol,
+                timeout,
+                stopAfter,
+                dropAfter,
+                tls,
+                auth,
+                esmtp,
+                transport,
+                proxy,
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withEhloHost(String newEhloHost) {
@@ -111,7 +137,8 @@ public record SmtpConfig(
                 esmtp,
                 transport,
                 proxy,
-                xclient);
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withProtocol(Protocol newProtocol) {
@@ -128,7 +155,8 @@ public record SmtpConfig(
                 esmtp,
                 transport,
                 proxy,
-                xclient);
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withTimeout(Duration newTimeout) {
@@ -145,7 +173,8 @@ public record SmtpConfig(
                 esmtp,
                 transport,
                 proxy,
-                xclient);
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withStopAfter(Phase newStopAfter, boolean newDropAfter) {
@@ -162,25 +191,62 @@ public record SmtpConfig(
                 esmtp,
                 transport,
                 proxy,
-                xclient);
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withTls(TlsConfig newTls) {
         return new SmtpConfig(
-                host, port, ehloHost, protocol, timeout, stopAfter, dropAfter, newTls, auth, esmtp, transport, proxy,
-                xclient);
+                host,
+                port,
+                ehloHost,
+                protocol,
+                timeout,
+                stopAfter,
+                dropAfter,
+                newTls,
+                auth,
+                esmtp,
+                transport,
+                proxy,
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withAuth(AuthConfig newAuth) {
         return new SmtpConfig(
-                host, port, ehloHost, protocol, timeout, stopAfter, dropAfter, tls, newAuth, esmtp, transport, proxy,
-                xclient);
+                host,
+                port,
+                ehloHost,
+                protocol,
+                timeout,
+                stopAfter,
+                dropAfter,
+                tls,
+                newAuth,
+                esmtp,
+                transport,
+                proxy,
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withEsmtp(EsmtpConfig newEsmtp) {
         return new SmtpConfig(
-                host, port, ehloHost, protocol, timeout, stopAfter, dropAfter, tls, auth, newEsmtp, transport, proxy,
-                xclient);
+                host,
+                port,
+                ehloHost,
+                protocol,
+                timeout,
+                stopAfter,
+                dropAfter,
+                tls,
+                auth,
+                newEsmtp,
+                transport,
+                proxy,
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withTransport(TransportConfig newTransport) {
@@ -197,13 +263,26 @@ public record SmtpConfig(
                 esmtp,
                 newTransport,
                 proxy,
-                xclient);
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withProxy(ProxyConfig newProxy) {
         return new SmtpConfig(
-                host, port, ehloHost, protocol, timeout, stopAfter, dropAfter, tls, auth, esmtp, transport, newProxy,
-                xclient);
+                host,
+                port,
+                ehloHost,
+                protocol,
+                timeout,
+                stopAfter,
+                dropAfter,
+                tls,
+                auth,
+                esmtp,
+                transport,
+                newProxy,
+                xclient,
+                normalizeLineEndings);
     }
 
     public SmtpConfig withXclient(XclientConfig newXclient) {
@@ -220,7 +299,32 @@ public record SmtpConfig(
                 esmtp,
                 transport,
                 proxy,
-                newXclient);
+                newXclient,
+                normalizeLineEndings);
+    }
+
+    /**
+     * Controls LF→CRLF normalization of the DATA payload (rfc5321 §2.3.8). Default {@code true}
+     * promotes bare LF / bare CR to CRLF; {@code false} suppresses that promotion so the body goes
+     * out byte-for-byte. Dot-stuffing and the {@code <CRLF>.<CRLF>} terminator framing always apply
+     * regardless of this flag.
+     */
+    public SmtpConfig withNormalizeLineEndings(boolean newNormalizeLineEndings) {
+        return new SmtpConfig(
+                host,
+                port,
+                ehloHost,
+                protocol,
+                timeout,
+                stopAfter,
+                dropAfter,
+                tls,
+                auth,
+                esmtp,
+                transport,
+                proxy,
+                xclient,
+                newNormalizeLineEndings);
     }
 
     static String defaultEhloHost() {

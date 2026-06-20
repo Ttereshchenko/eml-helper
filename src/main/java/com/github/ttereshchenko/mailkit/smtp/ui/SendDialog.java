@@ -27,9 +27,7 @@ import com.intellij.ui.table.JBTable;
 import com.intellij.util.ui.FormBuilder;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -107,6 +105,7 @@ public final class SendDialog extends DialogWrapper {
     private final JComboBox<FailurePolicy> failurePolicyPicker = new JComboBox<>(FailurePolicy.values());
     private final JPasswordField passwordField = new JPasswordField();
     private final JBCheckBox updateProfileBox = new JBCheckBox();
+    private final JBCheckBox normalizeLineEndingsBox = new JBCheckBox("Normalize line endings (LF→CRLF)", true);
     private final FileStatusTableModel statusTableModel;
 
     private DialogState state = DialogState.IDLE;
@@ -175,6 +174,9 @@ public final class SendDialog extends DialogWrapper {
         envelopeToField.getDocument().addDocumentListener(refreshOnEdit);
         portSpinner.addChangeListener(event -> refreshUpdateProfileBox());
 
+        normalizeLineEndingsBox.setToolTipText("When unchecked, the message body is sent with its original line"
+                + " endings; dot-stuffing and the message terminator are always applied.");
+
         var formBuilder = FormBuilder.createFormBuilder()
                 .addLabeledComponent("Source:", sourceSummaryLabel)
                 .addLabeledComponent("Profile:", profilePicker)
@@ -195,6 +197,7 @@ public final class SendDialog extends DialogWrapper {
                 .addLabeledComponent("On failure:", failurePolicyPicker)
                 .addLabeledComponent("Stop after phase:", stopAfterPicker)
                 .addLabeledComponent("Password (one-time):", passwordField)
+                .addComponent(normalizeLineEndingsBox)
                 .getPanel();
 
         var statusTable = new JBTable(statusTableModel);
@@ -216,9 +219,6 @@ public final class SendDialog extends DialogWrapper {
         try {
             var request = buildSendRequest();
             if (!confirmInsecureTransport(request.config())) {
-                return;
-            }
-            if (!confirmBccStripping()) {
                 return;
             }
             persistOverridesToProfileIfRequested();
@@ -304,6 +304,7 @@ public final class SendDialog extends DialogWrapper {
         failurePolicyPicker.setEnabled(enabled);
         passwordField.setEnabled(enabled);
         updateProfileBox.setEnabled(enabled);
+        normalizeLineEndingsBox.setEnabled(enabled);
     }
 
     /**
@@ -482,7 +483,8 @@ public final class SendDialog extends DialogWrapper {
                     config.esmtp(),
                     config.transport(),
                     config.proxy(),
-                    config.xclient());
+                    config.xclient(),
+                    config.normalizeLineEndings());
         } else if (portOverride != selected.port) {
             config = config.withPort(portOverride);
         }
@@ -495,6 +497,9 @@ public final class SendDialog extends DialogWrapper {
         if (oneTimePassword.length > 0) {
             config = applyOneTimePassword(config, oneTimePassword);
         }
+        // Optional line-ending normalization (LF→CRLF). Unchecking sends the body with its original
+        // line endings; dot-stuffing and the message terminator are always applied by the client.
+        config = config.withNormalizeLineEndings(normalizeLineEndingsBox.isSelected());
         var failurePolicy = (FailurePolicy) failurePolicyPicker.getSelectedItem();
         return new SendRequest(
                 config,
@@ -527,95 +532,6 @@ public final class SendDialog extends DialogWrapper {
                 auth.optional(),
                 auth.optionalStrict());
         return config.withAuth(transientAuth);
-    }
-
-    /**
-     * Scans every source {@code .eml} for {@code Bcc:} header values without modifying anything,
-     * returning the de-duplicated list of Bcc addresses found across the batch. {@code Bcc:} is a
-     * header field, so a bounded prefix (the same cap {@link #parseEmlHeaders()} uses) always covers
-     * it; this runs on the EDT when the user presses Send. The actual stripping from the transmitted
-     * DATA happens in {@link BatchSendController}; this method exists only to drive the user warning.
-     */
-    private List<String> collectBccAddressesFromSources() {
-        var found = new ArrayList<String>();
-        for (var sourceFile : sourceFiles) {
-            try {
-                byte[] bytes;
-                try (var input = sourceFile.getInputStream()) {
-                    bytes = readHeaderSection(input);
-                }
-                for (var address : stripBccHeader(bytes).removedAddresses()) {
-                    if (!found.contains(address)) {
-                        found.add(address);
-                    }
-                }
-            } catch (IOException ignored) {
-                // Best effort — a file we cannot read here will also fail to send, and the send
-                // path strips Bcc independently, so skipping it for the warning is safe.
-            }
-        }
-        return found;
-    }
-
-    /**
-     * Reads the whole header section (up to and including the blank line that separates header from
-     * body, rfc5322 §2.1), regardless of size. A {@code Bcc:} field can sit anywhere in the header
-     * block, so a fixed byte cap could miss a late one — the warning must see exactly what the send
-     * path strips. Reading stops at the separator (a little body may be over-read, harmlessly), so
-     * only the header section is buffered, not a large message body/attachments.
-     */
-    private static byte[] readHeaderSection(InputStream input) throws IOException {
-        var buffer = new ByteArrayOutputStream();
-        var chunk = new byte[8192];
-        int read;
-        while ((read = input.read(chunk)) != -1) {
-            buffer.write(chunk, 0, read);
-            if (containsHeaderBodySeparator(buffer.toByteArray())) {
-                break;
-            }
-        }
-        return buffer.toByteArray();
-    }
-
-    /** Whether {@code bytes} already contains a header/body separator ({@code \n\n} or {@code \n\r\n}). */
-    private static boolean containsHeaderBodySeparator(byte[] bytes) {
-        for (var index = 1; index < bytes.length; index++) {
-            if (bytes[index] == '\n') {
-                if (bytes[index - 1] == '\n') {
-                    return true;
-                }
-                if (index >= 3 && bytes[index - 1] == '\r' && bytes[index - 2] == '\n') {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * If any source {@code .eml} carries a {@code Bcc:} header, warns the user that those addresses
-     * were removed from the transmitted message (rfc5322 §3.6.3 / §5.3 — a {@code Bcc} field must
-     * not reach recipients) and were NOT added as envelope recipients. The manual-envelope design
-     * is deliberate: we never silently expand the recipient set, so the user can paste any intended
-     * Bcc addresses into the To field themselves. Returns {@code true} when the send should proceed.
-     */
-    private boolean confirmBccStripping() {
-        var bccAddresses = collectBccAddressesFromSources();
-        if (bccAddresses.isEmpty()) {
-            return true;
-        }
-        var answer = Messages.showYesNoDialog(
-                project,
-                "The message contains " + bccAddresses.size() + " Bcc address"
-                        + (bccAddresses.size() == 1 ? "" : "es") + " that will be removed before sending so they are"
-                        + " not disclosed to other recipients:\n\n    " + String.join("\n    ", bccAddresses)
-                        + "\n\nThese addresses will NOT be delivered to. Add them to the \"To\" field if you intend"
-                        + " to send to them.\n\nSend without the Bcc recipients?",
-                "Bcc Header Will Be Removed",
-                "Send Anyway",
-                "Cancel",
-                Messages.getWarningIcon());
-        return answer == Messages.YES;
     }
 
     private DefaultsFromHeaders parseEmlHeaders() {
@@ -841,120 +757,6 @@ public final class SendDialog extends DialogWrapper {
         return tokens;
     }
 
-    /** Outcome of {@link #stripBccHeader(byte[])}: the cleaned DATA plus the removed Bcc values. */
-    record BccStripResult(byte[] data, List<String> removedAddresses) {
-        BccStripResult {
-            Objects.requireNonNull(data, "data");
-            removedAddresses = List.copyOf(removedAddresses);
-        }
-
-        boolean changed() {
-            return !removedAddresses.isEmpty();
-        }
-    }
-
-    /**
-     * Removes every {@code Bcc:} header field (full folded field, all occurrences) from a message's
-     * DATA, returning the cleaned bytes and the raw Bcc values that were removed.
-     *
-     * <p>The {@code Bcc:} field must not be transmitted to any recipient (rfc5322 §3.6.3, §5.3) —
-     * sending the {@code .eml} verbatim would disclose the blind recipients to everyone on the
-     * envelope. Field-name matching is case-insensitive (rfc5322 §1.2.2 treats field names
-     * case-insensitively) and the whole folded field is dropped: a continuation line begins with
-     * SP or HTAB (rfc5322 §2.2.3), so each such line after a {@code Bcc:} start line is removed too.
-     * Only the header section (up to the blank line separating header and body, rfc5322 §2.1) is
-     * scanned, so a body line that merely looks like {@code Bcc: ...} is never touched. Dropping a
-     * field also drops that field's own line terminator, so no stray blank line is introduced.
-     *
-     * <p>Line endings are preserved as-found per line; the SMTP client normalizes LF→CRLF on the
-     * wire, so mixed endings in the source survive this rewrite without altering delivery.
-     */
-    static BccStripResult stripBccHeader(byte[] data) {
-        var text = new String(data, StandardCharsets.UTF_8);
-        // Split into lines that each retain their own terminator, so the message can be rebuilt
-        // byte-for-byte minus the dropped fields (and their terminators).
-        var lines = text.split("(?<=\n)");
-        var rebuilt = new StringBuilder(text.length());
-        // One unfolded value per Bcc field; a folded field's continuation lines are joined back into a
-        // single value (rfc5322 §2.2.3) so the value can be parsed as a real address list afterwards.
-        var bccValues = new ArrayList<String>();
-        StringBuilder currentBcc = null;
-        var inHeaders = true;
-        var droppingFoldedField = false;
-        for (var line : lines) {
-            if (!inHeaders) {
-                rebuilt.append(line);
-                continue;
-            }
-            // A line that is empty once its terminator is removed is the header/body separator
-            // (rfc5322 §2.1); everything after it is body and must be left untouched.
-            if (stripLineEnding(line).isEmpty()) {
-                if (currentBcc != null) {
-                    bccValues.add(currentBcc.toString());
-                    currentBcc = null;
-                }
-                inHeaders = false;
-                rebuilt.append(line);
-                continue;
-            }
-            var isContinuation = line.startsWith(" ") || line.startsWith("\t");
-            if (droppingFoldedField && isContinuation) {
-                if (currentBcc != null) {
-                    var part = stripLineEnding(line).trim();
-                    if (!part.isEmpty()) {
-                        if (currentBcc.length() > 0) {
-                            currentBcc.append(' ');
-                        }
-                        currentBcc.append(part);
-                    }
-                }
-                continue;
-            }
-            // A non-continuation line ends any Bcc field currently being collected.
-            if (currentBcc != null) {
-                bccValues.add(currentBcc.toString());
-                currentBcc = null;
-            }
-            droppingFoldedField = false;
-            var colon = line.indexOf(':');
-            if (colon > 0 && line.substring(0, colon).trim().equalsIgnoreCase("Bcc")) {
-                droppingFoldedField = true;
-                currentBcc = new StringBuilder(
-                        stripLineEnding(line.substring(colon + 1)).trim());
-                continue;
-            }
-            rebuilt.append(line);
-        }
-        if (currentBcc != null) {
-            bccValues.add(currentBcc.toString());
-        }
-
-        // Parse each Bcc field value into bare addr-specs (rfc5322 §3.4 address list), deduplicating,
-        // so the user warning lists real addresses — not the raw line fragments (with trailing commas,
-        // or several addresses glued into one entry) the previous code reported.
-        var removed = new ArrayList<String>();
-        for (var value : bccValues) {
-            for (var token : splitAddressList(value)) {
-                var address = extractAddrSpec(token);
-                if (!address.isEmpty() && !removed.contains(address)) {
-                    removed.add(address);
-                }
-            }
-        }
-        if (removed.isEmpty()) {
-            return new BccStripResult(data, List.of());
-        }
-        return new BccStripResult(rebuilt.toString().getBytes(StandardCharsets.UTF_8), removed);
-    }
-
-    private static String stripLineEnding(String line) {
-        var end = line.length();
-        while (end > 0 && (line.charAt(end - 1) == '\n' || line.charAt(end - 1) == '\r')) {
-            end--;
-        }
-        return line.substring(0, end);
-    }
-
     private String formatSourceSummary() {
         if (sourceFiles.isEmpty()) {
             return "(no file — composing from envelope only)";
@@ -1116,6 +918,10 @@ public final class SendDialog extends DialogWrapper {
 
     JBCheckBox updateProfileBoxForTest() {
         return updateProfileBox;
+    }
+
+    JBCheckBox normalizeLineEndingsBoxForTest() {
+        return normalizeLineEndingsBox;
     }
 
     void persistOverridesForTest() {

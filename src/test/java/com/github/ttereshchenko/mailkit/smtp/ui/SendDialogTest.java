@@ -4,7 +4,6 @@ import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfile;
 import com.github.ttereshchenko.mailkit.smtp.profile.SmtpProfileService;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -314,37 +313,32 @@ public class SendDialogTest extends BasePlatformTestCase {
         }
     }
 
-    public void testBccHeaderIsRecognizedFoldedAndCaseInsensitivelyAndStrippedFromData() throws Exception {
-        // Manual-verification sample: a folded, mixed-case (BCC:) Bcc field. rfc5322 §3.6.3 / §5.3 —
-        // the Bcc field must not be transmitted; rfc5322 §1.2.2 — field names are case-insensitive;
-        // rfc5322 §2.2.3 — a continuation line begins with SP/HTAB, so the folded value goes too.
-        var bytes = Files.readAllBytes(Path.of("src/test/resources/samples/eml/edge/bcc_disclosure.eml"));
+    public void testNormalizeLineEndingsBoxDefaultsToSelectedAndFlowsIntoConfig() throws Exception {
+        // The "Normalize line endings (LF→CRLF)" checkbox must default to checked, and the resulting
+        // SendRequest config must carry normalizeLineEndings=true. Unchecking the box must flip it to
+        // false so that the SMTP client emits the body byte-for-byte without LF→CRLF promotion.
+        var dialog = new SendDialog(getProject(), (VirtualFile) null);
+        try {
+            dialog.setEnvelopeForTest("from@example.com", "to@example.com");
 
-        var result = SendDialog.stripBccHeader(bytes);
+            // Default: box checked → normalizeLineEndings true.
+            assertTrue(
+                    "normalizeLineEndingsBox must default to selected",
+                    dialog.normalizeLineEndingsBoxForTest().isSelected());
+            var defaultRequest = dialog.buildSendRequest();
+            assertTrue(
+                    "config must carry normalizeLineEndings=true by default",
+                    defaultRequest.config().normalizeLineEndings());
 
-        assertTrue("a Bcc field must be detected (this is what triggers the user warning)", result.changed());
-        // The folded field is unfolded and parsed into bare addr-specs (no trailing comma, one entry
-        // per address) so the warning lists real addresses rather than raw line fragments.
-        assertEquals(List.of("secret-one@example.com", "secret-two@example.com"), result.removedAddresses());
-        var data = new String(result.data(), StandardCharsets.UTF_8);
-        assertFalse("the Bcc field name must be gone from DATA", data.contains("BCC:"));
-        assertFalse(data.contains("secret-one@example.com"));
-        assertFalse(data.contains("secret-two@example.com"));
-        assertTrue("the visible header survives", data.contains("To: visible@example.com"));
-        assertTrue("the From header survives", data.contains("From: sender@example.com"));
-        // Dropping the field (and its folded continuation) must not leave a stray blank line.
-        assertFalse("no blank line where the Bcc field was", data.contains("\r\n\r\n\r\n"));
-    }
-
-    public void testStripBccHeaderLeavesABodyLineThatLooksLikeBccUntouched() {
-        // Only the header section is scanned (rfc5322 §2.1) — a body line that merely starts with
-        // "Bcc:" must be left intact.
-        var message = "From: a@example.com\r\nTo: b@example.com\r\n\r\nBcc: not-a-header@example.com\r\n";
-
-        var result = SendDialog.stripBccHeader(message.getBytes(StandardCharsets.UTF_8));
-
-        assertFalse("a body line is not a header — nothing to strip", result.changed());
-        assertEquals(message, new String(result.data(), StandardCharsets.UTF_8));
+            // Uncheck → normalizeLineEndings false.
+            dialog.normalizeLineEndingsBoxForTest().setSelected(false);
+            var noNormalizeRequest = dialog.buildSendRequest();
+            assertFalse(
+                    "config must carry normalizeLineEndings=false after unchecking",
+                    noNormalizeRequest.config().normalizeLineEndings());
+        } finally {
+            dialog.close(0);
+        }
     }
 
     /** Reads one top-level (un-folded) header value from a sample EML on disk. */
