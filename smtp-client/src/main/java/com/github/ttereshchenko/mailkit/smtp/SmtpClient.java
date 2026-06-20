@@ -288,7 +288,7 @@ public final class SmtpClient {
             }
             cancel(cancel, session);
 
-            streamPayload(connection.output(), transcript, source, cancel, session);
+            streamPayload(connection.output(), transcript, source, cancel, session, config.normalizeLineEndings());
 
             session.enterPhase(Phase.DOT);
             writeLineRaw(connection.output(), transcript, Phase.DOT, DOT_CRLF, SmtpTranscript.Direction.CLIENT, ".");
@@ -336,7 +336,15 @@ public final class SmtpClient {
 
             if (negotiation.useBdat()) {
                 session.enterPhase(Phase.BDAT);
-                performBdat(connection, transcript, source, cancel, session, dispositions, negotiation.usePrdr());
+                performBdat(
+                        connection,
+                        transcript,
+                        source,
+                        cancel,
+                        session,
+                        dispositions,
+                        negotiation.usePrdr(),
+                        config.normalizeLineEndings());
                 if (shouldStop(config, Phase.BDAT)) {
                     throw stop(config, connection, transcript, Phase.BDAT);
                 }
@@ -354,7 +362,7 @@ public final class SmtpClient {
                 }
                 cancel(cancel, session);
 
-                streamPayload(connection.output(), transcript, source, cancel, session);
+                streamPayload(connection.output(), transcript, source, cancel, session, config.normalizeLineEndings());
 
                 session.enterPhase(Phase.DOT);
                 writeLineRaw(
@@ -671,7 +679,7 @@ public final class SmtpClient {
         // normalization, and dot-stuffing for DATA but not BDAT, make an LF-only message larger on the
         // wire than on disk); rfc5321 §4.5.3.1.6 — a text line including its CRLF must not exceed 1000
         // octets (so 998 octets of content), or a strict server may reject or truncate it.
-        var metrics = computeWireMetrics(source, !useBdat);
+        var metrics = computeWireMetrics(source, !useBdat, config.normalizeLineEndings());
         if (metrics.maxLineOctets() > MAX_WIRE_LINE_CONTENT_OCTETS) {
             throw new SmtpException(
                     SmtpException.Kind.DATA_REJECTED,
@@ -701,12 +709,15 @@ public final class SmtpClient {
 
     /**
      * Computes the on-the-wire DATA length in bytes: the source streamed through the same
-     * CRLF-normalization (and, for DATA, dot-stuffing) the client applies in {@link #streamPayload}
-     * / {@link #performBdat}, including the trailing CRLF appended when the body does not already
-     * end at a line boundary. The terminating {@code <CRLF>.<CRLF>} / {@code BDAT ... LAST} framing
-     * is protocol overhead, not message content, so it is deliberately excluded (rfc1870 §6).
+     * normalization (and, for DATA, dot-stuffing) the client applies in {@link #streamPayload} /
+     * {@link #performBdat}, including the trailing CRLF appended when the body does not already end at
+     * a CRLF boundary. Measurement uses the SAME {@code normalizeLineEndings} flag as the transmit
+     * path so the declared SIZE (rfc1870 §6) equals the bytes actually transmitted. The terminating
+     * {@code <CRLF>.<CRLF>} / {@code BDAT ... LAST} framing is protocol overhead, not message content,
+     * so it is deliberately excluded.
      */
-    private static WireMetrics computeWireMetrics(MessageSource source, boolean dotStuff) throws IOException {
+    private static WireMetrics computeWireMetrics(MessageSource source, boolean dotStuff, boolean normalizeLineEndings)
+            throws IOException {
         var wireLength = 0L;
         var maxLineOctets = 0;
         var currentLineOctets = 0;
@@ -714,32 +725,43 @@ public final class SmtpClient {
             var buffer = new byte[CHUNK_SIZE];
             var sawCr = false;
             var atLineStart = true;
+            var endsWithCrlf = true;
+            // Tracks whether the previously emitted byte was a CR, so a CR immediately followed by an
+            // LF (the line terminator) is not counted as a content octet even across a chunk boundary.
+            var previousByteWasCr = false;
             int read;
             while ((read = stream.read(buffer)) != -1) {
                 if (read == 0) {
                     continue;
                 }
-                var normalized = normalize(buffer, read, sawCr, atLineStart, dotStuff);
+                var normalized = normalize(buffer, read, sawCr, atLineStart, dotStuff, normalizeLineEndings);
                 var bytes = normalized.bytes();
                 wireLength += bytes.length;
-                // Measure the longest content line (octets excluding the CRLF terminator). normalize()
-                // emits every line break as CRLF, so a '\r' is always the first half of a terminator and
-                // is not counted; currentLineOctets carries across chunk boundaries.
-                for (var b : bytes) {
-                    if (b == '\r') {
-                        continue;
-                    }
-                    if (b == '\n') {
+                // Measure the longest content line (octets excluding the CRLF terminator). A CR that is
+                // immediately followed by LF is the first half of a terminator and is not counted; a bare
+                // CR (no following LF) in no-normalize mode counts as a content octet. currentLineOctets
+                // carries across chunk boundaries.
+                for (var octet : bytes) {
+                    if (octet == '\n') {
+                        // If this LF closes a CRLF, the CR was provisionally counted: back it out.
+                        if (previousByteWasCr) {
+                            currentLineOctets--;
+                        }
                         maxLineOctets = Math.max(maxLineOctets, currentLineOctets);
                         currentLineOctets = 0;
+                        previousByteWasCr = false;
                     } else {
                         currentLineOctets++;
+                        previousByteWasCr = octet == '\r';
                     }
                 }
                 sawCr = normalized.endedWithCr();
                 atLineStart = normalized.endsAtLineStart();
+                endsWithCrlf = normalized.endsWithCrlf();
             }
-            if (!atLineStart) {
+            // The framing CRLF is appended by the transmit path when the body does not already end with
+            // CRLF; mirror that here so the measured size matches the bytes actually sent.
+            if (!endsWithCrlf) {
                 wireLength += CRLF.length;
             }
             // The trailing line (if the body did not end at a line boundary) still counts toward the max.
@@ -772,10 +794,13 @@ public final class SmtpClient {
     }
 
     /**
-     * Streams the message via CHUNKING (rfc3030): CRLF-normalized (no dot-stuffing) chunks of
-     * {@link #BDAT_CHUNK_SIZE}, each intermediate chunk acknowledged with a 250, then a final
-     * {@code BDAT n LAST} whose verdict is read through {@link #readDataVerdict} so PRDR
-     * per-recipient replies are honoured.
+     * Streams the message via CHUNKING (rfc3030): chunks of {@link #BDAT_CHUNK_SIZE} (no
+     * dot-stuffing — BDAT frames by byte count, not by a dot terminator), each intermediate chunk
+     * acknowledged with a 250, then a final {@code BDAT n LAST} whose verdict is read through
+     * {@link #readDataVerdict} so PRDR per-recipient replies are honoured. LF→CRLF normalization is
+     * applied only when {@code normalizeLineEndings} is true; when false the CR/LF bytes are framed
+     * byte-for-byte. A trailing CRLF is appended when the transmitted stream does not already end
+     * with one, so the framing matches what DATA would have produced.
      */
     private void performBdat(
             Connection connection,
@@ -784,7 +809,8 @@ public final class SmtpClient {
             CancellationToken cancel,
             SmtpSession session,
             ArrayList<SendResult.RecipientDisposition> dispositions,
-            boolean prdrNegotiated)
+            boolean prdrNegotiated,
+            boolean normalizeLineEndings)
             throws IOException, SmtpException {
         var pending = new ByteArrayOutputStream(CHUNK_SIZE);
         var totalBytes = 0L;
@@ -792,15 +818,17 @@ public final class SmtpClient {
             var buffer = new byte[CHUNK_SIZE];
             var sawCr = false;
             var lineStart = true;
+            var endsWithCrlf = true;
             int read;
             while ((read = stream.read(buffer)) != -1) {
                 if (read == 0) {
                     continue;
                 }
-                var normalized = normalize(buffer, read, sawCr, lineStart, false);
+                var normalized = normalize(buffer, read, sawCr, lineStart, false, normalizeLineEndings);
                 pending.write(normalized.bytes());
                 sawCr = normalized.endedWithCr();
                 lineStart = normalized.endsAtLineStart();
+                endsWithCrlf = normalized.endsWithCrlf();
                 if (pending.size() >= BDAT_CHUNK_SIZE) {
                     totalBytes += sendBdatChunk(connection, transcript, pending.toByteArray(), false);
                     pending.reset();
@@ -814,7 +842,11 @@ public final class SmtpClient {
                     cancel(cancel, session);
                 }
             }
-            if (!lineStart) {
+            // Match DATA's terminator framing: ensure the body ends on a CRLF boundary. In no-normalize
+            // mode a body ending in a bare LF does not end with CRLF, so the CRLF is still appended; the
+            // appended bytes are part of the chunk and so are counted by sendBdatChunk below — the
+            // declared chunk size therefore stays in sync with the bytes actually written.
+            if (!endsWithCrlf) {
                 pending.write(CRLF);
             }
         }
@@ -1113,31 +1145,49 @@ public final class SmtpClient {
         return new SmtpException(SmtpException.Kind.STOPPED_AT_PHASE, stoppedAt, "stopped after " + stoppedAt);
     }
 
+    /**
+     * Streams the DATA payload onto the wire. LF→CRLF normalization is applied only when
+     * {@code normalizeLineEndings} is true (rfc5321 §2.3.8); when false the CR/LF bytes go out
+     * byte-for-byte. Dot-stuffing and the terminating {@code <CRLF>.<CRLF>} framing always apply.
+     *
+     * <p>The framing CRLF before the terminating dot (rfc5321 §4.1.1.4) is the one transform that
+     * still applies when normalization is disabled: it is emitted whenever the transmitted stream
+     * does not already end with a CRLF. In no-normalize mode a body ending in a bare {@code \n} does
+     * NOT leave the wire positioned after a CRLF, so the framing CRLF is still written — otherwise the
+     * server would never see {@code <CRLF>.<CRLF>} and would not recognize end-of-data.
+     */
     private void streamPayload(
             OutputStream output,
             SmtpTranscript transcript,
             MessageSource source,
             CancellationToken cancel,
-            SmtpSession session)
+            SmtpSession session,
+            boolean normalizeLineEndings)
             throws SmtpException, IOException {
         var bytesSent = 0L;
         try (var payload = source.open()) {
             var buffer = new byte[CHUNK_SIZE];
             var carrySawCr = false;
             var atLineStart = true;
+            var endsWithCrlf = true;
             int read;
             while ((read = payload.read(buffer)) != -1) {
                 if (read == 0) {
                     continue;
                 }
-                var normalized = normalizeAndDotStuff(buffer, read, carrySawCr, atLineStart);
+                var normalized = normalize(buffer, read, carrySawCr, atLineStart, true, normalizeLineEndings);
                 output.write(normalized.bytes());
                 bytesSent += normalized.bytes().length;
                 carrySawCr = normalized.endedWithCr();
                 atLineStart = normalized.endsAtLineStart();
+                endsWithCrlf = normalized.endsWithCrlf();
                 cancel(cancel, session);
             }
-            if (!atLineStart) {
+            // rfc5321 §4.1.1.4: the terminating dot must be preceded by a real CRLF. Emit the framing
+            // CRLF whenever the transmitted stream does not already end with one — this is the only
+            // transform that still runs when normalization is disabled (a body ending in a bare LF is
+            // not positioned after a CRLF, so endsWithCrlf is false even though endsAtLineStart is true).
+            if (!endsWithCrlf) {
                 output.write(CRLF);
                 bytesSent += CRLF.length;
             }
@@ -1150,11 +1200,33 @@ public final class SmtpClient {
     }
 
     static NormalizedChunk normalizeAndDotStuff(byte[] source, int length, boolean carrySawCr, boolean atLineStart) {
-        return normalize(source, length, carrySawCr, atLineStart, true);
+        return normalize(source, length, carrySawCr, atLineStart, true, true);
     }
 
+    /**
+     * Normalizes one input chunk for the DATA/BDAT stream.
+     *
+     * <p>When {@code normalizeLineEndings} is {@code true} (the default), bare LF and bare CR are
+     * promoted to CRLF (rfc5321 §2.3.8) and a trailing CR is held pending across chunk boundaries.
+     * When it is {@code false}, CR and LF bytes are emitted exactly as they appear in the source —
+     * none are synthesized or dropped — so the body is transmitted byte-for-byte; no CR is held
+     * pending in that mode.
+     *
+     * <p>Dot-stuffing (when {@code dotStuff}) is applied at every line start in both modes. A line
+     * start is the position right after an emitted {@code \n}. The {@code <CRLF>.<CRLF>} terminator
+     * framing is the responsibility of the caller and is the one transform that still applies when
+     * normalization is disabled.
+     */
     static NormalizedChunk normalize(
-            byte[] source, int length, boolean carrySawCr, boolean atLineStart, boolean dotStuff) {
+            byte[] source,
+            int length,
+            boolean carrySawCr,
+            boolean atLineStart,
+            boolean dotStuff,
+            boolean normalizeLineEndings) {
+        if (!normalizeLineEndings) {
+            return emitVerbatim(source, length, atLineStart, dotStuff, carrySawCr);
+        }
         // Worst case per input byte: resolve a pending bare CR as CRLF (2) plus the byte's own
         // expansion (LF→CRLF, or a stuffed leading dot). A carried-in pending CR can add a
         // leading CRLF. Three-times sizing with slack covers every combination without a resize.
@@ -1198,11 +1270,74 @@ public final class SmtpClient {
         var trimmed = new byte[pos];
         System.arraycopy(buffer, 0, trimmed, 0, pos);
         // A still-pending CR is reported via endedWithCr; endsAtLineStart is false so the caller's
-        // end-of-stream flush emits the closing CRLF for a trailing bare CR.
-        return new NormalizedChunk(trimmed, sawCr, sawCr ? false : lineStart);
+        // end-of-stream flush emits the closing CRLF for a trailing bare CR. In this mode every
+        // emitted line break is a CRLF, so ending at a line start is exactly ending with CRLF.
+        var endsAtLineStart = sawCr ? false : lineStart;
+        return new NormalizedChunk(trimmed, sawCr, endsAtLineStart, endsAtLineStart);
     }
 
-    record NormalizedChunk(byte[] bytes, boolean endedWithCr, boolean endsAtLineStart) {}
+    /**
+     * Byte-for-byte emission used when line-ending normalization is disabled: CR and LF are written
+     * exactly as found (never synthesized or dropped), dot-stuffing still applies at each line start,
+     * and no CR is held pending across chunk boundaries.
+     *
+     * <p>{@code carryPrevByteWasCr} reports whether the previously emitted chunk ended with a CR, so a
+     * {@code \n} at the very start of this chunk is recognized as completing a CRLF that straddles the
+     * chunk boundary. The returned {@code endedWithCr} field carries the same "last emitted byte was a
+     * CR" signal forward (it is NOT a held-pending CR — verbatim mode emits CR immediately).
+     */
+    private static NormalizedChunk emitVerbatim(
+            byte[] source, int length, boolean atLineStart, boolean dotStuff, boolean carryPrevByteWasCr) {
+        // Worst case is one stuffed dot per byte: at most one extra byte per input byte.
+        var buffer = new byte[length * 2 + 2];
+        var pos = 0;
+        var lineStart = atLineStart;
+        var prevByteWasCr = carryPrevByteWasCr;
+        // Tracks whether the most recent line break emitted (an LF) was immediately preceded by a CR —
+        // including a CR carried over from the previous chunk — so endsWithCrlf is correct even when a
+        // CRLF is split across the chunk boundary.
+        var endsWithCrlf = false;
+        for (var index = 0; index < length; index++) {
+            var current = source[index];
+            if (current == '\n') {
+                buffer[pos++] = '\n';
+                lineStart = true;
+                endsWithCrlf = prevByteWasCr;
+                prevByteWasCr = false;
+                continue;
+            }
+            if (dotStuff && lineStart && current == '.') {
+                buffer[pos++] = '.';
+            }
+            buffer[pos++] = current;
+            lineStart = false;
+            prevByteWasCr = current == '\r';
+            endsWithCrlf = false;
+        }
+        var trimmed = new byte[pos];
+        System.arraycopy(buffer, 0, trimmed, 0, pos);
+        // endedWithCr carries the "last emitted byte was a CR" signal (so a boundary-split CRLF is
+        // detected by the next chunk); it is not a held-pending CR. endsWithCrlf is true only when the
+        // transmitted stream genuinely ends with the \r\n pair. A body ending in a bare LF reports
+        // endsAtLineStart=true but endsWithCrlf=false, so the caller still emits the framing CRLF.
+        return new NormalizedChunk(trimmed, prevByteWasCr, lineStart, endsWithCrlf);
+    }
+
+    /**
+     * Result of normalizing one input chunk for the DATA/BDAT stream.
+     *
+     * @param bytes the transmit-ready bytes for this chunk (already dot-stuffed when requested)
+     * @param endedWithCr a CR was seen but not yet emitted (normalize mode only; always {@code false}
+     *     when line-ending normalization is disabled, since CR is emitted immediately)
+     * @param endsAtLineStart the stream position is at the start of a line, i.e. right after an
+     *     emitted {@code \n} (drives leading-dot stuffing for the next chunk)
+     * @param endsWithCrlf the transmitted stream so far ends with a {@code \r\n} pair specifically —
+     *     used by {@code streamPayload} to decide whether the mandatory {@code <CRLF>.<CRLF>}
+     *     terminator framing already has its leading CRLF. In no-normalize mode a body ending in a
+     *     bare {@code \n} sets {@code endsAtLineStart} but NOT {@code endsWithCrlf}, so a framing
+     *     CRLF is still emitted (rfc5321 §4.1.1.4).
+     */
+    record NormalizedChunk(byte[] bytes, boolean endedWithCr, boolean endsAtLineStart, boolean endsWithCrlf) {}
 
     private SmtpResponse command(Connection connection, SmtpTranscript transcript, Phase phase, String line)
             throws IOException, SmtpException {

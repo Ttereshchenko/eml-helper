@@ -7,6 +7,11 @@
 - EML header and MIME-boundary highlighting now shows its colors on every editor color scheme. On themes other than the classic Default/Darcula — including the New UI Light/Dark and Islands Dark/Light schemes — headers had been rendering in plain gray; each highlight now falls back to a sensible default color so it is visible everywhere (including on a fresh install), while the bundled Default/Darcula palettes are unchanged.
 - A stray empty line at the very top of an `.eml` file, or between header lines, no longer switches off header highlighting for everything below it. Header coloring now tolerates blank lines in the top-level header block and keeps highlighting the headers that follow, instead of treating the first blank line as the start of the message body.
 
+### Changed (SMTP sending)
+
+- "Send EML…" now transmits your `.eml` file verbatim — the message goes out byte-for-byte as it is on disk, and the client no longer alters its content. In particular, a `Bcc:` header is no longer stripped before sending: the file is sent exactly as written, so any `Bcc:` line it contains is transmitted to recipients and is visible to them. Remove the `Bcc:` line from the file yourself if you do not want blind recipients disclosed.
+- The Send dialog has a new "Normalize line endings (LF→CRLF)" checkbox, on by default. Left checked, it converts the message's line endings to CRLF on the wire as before; unchecked, the body is sent with its original line endings for true byte-for-byte transmission (the protocol's dot-stuffing and message-terminator framing are still applied either way).
+
 ## 1.2.2 - 2026-06-18
 
 ### Fixed (conversion charset fidelity)

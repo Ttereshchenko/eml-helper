@@ -1,0 +1,7 @@
+From: sender@example.com
+To: visible@example.com
+Bcc: hidden@example.com
+Subject: verbatim bcc transmission
+
+Since the SMTP client now sends the .eml byte-for-byte, the Bcc header above
+must reach the wire unchanged — no stripping occurs in the DATA path.

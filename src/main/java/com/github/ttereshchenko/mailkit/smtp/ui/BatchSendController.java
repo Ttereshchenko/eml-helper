@@ -151,31 +151,29 @@ final class BatchSendController {
     }
 
     /**
-     * Builds the DATA source for one message, stripping any {@code Bcc:} header field so the blind
-     * recipients are never transmitted (rfc5322 §3.6.3 / §5.3) — the dialog already warned the user
-     * about, and declined to deliver to, those addresses. The content is read through the VFS so any
-     * {@link VirtualFile} (local or otherwise) works, not only files with a readable filesystem path.
-     * A file that actually carries a {@code Bcc:} is rewritten and sent from memory; a local file with
-     * none streams straight from disk so a large message is not buffered for the whole send. An empty
-     * selection is the legacy "envelope only" mode (a {@code null} file → empty body).
+     * Builds the DATA source for one message, transmitting the selected {@code .eml} unmodified —
+     * the client sends the original bytes verbatim and never removes or rewrites any header field
+     * (including {@code Bcc:}). A local file streams straight from disk via {@link Path} so a large
+     * message is not buffered for the whole send; any other {@link VirtualFile} is read through the
+     * VFS and sent from memory. An empty selection is the legacy "envelope only" mode (a {@code null}
+     * file → empty body).
      */
     private static MessageSource buildSource(@Nullable VirtualFile file) {
         if (file == null) {
             return MessageSource.ofString("");
         }
+        if (file.isInLocalFileSystem()) {
+            return MessageSource.ofPath(Path.of(file.getPath()));
+        }
         byte[] raw;
         try (var input = file.getInputStream()) {
             raw = input.readAllBytes();
         } catch (IOException ignored) {
-            // Could not read the file to inspect/strip a Bcc header; stream from its path and let the
-            // SMTP client surface any read error.
+            // Could not read the non-local file into memory; stream from its path and let the SMTP
+            // client surface any read error.
             return MessageSource.ofPath(Path.of(file.getPath()));
         }
-        var stripped = SendDialog.stripBccHeader(raw);
-        if (stripped.changed()) {
-            return MessageSource.ofBytes(stripped.data());
-        }
-        return file.isInLocalFileSystem() ? MessageSource.ofPath(Path.of(file.getPath())) : MessageSource.ofBytes(raw);
+        return MessageSource.ofBytes(raw);
     }
 
     private static int markRemainingSkipped(BatchListener listener, int firstIndex, int total, String reason) {
