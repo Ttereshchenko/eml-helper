@@ -52,7 +52,7 @@ final class EmlParser implements PsiParser {
     }
 
     private static @Nullable String parseHeaderBlock(PsiBuilder builder) {
-        if (builder.getTokenType() != EmlTokenTypes.HEADER_LINE) {
+        if (!headerBlockStartsHere(builder)) {
             // Empty header block — still wrap to keep PSI shape predictable.
             var emptyMarker = builder.mark();
             emptyMarker.done(EmlElementTypes.HEADER_BLOCK);
@@ -60,32 +60,73 @@ final class EmlParser implements PsiParser {
         }
         var blockMarker = builder.mark();
         String contentTypeValue = null;
-        while (builder.getTokenType() == EmlTokenTypes.HEADER_LINE) {
-            var headerMarker = builder.mark();
-            var firstLineRaw = builder.getTokenText();
-            var firstLine = firstLineRaw == null ? "" : firstLineRaw.stripTrailing();
-            builder.advanceLexer();
-            List<String> continuations = null;
-            while (builder.getTokenType() == EmlTokenTypes.HEADER_CONT_LINE) {
-                if (continuations == null) {
-                    continuations = new ArrayList<>(2);
-                }
-                var contRaw = builder.getTokenText();
-                continuations.add(contRaw == null ? "" : contRaw.stripTrailing());
+        while (true) {
+            if (builder.getTokenType() == EmlTokenTypes.HEADER_LINE) {
+                var headerMarker = builder.mark();
+                var firstLineRaw = builder.getTokenText();
+                var firstLine = firstLineRaw == null ? "" : firstLineRaw.stripTrailing();
                 builder.advanceLexer();
-            }
-            headerMarker.done(EmlElementTypes.HEADER);
-
-            if (contentTypeValue == null) {
-                var name = EmlHeaderParsing.headerName(firstLine);
-                if (EmlHeaderParsing.CONTENT_TYPE.equalsIgnoreCase(name)) {
-                    contentTypeValue =
-                            EmlHeaderParsing.joinValue(firstLine, continuations == null ? List.of() : continuations);
+                List<String> continuations = null;
+                while (builder.getTokenType() == EmlTokenTypes.HEADER_CONT_LINE) {
+                    if (continuations == null) {
+                        continuations = new ArrayList<>(2);
+                    }
+                    var contRaw = builder.getTokenText();
+                    continuations.add(contRaw == null ? "" : contRaw.stripTrailing());
+                    builder.advanceLexer();
                 }
+                headerMarker.done(EmlElementTypes.HEADER);
+
+                if (contentTypeValue == null) {
+                    var name = EmlHeaderParsing.headerName(firstLine);
+                    if (EmlHeaderParsing.CONTENT_TYPE.equalsIgnoreCase(name)) {
+                        contentTypeValue = EmlHeaderParsing.joinValue(
+                                firstLine, continuations == null ? List.of() : continuations);
+                    }
+                }
+            } else if (builder.getTokenType() == EmlTokenTypes.BLANK_LINE
+                    && !EmlHeaderParsing.isMessageRfc822(contentTypeValue)
+                    && blankPrecedesMoreHeaders(builder)) {
+                // A stray blank line inside the header block: the lexer kept header mode across it (its
+                // tolerant pre-first-boundary rescue — see EmlLexer.advance), so a HEADER_LINE follows.
+                // Fold it into the block so the headers after it are still parsed as HEADER elements
+                // (and stay highlighted). The genuine header/body separator is instead followed by body
+                // text, a boundary, or EOF, so blankPrecedesMoreHeaders is false there and it is left
+                // for the caller to consume.
+                //
+                // Exception: when this block is a message/rfc822 container, the lexer ALSO keeps header
+                // mode across the blank that introduces the nested message (its body is itself an RFC 822
+                // message), so a HEADER_LINE follows here too. That blank is the structural separator, not
+                // a stray one — leave it for parseNestedMessage so the nested headers form their own block.
+                builder.advanceLexer();
+            } else {
+                break;
             }
         }
         blockMarker.done(EmlElementTypes.HEADER_BLOCK);
         return contentTypeValue;
+    }
+
+    // The header block begins at the current position when the token is a header line, or a stray blank
+    // line that the lexer kept in header mode (a header line follows it, possibly after more blanks).
+    private static boolean headerBlockStartsHere(PsiBuilder builder) {
+        var type = builder.getTokenType();
+        return type == EmlTokenTypes.HEADER_LINE
+                || (type == EmlTokenTypes.BLANK_LINE && blankPrecedesMoreHeaders(builder));
+    }
+
+    // Looks past the current run of blank lines (BLANK_LINE is a real token here — getWhitespaceTokens()
+    // is empty, so it is never auto-skipped) and reports whether the next token is a header line. The
+    // lexer only emits a HEADER_LINE after a blank when it rescued that blank as stray, so following the
+    // token stream keeps this parser's header block exactly consistent with the lexer's classification.
+    private static boolean blankPrecedesMoreHeaders(PsiBuilder builder) {
+        var steps = 1;
+        var ahead = builder.rawLookup(steps);
+        while (ahead == EmlTokenTypes.BLANK_LINE) {
+            steps++;
+            ahead = builder.rawLookup(steps);
+        }
+        return ahead == EmlTokenTypes.HEADER_LINE;
     }
 
     private static void parseBody(

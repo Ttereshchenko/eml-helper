@@ -1,0 +1,20 @@
+
+Subject: Tolerant header highlighting
+Mime-Version: 1.0
+Content-Type: multipart/mixed; boundary="sep-42"
+From: Peter MacRobert <peter.macrobert@empire42.com>
+
+Date: Wed, 21 Apr 2010 14:26:08 +0100
+Message-Id: <stray-blank@empire42.com>
+
+
+To: foo@example.com
+X-Last-Header: trailing
+
+
+--sep-42
+Content-Type: text/plain
+
+Note: this is body text, not a header.
+More body.
+--sep-42--

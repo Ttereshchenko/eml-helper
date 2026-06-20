@@ -33,12 +33,24 @@ public final class EmlBoundaryParser {
     private final Set<String> rawNames;
     private final Map<Integer, IElementType> classification;
     private final Set<Integer> rfc822HeaderStartOffsets;
+    // Line-start offset of the first boundary marker in the document, or Integer.MAX_VALUE when there
+    // is none. Everything before it is the top-level (preamble) header block; the tolerant stray-blank
+    // rescue is confined to that region (see EmlLexer.advance), since header-shaped lines inside a MIME
+    // part body would otherwise be indistinguishable from a real header block.
+    private final int firstBoundaryOffset;
 
     private EmlBoundaryParser(
             Set<String> rawNames, Map<Integer, IElementType> classification, Set<Integer> rfc822HeaderStartOffsets) {
         this.rawNames = rawNames;
         this.classification = classification;
         this.rfc822HeaderStartOffsets = rfc822HeaderStartOffsets;
+        var earliest = Integer.MAX_VALUE;
+        for (var offset : classification.keySet()) {
+            if (offset < earliest) {
+                earliest = offset;
+            }
+        }
+        this.firstBoundaryOffset = earliest;
     }
 
     public static EmlBoundaryParser collect(CharSequence text) {
@@ -53,6 +65,9 @@ public final class EmlBoundaryParser {
         var rfc822HeaderStartOffsets = new HashSet<Integer>();
         var inHeader = true;
         var rfc822Pending = false;
+        // Whether a boundary marker has been seen yet. The tolerant stray-blank rescue (mirroring
+        // EmlLexer.isBeforeFirstBoundary) is confined to the top-level header block, before any part.
+        var seenBoundary = false;
         var lineStart = 0;
         // RFC 5322 §2.2.3 unfolding: a Content-Type value may be split across continuation lines
         // (any line whose first char is SP/TAB). Accumulate until the header ends — at the next
@@ -85,6 +100,7 @@ public final class EmlBoundaryParser {
                 candidates.add(new MarkerCandidate(lineStart, match.name(), match.closing()));
                 inHeader = !match.closing();
                 rfc822Pending = false;
+                seenBoundary = true;
             } else if (inHeader) {
                 if (contentEnd == lineStart) {
                     if (pendingContentTypeStart >= 0) {
@@ -97,7 +113,15 @@ public final class EmlBoundaryParser {
                     }
                     if (rfc822Pending) {
                         rfc822Pending = false;
-                    } else {
+                    } else if (seenBoundary || !blankLineOpensAnotherHeaderBlock(text, lineEnd, bufferLength)) {
+                        // Stay consistent with EmlLexer's tolerant blank-line rule (see its advance()):
+                        // before the first boundary, a stray blank in the top-level header block does NOT
+                        // end the headers when the lines after it still form a proper header block. Keeping
+                        // `inHeader` true means a `boundary=` / `Content-Type: message/rfc822` declaration
+                        // on a header typed below a stray blank is still harvested, so the lexer and this
+                        // parser agree on boundary tokens and rfc822 nesting. Inside a MIME part (after a
+                        // boundary) the strict rule applies, so a part body's header-like text is never
+                        // harvested out of the body.
                         inHeader = false;
                     }
                 } else {
@@ -224,6 +248,16 @@ public final class EmlBoundaryParser {
         return classification.get(lineStartOffset);
     }
 
+    // True when `offset` lies in the top-level (preamble) header block of a MULTIPART message, i.e.
+    // strictly before the first boundary marker. Used to confine the tolerant stray-blank rescue (see
+    // EmlLexer.advance) to that region. A message with no boundary marker at all returns false for every
+    // offset: there is no structural anchor proving where the header section ends, so a non-multipart
+    // message keeps the strict RFC 5322 rule (the first blank line is the header/body separator) and a
+    // header-shaped body line is never re-promoted to a header.
+    public boolean isBeforeFirstBoundary(int offset) {
+        return firstBoundaryOffset != Integer.MAX_VALUE && offset < firstBoundaryOffset;
+    }
+
     public Set<String> rawNames() {
         return rawNames;
     }
@@ -245,6 +279,79 @@ public final class EmlBoundaryParser {
         if (!sink.add(name) && LOG.isDebugEnabled()) {
             LOG.debug("Duplicate MIME boundary declaration ignored: " + name);
         }
+    }
+
+    // Bounded, allocation-free mirror of EmlLexer.blankLineOpensAnotherHeaderBlock, kept in lock-step
+    // so the parser and the lexer agree on which blank lines end the header section. `lineEndOfBlank`
+    // is the index of the blank line's '\n' (or bufferLength when it has no trailing newline). Starting
+    // at the line after the blank, it skips further consecutive blank lines, then walks the run of
+    // header-shaped / continuation lines and reports whether that run is terminated by another blank
+    // line or by EOF (a proper RFC 5322 header block, rfc5322 §2.2). A run terminated by a boundary
+    // marker or by real (non-header-shaped) body text is part body, not headers, so it returns false
+    // and the blank is treated as the genuine separator — `boundary=` / `message/rfc822` declarations
+    // in such body text are then never harvested.
+    private static boolean blankLineOpensAnotherHeaderBlock(CharSequence text, int lineEndOfBlank, int bufferLength) {
+        if (lineEndOfBlank >= bufferLength) {
+            return false;
+        }
+        var lineStart = lineEndOfBlank + 1;
+        var sawHeaderLine = false;
+        while (lineStart < bufferLength) {
+            var lineEnd = lineStart;
+            while (lineEnd < bufferLength && text.charAt(lineEnd) != '\n') {
+                lineEnd++;
+            }
+            var contentEnd = lineEnd;
+            while (contentEnd > lineStart && Character.isWhitespace(text.charAt(contentEnd - 1))) {
+                contentEnd--;
+            }
+            if (contentEnd == lineStart) {
+                if (!sawHeaderLine) {
+                    if (lineEnd >= bufferLength) {
+                        return false;
+                    }
+                    lineStart = lineEnd + 1;
+                    continue;
+                }
+                return true;
+            }
+            var firstChar = text.charAt(lineStart);
+            var continuationLine = firstChar == ' ' || firstChar == '\t';
+            if (continuationLine) {
+                if (!sawHeaderLine) {
+                    return false;
+                }
+            } else if (isHeaderFieldLine(text, lineStart, lineEnd)) {
+                sawHeaderLine = true;
+            } else {
+                return false;
+            }
+            lineStart = lineEnd >= bufferLength ? lineEnd : lineEnd + 1;
+        }
+        return sawHeaderLine;
+    }
+
+    // RFC 5322 §2.2 / §3.6.8: field-name = 1*ftext, ftext = %d33-57 / %d59-126 (printable US-ASCII
+    // excluding ':'), followed immediately by ':'. Leading SP/TAB marks a continuation line, not a
+    // field start. Stops at the first non-ftext char, so it is O(1) on body lines.
+    private static boolean isHeaderFieldLine(CharSequence text, int start, int end) {
+        if (start >= end) {
+            return false;
+        }
+        var first = text.charAt(start);
+        if (first == ' ' || first == '\t') {
+            return false;
+        }
+        for (var index = start; index < end; index++) {
+            var character = text.charAt(index);
+            if (character == ':') {
+                return index > start;
+            }
+            if (character < 0x21 || character > 0x7E) {
+                return false;
+            }
+        }
+        return false;
     }
 
     private record MarkerCandidate(int offset, String name, boolean closing) {}
