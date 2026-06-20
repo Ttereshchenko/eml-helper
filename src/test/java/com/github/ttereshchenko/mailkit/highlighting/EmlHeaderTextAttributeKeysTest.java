@@ -77,6 +77,34 @@ class EmlHeaderTextAttributeKeysTest {
         assertTrue(key.getExternalName().startsWith("EML_HEADER_"));
     }
 
+    // ===== Fallback Tests =====
+    // Regression guard: every key must carry a default fallback so headers stay
+    // colored on schemes not covered by the bundled additionalTextAttributes
+    // (e.g. New UI Light/Dark, Islands Dark/Light). Without a fallback the keys
+    // render in the plain editor foreground (gray) on those schemes.
+
+    @ParameterizedTest
+    @ValueSource(strings = {"From", "To", "Subject", "Date", "Cc", "Bcc"})
+    void predefinedKeysHaveFallback(String header) {
+        assertNotNull(
+                EmlHeaderTextAttributeKeys.getKey(header).getFallbackAttributeKey(),
+                "Predefined header key must have a default fallback: " + header);
+    }
+
+    @Test
+    void dynamicKeyHasFallback() {
+        assertNotNull(
+                EmlHeaderTextAttributeKeys.getKey("X-Mailer").getFallbackAttributeKey(),
+                "Dynamic header key must have a default fallback");
+    }
+
+    @Test
+    void boundaryKeyHasFallback() {
+        assertNotNull(
+                EmlSyntaxHighlighter.BOUNDARY_KEY.getFallbackAttributeKey(),
+                "Boundary key must have a default fallback");
+    }
+
     // ===== Negative Tests =====
 
     @Test

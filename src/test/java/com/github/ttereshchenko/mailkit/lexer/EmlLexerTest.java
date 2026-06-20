@@ -821,6 +821,168 @@ class EmlLexerTest {
         assertSame(EmlTokenTypes.BOUNDARY_END, tokens.getLast().type());
     }
 
+    // ===== Tolerant blank-line handling inside the header block =====
+    // RFC 5322 §2.1 / §3.5 separate the body from the header section by a single empty line. This is a
+    // draft/malformed-EML editor, so a stray blank line in (or before) the header block must not knock
+    // the remaining headers down to body coloring. A blank line ends the headers only when the next
+    // non-blank line is not itself a header field (rfc5322 §2.2 / §3.6.8).
+
+    @Test
+    void testLeadingBlankLineKeepsHeadersHighlighted() {
+        // Repro (a): a blank line typed as line 1, before the first real header, used to flip the whole
+        // file to body coloring. In a multipart message (top-level body starts at the first boundary)
+        // the headers that follow the leading blank must still lex as HEADER_LINE.
+        String input =
+                "\nSubject: hi\nContent-Type: multipart/mixed; boundary=\"b\"\nFrom: a@b.com\n\n--b\n\nbody\n--b--\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testStrayBlankBetweenHeadersKeepsFollowingHeaders() {
+        // Repro (b): a single stray blank line between the headers of a multipart message must not turn
+        // every following header into body. `From:` and `To:` after the stray blank stay HEADER_LINE;
+        // only the genuine separator before the `--b` boundary ends the header section.
+        String input =
+                "Subject: hi\nContent-Type: multipart/mixed; boundary=\"b\"\n\nFrom: a@b.com\nTo: c@d.com\n\n--b\n\nbody\n--b--\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testMultipleStrayBlankLinesBetweenHeaders() {
+        // Repro (c): consecutive stray blanks in a multipart header block are skipped together; the
+        // header after them is rescued.
+        String input =
+                "Subject: hi\nContent-Type: multipart/mixed; boundary=\"b\"\n\n\n\nTo: c@d.com\n\n--b\n\nbody\n--b--\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BOUNDARY_START,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BOUNDARY_END),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testStrayBlankInNonMultipartMessageEndsHeaderSection() {
+        // Counterpart to the multipart rescue: a non-multipart message has no boundary anchor proving
+        // where the header section ends, so the strict RFC 5322 rule holds — the first blank line is the
+        // header/body separator and the header-shaped lines after it stay BODY_LINE (they must not be
+        // re-promoted to headers, mirroring EmlHeaderAnnotatorTest#testBodyLinesAreNotAnnotated).
+        String input = "Subject: hi\n\nDate: today\nTo: c@d.com\n\nBody\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BODY_LINE),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testGenuineSeparatorBeforeHeaderShapedBodyStaysBody() {
+        // Regression guard (d): the genuine header/body separator (the first blank whose next non-blank
+        // line is real body, not a header field) must still end the headers, and a `Note:`-style body
+        // line that follows real body content stays BODY_LINE — it is reached through the closed
+        // header->body latch, so the tolerant rescue never re-promotes it.
+        String input = "From: a@b.com\n\nReal body line\nNote: this is body, not a header\n";
+        assertEquals(
+                List.of(
+                        EmlTokenTypes.HEADER_LINE,
+                        EmlTokenTypes.BLANK_LINE,
+                        EmlTokenTypes.BODY_LINE,
+                        EmlTokenTypes.BODY_LINE),
+                tokenTypes(input));
+    }
+
+    @Test
+    void testBlankBeforeBoundaryEndsHeaderSection() {
+        // A blank line followed (after any consecutive blanks) by a boundary marker is the genuine
+        // separator: the boundary is a structural body-side token, never part of a header block. The
+        // first blank ends the header section; the second blank is then ordinary body content (as in
+        // testOnlyNewlines), and the boundary is still recognized as BOUNDARY_START.
+        String input =
+                "Content-Type: multipart/mixed; boundary=\"b\"\n\n\n--b\nContent-Type: text/plain\n\nbody\n--b--\n";
+        var types = tokenTypes(input);
+        assertEquals(EmlTokenTypes.HEADER_LINE, types.get(0));
+        assertEquals(EmlTokenTypes.BLANK_LINE, types.get(1));
+        assertEquals(EmlTokenTypes.BODY_LINE, types.get(2));
+        assertEquals(EmlTokenTypes.BOUNDARY_START, types.get(3));
+    }
+
+    @Test
+    void testStrayBlankAboveBoundaryDeclarationStillHarvestsBoundary() {
+        // Consistency with EmlBoundaryParser: a `boundary=` declaration on a header typed below a stray
+        // blank must still be harvested, so the multipart structure keeps lexing (BOUNDARY_START/END).
+        String input = "Subject: hi\n\nContent-Type: multipart/mixed; boundary=\"b\"\n\n--b\nbody\n--b--\n";
+        var types = tokenTypes(input);
+        assertTrue(types.contains(EmlTokenTypes.BOUNDARY_START), "boundary above-blank declaration must be harvested");
+        assertTrue(types.contains(EmlTokenTypes.BOUNDARY_END));
+    }
+
+    @Test
+    void testStrayBlankLinesSampleTokenizes() throws IOException {
+        // Manual-verification fixture (open in runIde): leading blank, single and double stray blanks
+        // between headers, a genuine separator before the multipart body, and a `Note:`-shaped body
+        // line that must stay BODY_LINE.
+        String content =
+                Files.readString(Path.of("src/test/resources/samples/eml/edge/stray_blank_lines_in_headers.eml"));
+        var tokens = tokenize(content);
+
+        // Every real header (incl. the ones after stray blanks) must be HEADER_LINE.
+        for (var name : List.of("Subject:", "From:", "Date:", "Message-Id:", "To:", "X-Last-Header:")) {
+            var header = tokens.stream()
+                    .filter(token -> token.text().startsWith(name)
+                            && token.text().indexOf('\n') == token.text().length() - 1)
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("missing header " + name));
+            assertEquals(EmlTokenTypes.HEADER_LINE, header.type(), name + " must stay highlighted as a header");
+        }
+
+        // The multipart structure must still be detected across the stray blanks.
+        assertTrue(
+                tokens.stream().anyMatch(token -> token.type() == EmlTokenTypes.BOUNDARY_START),
+                "boundary declaration above a stray blank must still produce a BOUNDARY_START");
+
+        // The `Note:`-shaped line inside the text/plain body must stay body text.
+        var noteLine = tokens.stream()
+                .filter(token -> token.text().startsWith("Note: this is body"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(EmlTokenTypes.BODY_LINE, noteLine.type());
+    }
+
     private static List<TokenInfo> drain(EmlLexer lexer) {
         var tokens = new ArrayList<TokenInfo>();
         while (lexer.getTokenType() != null) {

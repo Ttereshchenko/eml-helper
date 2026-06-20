@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed (editor highlighting)
+
+- EML header and MIME-boundary highlighting now shows its colors on every editor color scheme. On themes other than the classic Default/Darcula — including the New UI Light/Dark and Islands Dark/Light schemes — headers had been rendering in plain gray; each highlight now falls back to a sensible default color so it is visible everywhere (including on a fresh install), while the bundled Default/Darcula palettes are unchanged.
+- A stray empty line at the very top of an `.eml` file, or between header lines, no longer switches off header highlighting for everything below it. Header coloring now tolerates blank lines in the top-level header block and keeps highlighting the headers that follow, instead of treating the first blank line as the start of the message body.
+
 ## 1.2.2 - 2026-06-18
 
 ### Fixed (conversion charset fidelity)

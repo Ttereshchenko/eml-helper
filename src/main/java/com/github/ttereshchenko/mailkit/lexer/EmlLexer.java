@@ -83,7 +83,21 @@ public final class EmlLexer extends LexerBase {
                     // Body of a message/rfc822 part IS another RFC 822 message — stay in header mode
                     // for the nested message's own header block.
                     rfc822InCurrentBlock = false;
-                } else {
+                } else if (!boundaries.isBeforeFirstBoundary(tokenStart)
+                        || !blankLineOpensAnotherHeaderBlock(tokenEnd)) {
+                    // RFC 5322 §2.1 / §3.5: the body is separated from the header section by an empty
+                    // line. Strictly, ANY blank line ends the headers, but this is a tolerant editor for
+                    // draft/malformed EML: a stray blank typed into the middle of (or before) the header
+                    // block must not knock the remaining headers down to body coloring.
+                    //
+                    // The rescue is confined to the top-level (preamble) header block — the region before
+                    // the first MIME boundary (boundaries.isBeforeFirstBoundary). Inside a MIME part body
+                    // a run of header-shaped lines (journal reports: `Sender:`, `Subject:`, ...) is
+                    // indistinguishable by forward lookahead from a genuine header block, so there we keep
+                    // the strict rule and the part's first blank ends its headers. In the outer block we
+                    // rescue the blank only when the lines after it still form a proper header block
+                    // (blankLineOpensAnotherHeaderBlock); a boundary, real body text, or EOF after the
+                    // blank(s) is the genuine separator and ends the header section as before.
                     inHeaderMode = false;
                 }
             } else {
@@ -112,6 +126,94 @@ public final class EmlLexer extends LexerBase {
             }
         }
         return true;
+    }
+
+    // Bounded, allocation-free lookahead that decides whether a stray blank line should be rescued
+    // (kept in header mode) instead of treated as the genuine header/body separator (rfc5322 §2.1 /
+    // §3.5). Starting at `offset` (the line right after the blank), it skips any further consecutive
+    // blank lines, then walks the run of header-shaped / continuation lines that follows. The blank is
+    // a stray separator — and is rescued — only when that run is itself terminated by another blank
+    // line or by EOF, i.e. it forms a proper header block (rfc5322 §2.2: a header section is a run of
+    // header fields ended by an empty line).
+    //
+    // False-positive bound: a MIME part's text/plain body can contain lines that merely LOOK like
+    // headers (journal reports: `Sender:`, `Subject:` ...). Such a run is terminated by the part's
+    // closing boundary marker, NOT by a blank line, so this method returns false and the blank stays
+    // the genuine separator — the header-like body lines are correctly left as BODY_LINE. A run that
+    // hits real (non-header-shaped) body text immediately, a boundary, or runs straight into a boundary
+    // likewise ends the headers.
+    //
+    // Hot-path discipline: lines are inspected via raw char offsets, never materialized as Strings, and
+    // isHeaderFieldLine bails at the first non-ftext char. A multi-MB base64 body line is non-header-
+    // shaped, so the scan stops at it immediately; the walk only ever covers short header-shaped lines.
+    private boolean blankLineOpensAnotherHeaderBlock(int offset) {
+        var lineStart = offset;
+        var sawHeaderLine = false;
+        while (lineStart < bufferEnd) {
+            var lineEnd = lineStart;
+            while (lineEnd < bufferEnd && buffer.charAt(lineEnd) != '\n') {
+                lineEnd++;
+            }
+            if (isBlankLine(lineStart, lineEnd)) {
+                if (!sawHeaderLine) {
+                    // Still skipping the run of consecutive blank lines before any header line.
+                    if (lineEnd >= bufferEnd) {
+                        return false;
+                    }
+                    lineStart = lineEnd + 1;
+                    continue;
+                }
+                // The header-shaped run is terminated by a blank line: a proper header block. Rescue.
+                return true;
+            }
+            // A boundary marker is a structural body-side token, never part of a header block. The
+            // genuine separator precedes it (the real Apple-Mail sample has two blank lines before the
+            // first `--boundary`), and a part body's header-like text is closed by its boundary.
+            if (classifyBoundary(lineStart) != null) {
+                return false;
+            }
+            var firstChar = buffer.charAt(lineStart);
+            var continuationLine = firstChar == ' ' || firstChar == '\t';
+            if (continuationLine) {
+                if (!sawHeaderLine) {
+                    // A continuation line with no preceding field is not a header block start.
+                    return false;
+                }
+            } else if (isHeaderFieldLine(lineStart, lineEnd)) {
+                sawHeaderLine = true;
+            } else {
+                // Real body text immediately after the blank(s): the blank is the genuine separator.
+                return false;
+            }
+            lineStart = lineEnd >= bufferEnd ? lineEnd : lineEnd + 1;
+        }
+        // Reached EOF while still inside a header-shaped run: a header block ended by EOF. Rescue if we
+        // actually saw at least one header field (otherwise there was nothing to rescue).
+        return sawHeaderLine;
+    }
+
+    // RFC 5322 §2.2 / §3.6.8: a header field starts with a field-name = 1*ftext, where
+    // ftext = %d33-57 / %d59-126 (printable US-ASCII excluding ':'), followed immediately by ':'.
+    // Continuation lines (leading SP/TAB) are not field starts. Scans at most one field-name worth
+    // of chars and stops at the first non-ftext character, so it is O(1) on body lines.
+    private boolean isHeaderFieldLine(int start, int end) {
+        if (start >= end) {
+            return false;
+        }
+        var first = buffer.charAt(start);
+        if (first == ' ' || first == '\t') {
+            return false;
+        }
+        for (var index = start; index < end; index++) {
+            var character = buffer.charAt(index);
+            if (character == ':') {
+                return index > start;
+            }
+            if (character < 0x21 || character > 0x7E) {
+                return false;
+            }
+        }
+        return false;
     }
 
     private @Nullable IElementType classifyBoundary(int tokenStart) {

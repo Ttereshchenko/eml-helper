@@ -117,4 +117,31 @@ public class EmlHeaderAnnotatorTest extends BasePlatformTestCase {
         // X-Custom is in the highlight list (full-line, not name-only).
         assertEquals(1, infos.size());
     }
+
+    public void testLeadingBlankLineStillHighlightsHeaders() {
+        // Repro (image 5): a blank line typed before the first header of a multipart message must not
+        // switch off header coloring for the whole file. Subject and From must still be highlighted.
+        var content = "\nSubject: hi\nContent-Type: multipart/mixed; boundary=\"b\"\n"
+                + "From: a@b.com\n\n--b\nbody\n--b--\n";
+        var infos = annotateText(content);
+        assertEquals(2, infos.size());
+    }
+
+    public void testStrayBlankBetweenHeadersStillHighlightsFollowingHeaders() {
+        // Repro (image 3): a stray blank line between the headers of a multipart message must not drop
+        // the headers after it. Subject, From and To must all be highlighted.
+        var content = "Subject: hi\nContent-Type: multipart/mixed; boundary=\"b\"\n\n"
+                + "From: a@b.com\nTo: c@d.com\n\n--b\nbody\n--b--\n";
+        var infos = annotateText(content);
+        assertEquals(3, infos.size());
+    }
+
+    public void testMultipleStrayBlankLinesBetweenHeadersStillHighlight() {
+        // Consecutive stray blanks in a multipart header block are tolerated together; the header after
+        // them stays highlighted.
+        var content = "Subject: hi\nContent-Type: multipart/mixed; boundary=\"b\"\n\n\n\n"
+                + "To: c@d.com\n\n--b\nbody\n--b--\n";
+        var infos = annotateText(content);
+        assertEquals(2, infos.size());
+    }
 }
