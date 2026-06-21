@@ -30,6 +30,8 @@
 - A message attached *inside* a converted `.msg`/`.pst`/`.ost` (a forwarded or embedded email) whose stored text ends in a bare line feed rather than CRLF no longer breaks the structure of the generated `.eml`: the separator after it is now always correctly terminated, so strict mail clients keep the embedded message and any following attachments as distinct parts instead of folding them together.
 - A converted `.msg`/`.pst`/`.ost` message whose stored send time is blank (recorded as zero) no longer shows a bogus `Date: 1 Jan 1601` header; the conversion now falls through to the delivery time, as a mail client would.
 - Traditional-Chinese (Big5 / code page 950) text recovered from a rich-text body during `.msg`/`.pst`/`.ost` conversion is now decoded with the Windows Big5 variant, matching the rest of the converter, so the few characters the previous IBM-950 mapping rendered differently now come out correctly.
+- An HTML message converted from a `.msg` that stored its body only as rich text (HTML-encapsulated RTF) no longer shows stray font-, color-, or style-table text — such as font names like `Calibri` or `Courier New` — leaking in front of the message content; only the intended HTML is recovered, so the `.msg` conversion now matches what the `.pst`/`.ost` conversion already produced.
+- A contact exported from a `.msg`/`.pst`/`.ost` to a vCard (`.vcf`) now keeps the person's middle name, honorific prefix (such as `Dr.`), and generational suffix (such as `Jr.`) in the structured name field instead of dropping them.
 
 ## 1.2.2 - 2026-06-18
 

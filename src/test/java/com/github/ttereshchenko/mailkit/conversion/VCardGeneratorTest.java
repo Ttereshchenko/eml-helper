@@ -35,6 +35,20 @@ class VCardGeneratorTest {
     }
 
     @Test
+    void nameComponentsCarryMiddlePrefixAndSuffix() {
+        // RFC 6350 section 6.2.2: N = Family;Given;Additional;Prefixes;Suffixes. The middle name
+        // (PR_MIDDLE_NAME), honorific prefix (PR_DISPLAY_NAME_PREFIX) and generational suffix
+        // (PR_GENERATION) MAPI sources must fill components 3-5 instead of being dropped to empty.
+        var card = VCardGenerator.generate(new VCardGenerator.Contact()
+                .givenName("John")
+                .surname("Smith")
+                .middleName("Quincy")
+                .namePrefix("Dr.")
+                .nameSuffix("Jr."));
+        assertTrue(card.contains("N:Smith;John;Quincy;Dr.;Jr."), card);
+    }
+
+    @Test
     void formattedNameFallsBackToGivenAndSurname() {
         var card = VCardGenerator.generate(
                 new VCardGenerator.Contact().givenName("Ada").surname("Lovelace"));

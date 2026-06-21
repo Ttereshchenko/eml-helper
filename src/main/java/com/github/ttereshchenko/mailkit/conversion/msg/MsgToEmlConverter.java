@@ -846,6 +846,9 @@ public final class MsgToEmlConverter {
                 .displayName(readMainStringById(message, 0x3001)) // PR_DISPLAY_NAME
                 .givenName(readMainStringById(message, 0x3A06))
                 .surname(readMainStringById(message, 0x3A11))
+                .middleName(readMainStringById(message, 0x3A44)) // PR_MIDDLE_NAME
+                .namePrefix(readMainStringById(message, 0x3A45)) // PR_DISPLAY_NAME_PREFIX
+                .nameSuffix(readMainStringById(message, 0x3A05)) // PR_GENERATION
                 .company(readMainStringById(message, 0x3A16))
                 .jobTitle(readMainStringById(message, 0x3A17))
                 .phone("work", readMainStringById(message, 0x3A08))
