@@ -296,7 +296,7 @@ public final class ICalendarGenerator {
             Boolean complete,
             String method) {
         return generateTodo(
-                subject, description, startDate, dueDate, percentComplete, complete, method, null, null, null);
+                subject, description, startDate, dueDate, percentComplete, complete, null, method, null, null, null);
     }
 
     /**
@@ -327,7 +327,8 @@ public final class ICalendarGenerator {
      * ORGANIZER (the assigner) and ATTENDEE(s) (the assignee[s]); when those cannot be resolved it
      * downgrades to {@code PUBLISH} rather than emit an invalid scheduling object (see
      * {@link #effectiveTodoMethod}). All fields except the subject may be {@code null};
-     * {@code percentComplete} is clamped to 0–100.
+     * {@code percentComplete} is clamped to 0–100 and {@code completedDate} is emitted (as a UTC
+     * COMPLETED date-time) only for a completed task.
      */
     public static String generateTodo(
             String subject,
@@ -336,6 +337,7 @@ public final class ICalendarGenerator {
             Date dueDate,
             Double percentComplete,
             Boolean complete,
+            Date completedDate,
             String method,
             String organizerName,
             String organizerEmail,
@@ -366,11 +368,27 @@ public final class ICalendarGenerator {
         if (description != null && !description.isBlank()) {
             todo.append("DESCRIPTION:").append(escapeIcal(description)).append("\r\n");
         }
-        if (Boolean.TRUE.equals(complete)) {
+        Integer percent = percentComplete == null ? null : (int) Math.round(Math.clamp(percentComplete * 100, 0, 100));
+        // RFC 5545 §3.8.1.11: a VTODO has a tri-state STATUS. Derive it from PidLidTaskComplete and
+        // PidLidPercentComplete so an in-progress or not-started task is distinguishable rather than only
+        // a completed one: a set completion flag (or 100%) is COMPLETED, any other non-zero progress
+        // IN-PROCESS, and the remainder NEEDS-ACTION.
+        boolean completed = Boolean.TRUE.equals(complete) || (percent != null && percent >= 100);
+        if (completed) {
             todo.append("STATUS:COMPLETED\r\n");
+            // RFC 5545 §3.8.2.1: COMPLETED is a UTC date-time (no VALUE=DATE form); emit it when the
+            // completion time (PidLidTaskDateCompleted) is known.
+            if (completedDate != null) {
+                todo.append("COMPLETED:")
+                        .append(utcFormat.format(completedDate))
+                        .append("\r\n");
+            }
+        } else if (percent != null && percent > 0) {
+            todo.append("STATUS:IN-PROCESS\r\n");
+        } else {
+            todo.append("STATUS:NEEDS-ACTION\r\n");
         }
-        if (percentComplete != null) {
-            var percent = (int) Math.round(Math.clamp(percentComplete * 100, 0, 100));
+        if (percent != null) {
             todo.append("PERCENT-COMPLETE:").append(percent).append("\r\n");
         }
         // RFC 5546 §3.4: a scheduling VTODO carries an ORGANIZER and ATTENDEE(s); effectiveTodoMethod has

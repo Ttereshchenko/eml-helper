@@ -253,6 +253,28 @@ class MsgToEmlConverterTest {
     }
 
     @Test
+    void bracketedAttachContentIdStillResolvesInlineImage() throws Exception {
+        // PR_ATTACH_CONTENT_ID is defined without angle brackets ([MS-OXCMSG] §2.2.2.5), but a sender may
+        // store "<logo@x>". The cid: reference in the HTML body carries none, so the bracketed form must
+        // be normalised or the part is demoted from an inline multipart/related member to a plain
+        // attachment and its image stops rendering.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Inline image, bracketed cid")
+                .sender("A", "a@x")
+                .recipientTo("B", "b@x")
+                .htmlBody("<img src=\"cid:logo@x\">")
+                .attachment("logo.png", "image/png", new byte[] {1, 2, 3}, "<logo@x>")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Content-ID: <logo@x>"), eml);
+        assertTrue(
+                eml.contains("multipart/related"),
+                "a bracketed Content-ID must still match the cid: reference and stay inline: " + eml);
+    }
+
+    @Test
     void nonAsciiTransportHeadersDoNotCrashConversion() throws Exception {
         var headers = "Subject: Café résumé\r\n" + "From: sender@example.com\r\n" + "To: receiver@example.com\r\n";
         var bytes = MsgFixtureBuilder.topLevel()

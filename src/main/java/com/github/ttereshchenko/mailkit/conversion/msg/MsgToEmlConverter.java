@@ -565,6 +565,14 @@ public final class MsgToEmlConverter {
             return null;
         }
         var trimmed = contentId.trim();
+        // PR_ATTACH_CONTENT_ID is stored without angle brackets ([MS-OXCMSG] §2.2.2.5), but strip any a
+        // sender wrote anyway: EmlSerializer wraps the value in <...> for the Content-ID header itself and
+        // htmlBodyReferences matches the bare cid: URL form (no brackets), so a stored "<foo@bar>" would
+        // otherwise miss the inline-image match and be demoted from a multipart/related inline part to a
+        // plain attachment (its image would stop rendering).
+        if (trimmed.length() > 1 && trimmed.charAt(0) == '<' && trimmed.charAt(trimmed.length() - 1) == '>') {
+            trimmed = trimmed.substring(1, trimmed.length() - 1).trim();
+        }
         return trimmed.isBlank() ? null : trimmed;
     }
 
@@ -858,6 +866,7 @@ public final class MsgToEmlConverter {
         var due = readNamedTime(message, PSETID_TASK, 0x8105); // PidLidTaskDueDate
         var percent = readNamedDouble(message, PSETID_TASK, 0x8102); // PidLidPercentComplete
         var complete = readNamedBoolean(message, PSETID_TASK, 0x811C); // PidLidTaskComplete
+        var completed = readNamedTime(message, PSETID_TASK, 0x810F); // PidLidTaskDateCompleted
         // RFC 5546 §3.4: a task REQUEST/REPLY carries an ORGANIZER and ATTENDEE(s). For a REQUEST the
         // ORGANIZER is the assigner (sender) and the ATTENDEE(s) the assignee recipients. For a REPLY the
         // roles swap (mirroring the meeting path): the ORGANIZER is the original assigner (the To
@@ -897,6 +906,7 @@ public final class MsgToEmlConverter {
                 due,
                 percent,
                 complete,
+                completed,
                 method,
                 organizerName,
                 organizerEmail,

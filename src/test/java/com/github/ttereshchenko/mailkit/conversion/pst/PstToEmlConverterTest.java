@@ -451,6 +451,74 @@ class PstToEmlConverterTest {
         }
     }
 
+    // P2b: a delegated/draft item whose PR_SENDER_NAME is absent but whose sender address was filled from
+    // the sent-representing fallback in Message#resolveSenderEmail (so it equals the author address) must
+    // keep the represented author's display name paired with that address (RFC 5322 §3.6.2), not emit an
+    // address-only From:. Matches the MSG path, which always pairs From's name and address from one identity.
+    @Test
+    void blankSenderNameWithBorrowedRepresentingAddressKeepsAuthorDisplayName() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Author only";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    // resolveSenderEmail falls back to PR_SENT_REPRESENTING_* when the sender's own
+                    // address is absent, so the resolved sender address equals the author's here.
+                    return "boss@example.com";
+                }
+
+                @Override
+                public String getSentRepresentingName() {
+                    return "Boss";
+                }
+
+                @Override
+                public String getSentRepresentingEmail() {
+                    return "boss@example.com";
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("From: \"Boss\" <boss@example.com>"),
+                    "the represented author's display name must pair with the borrowed address: " + eml);
+            assertFalse(eml.contains("Sender:"), "no Sender without a distinct transmitter address: " + eml);
+        }
+    }
+
     // P3: PR_RECIPIENT_TYPE may carry high-order flag bits (e.g. 0x10000001 on a resent/saved item).
     // After masking to the class bits ([MS-OXOMSG] §2.2.3.1) the recipient still classifies as To and
     // keeps its address, instead of matching no class and being silently dropped.
@@ -1570,6 +1638,51 @@ class PstToEmlConverterTest {
             assertTrue(
                     undecodableWriter.toString().contains("body.rtf"),
                     "With nothing extractable the raw RTF is the only content left and must be kept");
+        }
+    }
+
+    /**
+     * A genuine (non-encapsulated) RTF-only message — no PR_BODY and no HTML — must not export an empty
+     * body. Mirroring the MSG path, the RTF is stripped to a plain-text fallback and the rich text is
+     * still preserved verbatim as a body.rtf attachment.
+     */
+    @Test
+    void genuineRtfOnlyBodyIsStrippedToPlainText() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var genuineRtf = "{\\rtf1\\ansi rich only body}";
+            var rtfOnly = new StubMessage(pstFile, "Genuine RTF only", List.of(), null, "") {
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getHtmlBody() {
+                    return "";
+                }
+
+                @Override
+                public String getRawRtfBody() {
+                    return genuineRtf;
+                }
+
+                @Override
+                public String getRtfBody() {
+                    return genuineRtf;
+                }
+
+                @Override
+                public byte[] getRawRtfBytes() {
+                    return genuineRtf.getBytes(Charset.forName("windows-1252"));
+                }
+            };
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(rtfOnly, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("rich only body"), "the stripped RTF text must become the body: " + eml);
+            assertTrue(eml.contains("body.rtf"), "the original RTF must be kept as an attachment: " + eml);
         }
     }
 

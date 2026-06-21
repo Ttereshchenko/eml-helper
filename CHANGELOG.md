@@ -12,6 +12,14 @@
 - "Send EML…" now transmits your `.eml` file verbatim — the message goes out byte-for-byte as it is on disk, and the client no longer alters its content. In particular, a `Bcc:` header is no longer stripped before sending: the file is sent exactly as written, so any `Bcc:` line it contains is transmitted to recipients and is visible to them. Remove the `Bcc:` line from the file yourself if you do not want blind recipients disclosed.
 - The Send dialog has a new "Normalize line endings (LF→CRLF)" checkbox, on by default. Left checked, it converts the message's line endings to CRLF on the wire as before; unchecked, the body is sent with its original line endings for true byte-for-byte transmission (the protocol's dot-stuffing and message-terminator framing are still applied either way).
 
+### Fixed (conversion correctness)
+
+- A `.pst`/`.ost` message whose only body is rich text (RTF) — with no plain-text or HTML version — no longer converts to an empty message: its text is now extracted into a readable body (and the rich text is still kept verbatim as a `body.rtf` attachment), matching how the `.msg` conversion already handled it.
+- An inline image in a converted `.msg` whose stored Content-ID happened to include angle brackets now displays in the message body instead of being demoted to a separate, non-displayed attachment.
+- A `.pst`/`.ost` message sent on another person's behalf whose sender record carries no name of its own now keeps that author's display name in `From:` instead of showing only their bare address.
+- A task (to-do) converted from `.msg`/`.pst`/`.ost` now records whether it is not started, in progress, or completed — previously only completed tasks were marked, so an in-progress or not-started task showed no status in a calendar/task client.
+- A completed task converted from `.msg`/`.pst`/`.ost` now also carries the date it was completed.
+
 ## 1.2.2 - 2026-06-18
 
 ### Fixed (conversion charset fidelity)
