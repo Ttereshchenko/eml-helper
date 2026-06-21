@@ -810,6 +810,13 @@ public final class PstToEmlConverter {
                 fromName = authorName;
                 fromEmail = authorEmail;
                 serializer.setTransmitter(senderName, senderEmail);
+            } else if (fromName.isBlank()) {
+                // Same address for sender and represented author but PR_SENDER_NAME is absent: the From
+                // address was itself filled from the sent-representing fallback in
+                // Message#resolveSenderEmail, so pair it with the represented author's display name
+                // rather than emit an address-only From: (RFC 5322 §3.6.2). Matches the MSG path, which
+                // always pairs From's name and address from a single identity.
+                fromName = authorName;
             }
         } else if (senderName.isBlank() && senderEmail.isBlank() && !(authorName.isBlank() && authorEmail.isBlank())) {
             // The sender identity is entirely empty but a represented author exists (display-name only):
@@ -896,10 +903,14 @@ public final class PstToEmlConverter {
         String htmlBody = message.getHtmlBody();
         if (plainBody.isEmpty() && htmlBody.isEmpty()) {
             String rawRtf = message.getRawRtfBody();
-            if (rawRtf.contains("\\fromtext")) {
-                // \fromtext RTF encapsulates the plain-text body; when PR_BODY itself is missing
-                // the encapsulated text is the only renderable content, so extract it instead of
-                // exporting an empty message with only a body.rtf attachment.
+            if (!rawRtf.isEmpty() && !rawRtf.contains("\\fromhtml")) {
+                // With no PR_BODY and no HTML, the RTF is the only renderable content. A \fromtext body
+                // encapsulates the plain text, and a genuine (non-encapsulated) RTF body is not
+                // renderable as a multipart/alternative sibling either, so strip either flavour to a
+                // plain-text fallback rather than export an empty message that carries only a body.rtf
+                // attachment. Mirrors the MSG path (MsgToEmlConverter#populateBodies). \fromhtml RTF is
+                // left to getHtmlBody()/the raw-RTF fallback below (kept as a body.rtf attachment),
+                // matching how the MSG path handles HTML-encapsulated RTF whose recovery came back empty.
                 plainBody = RtfStripper.strip(rawRtf);
             }
         }
@@ -1317,6 +1328,7 @@ public final class PstToEmlConverter {
         Integer completeId = pstFile.namedPropertyId(PSETID_TASK, 0x811C); // PidLidTaskComplete
         Boolean complete =
                 completeId != null && message.getProperty(completeId) instanceof Boolean value ? value : null;
+        Instant completed = namedInstant(message, pstFile, 0x810F); // PidLidTaskDateCompleted
         return ICalendarGenerator.generateTodo(
                 subject,
                 message.getBody(),
@@ -1324,6 +1336,7 @@ public final class PstToEmlConverter {
                 due != null ? Date.from(due) : null,
                 percent,
                 complete,
+                completed != null ? Date.from(completed) : null,
                 method,
                 organizerName,
                 organizerEmail,

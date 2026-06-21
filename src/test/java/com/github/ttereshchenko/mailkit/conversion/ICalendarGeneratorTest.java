@@ -265,10 +265,55 @@ class ICalendarGeneratorTest {
         assertTrue(todo.contains("SUMMARY:File\\; the\\, report"), todo);
         assertTrue(todo.contains("PERCENT-COMPLETE:75"), todo);
         assertFalse(todo.contains("STATUS:COMPLETED"), todo);
+        // 75% with the completion flag clear is in progress (RFC 5545 §3.8.1.11), not completed.
+        assertTrue(todo.contains("STATUS:IN-PROCESS"), todo);
 
         var completed = ICalendarGenerator.generateTodo("Done", null, null, null, 1.0, true);
         assertTrue(completed.contains("STATUS:COMPLETED"), completed);
         assertTrue(completed.contains("PERCENT-COMPLETE:100"), completed);
+    }
+
+    @Test
+    void todoStatusReflectsProgressAndRecordsCompletionDate() {
+        // RFC 5545 §3.8.1.11: a VTODO carries a tri-state STATUS derived from PidLidTaskComplete /
+        // PidLidPercentComplete — not-started is NEEDS-ACTION, partial progress IN-PROCESS, finished
+        // COMPLETED — so the in-progress/not-started distinction survives, not only completion.
+        var notStarted = ICalendarGenerator.generateTodo("Todo", null, null, null, 0.0, false);
+        assertTrue(notStarted.contains("STATUS:NEEDS-ACTION"), notStarted);
+        assertFalse(notStarted.contains("STATUS:IN-PROCESS"), notStarted);
+
+        var noPercent = ICalendarGenerator.generateTodo("Todo", null, null, null, null, false);
+        assertTrue(noPercent.contains("STATUS:NEEDS-ACTION"), noPercent);
+
+        var inProgress = ICalendarGenerator.generateTodo("Todo", null, null, null, 0.4, false);
+        assertTrue(inProgress.contains("STATUS:IN-PROCESS"), inProgress);
+
+        // 100% counts as completed even when the explicit completion flag is clear.
+        var fullPercent = ICalendarGenerator.generateTodo("Todo", null, null, null, 1.0, false);
+        assertTrue(fullPercent.contains("STATUS:COMPLETED"), fullPercent);
+
+        // RFC 5545 §3.8.2.1: COMPLETED is a UTC date-time (never a VALUE=DATE), emitted only when the
+        // completion time (PidLidTaskDateCompleted) is known.
+        var withDate = ICalendarGenerator.generateTodo(
+                "Done",
+                null,
+                null,
+                null,
+                1.0,
+                true,
+                Date.from(Instant.parse("2024-03-04T12:30:00Z")),
+                "PUBLISH",
+                null,
+                null,
+                List.of());
+        assertTrue(withDate.contains("STATUS:COMPLETED"), withDate);
+        assertTrue(withDate.contains("COMPLETED:20240304T123000Z"), withDate);
+        assertFalse(withDate.contains("COMPLETED;VALUE=DATE"), "COMPLETED must be a UTC date-time: " + withDate);
+
+        // A completed task with no recorded completion time keeps STATUS:COMPLETED but no COMPLETED line.
+        var noDate = ICalendarGenerator.generateTodo("Done", null, null, null, null, true);
+        assertTrue(noDate.contains("STATUS:COMPLETED"), noDate);
+        assertFalse(noDate.contains("\r\nCOMPLETED:"), noDate);
     }
 
     @Test
@@ -370,6 +415,7 @@ class ICalendarGeneratorTest {
                 null,
                 null,
                 null,
+                null,
                 "REQUEST",
                 "Boss",
                 "boss@example.com",
@@ -389,6 +435,7 @@ class ICalendarGeneratorTest {
     void todoWithReplyMethodEmitsMethodReplyAndPartStat() {
         var todo = ICalendarGenerator.generateTodo(
                 "Task accepted",
+                null,
                 null,
                 null,
                 null,
