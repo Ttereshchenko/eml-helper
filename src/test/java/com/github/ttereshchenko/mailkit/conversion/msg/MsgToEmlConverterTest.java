@@ -3,6 +3,7 @@ package com.github.ttereshchenko.mailkit.conversion.msg;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -1507,6 +1508,29 @@ class MsgToEmlConverterTest {
 
         assertTrue(containsByte(bodyRtf, (byte) 0x81), "body.rtf lost the windows-1252-undefined byte 0x81");
         assertFalse(containsByte(bodyRtf, (byte) 0x3F), "0x81 was corrupted to '?' (0x3F)");
+    }
+
+    // C1 regression (MSG side): nonSentinelDate must suppress the FILETIME-0 sentinel
+    // (-11_644_473_600_000 ms, i.e. 1601-01-01T00:00:00Z), pass through real dates, and return
+    // null for a null input.
+
+    @Test
+    void nonSentinelDateReturnsSentinelDateAsNull() {
+        // -11_644_473_600_000 ms is the Java epoch representation of 1601-01-01T00:00:00Z.
+        var sentinel = new Date(-11_644_473_600_000L);
+        assertNull(MsgToEmlConverter.nonSentinelDate(sentinel), "FILETIME-0 sentinel Date must map to null");
+    }
+
+    @Test
+    void nonSentinelDatePassesThroughRealDate() {
+        var real = new Date(1_592_215_200_000L); // 2020-06-15T10:00:00Z
+        assertEquals(
+                real, MsgToEmlConverter.nonSentinelDate(real), "A real origination Date must be returned unchanged");
+    }
+
+    @Test
+    void nonSentinelDateReturnsNullForNullDate() {
+        assertNull(MsgToEmlConverter.nonSentinelDate(null), "null Date input must yield null");
     }
 
     private String convertString(byte[] input) throws Exception {

@@ -27,6 +27,9 @@
 - A meeting request or appointment converted from `.msg`/`.pst`/`.ost` that carries Outlook's global meeting identifier now uses it as the calendar entry's `UID`, so a later acceptance, decline, update, or cancellation is matched to the original meeting in your calendar client instead of showing up as a separate, unrelated event.
 - An inline image in a converted `.msg`/`.pst`/`.ost` whose Content-ID is a prefix of another image's Content-ID (for example `image1` alongside `image10`) is no longer wrongly hidden: only the image the message actually references is embedded inline, and the other stays a visible attachment.
 - A converted `.msg`/`.pst`/`.ost` whose subject or a sender/recipient display name literally contained RFC 2047 encoded-word text (for example `=?ISO-8859-1?Q?...?=` typed as plain text) is no longer silently re-interpreted and altered by the receiving client; the literal text is preserved.
+- A message attached *inside* a converted `.msg`/`.pst`/`.ost` (a forwarded or embedded email) whose stored text ends in a bare line feed rather than CRLF no longer breaks the structure of the generated `.eml`: the separator after it is now always correctly terminated, so strict mail clients keep the embedded message and any following attachments as distinct parts instead of folding them together.
+- A converted `.msg`/`.pst`/`.ost` message whose stored send time is blank (recorded as zero) no longer shows a bogus `Date: 1 Jan 1601` header; the conversion now falls through to the delivery time, as a mail client would.
+- Traditional-Chinese (Big5 / code page 950) text recovered from a rich-text body during `.msg`/`.pst`/`.ost` conversion is now decoded with the Windows Big5 variant, matching the rest of the converter, so the few characters the previous IBM-950 mapping rendered differently now come out correctly.
 
 ## 1.2.2 - 2026-06-18
 

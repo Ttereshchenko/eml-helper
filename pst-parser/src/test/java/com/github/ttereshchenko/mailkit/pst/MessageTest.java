@@ -10,6 +10,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -435,6 +436,41 @@ class MessageTest {
     void htmlRtfToggleIsRestoredAtGroupClose() {
         var rtf = "{\\rtf1\\ansi\\fromhtml1 \\htmlrtf0 <p>before</p>{\\htmlrtf hidden}<p>after</p>}";
         assertEquals("<p>before</p><p>after</p>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    // C1 regression: a FILETIME-0 origination date (value 0, decoding to 1601-01-01T00:00:00Z) must
+    // be treated as "no date" so the converter falls through to the delivery time and does not emit
+    // a bogus "Date: 1 Jan 1601" header. nonSentinelDate returns null for the sentinel instant, the
+    // instant itself for any real date, and null for non-Instant/null inputs.
+
+    @Test
+    void nonSentinelDateReturnsSentinelInstantAsNull() {
+        // The sentinel is 1601-01-01T00:00:00Z (FILETIME value 0).
+        var sentinel = Instant.ofEpochSecond(-11_644_473_600L);
+        assertNull(Message.nonSentinelDate(sentinel), "FILETIME-0 sentinel must map to null");
+    }
+
+    @Test
+    void nonSentinelDatePassesThroughRealInstant() {
+        var real = Instant.parse("2020-06-15T10:00:00Z");
+        assertEquals(real, Message.nonSentinelDate(real), "A real origination time must be returned unchanged");
+    }
+
+    @Test
+    void nonSentinelDateReturnsNullForNullAndNonInstant() {
+        assertNull(Message.nonSentinelDate(null), "null input must yield null");
+        assertNull(Message.nonSentinelDate("not an instant"), "non-Instant input must yield null");
+    }
+
+    @Test
+    void fileTimeToInstantZeroEqualsFiletimeSentinel() {
+        // fileTimeToInstant(0L) must produce exactly the FILETIME_ZERO sentinel constant so that
+        // nonSentinelDate gates on the right Instant value.
+        var sentinel = Instant.ofEpochSecond(-11_644_473_600L);
+        assertEquals(
+                sentinel,
+                PropertyContext.fileTimeToInstant(0L),
+                "fileTimeToInstant(0) must equal the FILETIME_ZERO sentinel 1601-01-01T00:00:00Z");
     }
 
     // Round-4 regression: \\uc is group-scoped too. A {\\uc3 ...} group used to leak uc=3 past its

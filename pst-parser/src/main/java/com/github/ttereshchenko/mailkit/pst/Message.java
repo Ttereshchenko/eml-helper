@@ -45,6 +45,12 @@ public class Message {
     private static final int NID_ATTACHMENT_TABLE = 0x0671;
     private static final int NID_RECIPIENT_TABLE = 0x0692;
 
+    /**
+     * 1601-01-01T00:00:00Z — the instant a FILETIME of 0 decodes to. A PT_SYSTIME stored as 0 is the
+     * conventional "time not set" sentinel, so an origination time equal to it is treated as absent.
+     */
+    private static final Instant FILETIME_ZERO = Instant.ofEpochSecond(-11_644_473_600L);
+
     /** The {@code \ansicpgN} control word naming the code page of an RTF body's {@code \'hh} escapes. */
     private static final Pattern RTF_ANSI_CODE_PAGE = Pattern.compile("\\\\ansicpg(\\d{1,9})");
 
@@ -897,11 +903,21 @@ public class Message {
      */
     public Instant getMessageDate() {
         if (propertyContext == null) return null;
-        Object value = propertyContext.getProperty(MapiProperties.PR_CLIENT_SUBMIT_TIME);
-        if (value == null) {
-            value = propertyContext.getProperty(MapiProperties.PR_MESSAGE_DELIVERY_TIME);
-        }
-        return value instanceof Instant instant ? instant : null;
+        Instant submit = nonSentinelDate(propertyContext.getProperty(MapiProperties.PR_CLIENT_SUBMIT_TIME));
+        return submit != null
+                ? submit
+                : nonSentinelDate(propertyContext.getProperty(MapiProperties.PR_MESSAGE_DELIVERY_TIME));
+    }
+
+    /**
+     * Coerces a property value to an origination {@link Instant}, treating the FILETIME-0 sentinel
+     * (1601-01-01T00:00:00Z) as "no date". Some non-Outlook writers store an unsent item's
+     * PR_CLIENT_SUBMIT_TIME as 0 instead of omitting it, and a literal 1601 origination time is never a
+     * real Date (RFC 5322 §3.6.1); returning {@code null} lets {@link #getMessageDate} fall through to
+     * the delivery time instead of emitting {@code Date: ... 1 Jan 1601}.
+     */
+    static Instant nonSentinelDate(Object value) {
+        return value instanceof Instant instant && instant.isAfter(FILETIME_ZERO) ? instant : null;
     }
 
     /** The internet Message-ID, or {@code null} if absent. */

@@ -518,7 +518,16 @@ public final class EmlSerializer {
             // written through the tracking writer so the next boundary's leading-CRLF accounting is correct.
             var nested = part.nestedEml();
             rawBodyEmitter.emit(nested);
-            if (nested.length == 0 || nested[nested.length - 1] != '\n') {
+            // The boundary delimiter that follows MUST be preceded by a CRLF (RFC 2046 §5.1.1). A
+            // nested body already ending in CRLF supplies it; one ending in a bare LF (or any other
+            // octet) does not, and a lone LF is not a valid delimiter lead-in for a CRLF-strict parser
+            // — it would read "--boundary" as part content and swallow the rest of the multipart. The
+            // raw emitter writes straight to the underlying stream, bypassing the newline-tracking
+            // writer, so atLineStart() cannot be trusted here: test the nested bytes for a trailing
+            // CRLF directly and supply our own when it is absent (a bare LF stays as verbatim content).
+            var endsWithCrlf =
+                    nested.length >= 2 && nested[nested.length - 2] == '\r' && nested[nested.length - 1] == '\n';
+            if (!endsWithCrlf) {
                 writer.append(CRLF);
             }
         } else {

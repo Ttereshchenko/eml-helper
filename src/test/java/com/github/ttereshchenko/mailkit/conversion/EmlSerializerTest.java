@@ -5,8 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
 import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class EmlSerializerTest {
@@ -909,7 +911,7 @@ class EmlSerializerTest {
         byte[] body = {'l', 'i', 'n', 'e', '\r', '\n', (byte) 0xE9, (byte) 0x80, (byte) 0xFF, '\r', '\n'};
         serializer.setRawEntity("multipart/signed; boundary=\"sig\"", "8bit", null, body);
 
-        var bytes = new java.io.ByteArrayOutputStream();
+        var bytes = new ByteArrayOutputStream();
         serializer.writeTo(bytes);
         var eml = bytes.toByteArray();
 
@@ -938,13 +940,80 @@ class EmlSerializerTest {
         };
         serializer.addEmbeddedMessage("inner.eml", nested);
 
-        var bytes = new java.io.ByteArrayOutputStream();
+        var bytes = new ByteArrayOutputStream();
         serializer.writeTo(bytes);
         var eml = bytes.toByteArray();
 
         assertTrue(indexOfSubarray(eml, nested) >= 0, "the nested message bytes must appear verbatim");
         assertEquals(1, countByte(eml, (byte) 0xE9), "0xE9 must appear once, not be re-encoded to 0xC3 0xA9");
         assertEquals(0, countByte(eml, (byte) 0xC3), "no UTF-8 re-encoding of the nested high bytes may occur");
+    }
+
+    /**
+     * F1 regression: an embedded {@code message/rfc822} whose final byte is a bare LF (not CRLF)
+     * must still be followed by a valid CRLF-prefixed boundary delimiter. The old code emitted the
+     * nested bytes verbatim and then called {@code appendBoundary}, which relies on the
+     * {@link NewlineTrackingWriter} to decide whether to prepend a CRLF — but the raw-body
+     * emitter writes straight to the underlying stream and bypasses the tracking writer, so
+     * {@code atLineStart()} always returned {@code false}, causing the boundary to be preceded by a
+     * lone LF. The fix checks the nested bytes directly and appends CRLF when they do not already
+     * end with one.
+     */
+    @Test
+    void embeddedMessageWithBareLfTerminatorGetsCrlfBeforeBoundary() throws Exception {
+        // The inner body ends with bare LF (\n), not CRLF (\r\n).
+        var nested = "From: a@b.com\r\nSubject: inner\r\n\r\ninner body\n".getBytes(StandardCharsets.UTF_8);
+
+        var serializer = new EmlSerializer();
+        serializer.setSender("A", "a@example.com");
+        serializer.addEmbeddedMessage("inner.eml", nested);
+
+        var bytes = new ByteArrayOutputStream();
+        serializer.writeTo(bytes);
+        var eml = bytes.toByteArray();
+        var emlString = new String(eml, StandardCharsets.UTF_8);
+
+        // Extract the root boundary from the Content-Type header.
+        var ctMatcher = Pattern.compile("boundary=\"([^\"]+)\"").matcher(emlString);
+        assertTrue(ctMatcher.find(), "Content-Type must declare a boundary:\n" + emlString);
+        var boundary = ctMatcher.group(1);
+        var delimiterBytes = ("--" + boundary).getBytes(StandardCharsets.UTF_8);
+
+        // Every occurrence of the boundary delimiter must be preceded by \r\n (0x0D 0x0A).
+        var pos = 0;
+        var foundAtLeastOne = false;
+        while (true) {
+            var idx = indexOfSubarray(eml, delimiterBytes, pos);
+            if (idx < 0) {
+                break;
+            }
+            foundAtLeastOne = true;
+            assertTrue(
+                    idx >= 2 && eml[idx - 2] == '\r' && eml[idx - 1] == '\n',
+                    "Boundary at offset " + idx + " must be preceded by CRLF (\\r\\n), not a lone"
+                            + " LF or other bytes. Raw output:\n" + emlString);
+            pos = idx + delimiterBytes.length;
+        }
+        assertTrue(foundAtLeastOne, "At least one boundary delimiter must appear in the output");
+
+        // The bare LF inside the nested content must be preserved verbatim.
+        assertTrue(
+                indexOfSubarray(eml, "inner body\n".getBytes(StandardCharsets.UTF_8), 0) >= 0,
+                "Bare LF inside the nested body must be preserved verbatim");
+    }
+
+    /** Overload that accepts a start position for scanning. */
+    private static int indexOfSubarray(byte[] haystack, byte[] needle, int from) {
+        outer:
+        for (var index = from; index <= haystack.length - needle.length; index++) {
+            for (var offset = 0; offset < needle.length; offset++) {
+                if (haystack[index + offset] != needle[offset]) {
+                    continue outer;
+                }
+            }
+            return index;
+        }
+        return -1;
     }
 
     private static int indexOfSubarray(byte[] haystack, byte[] needle) {
