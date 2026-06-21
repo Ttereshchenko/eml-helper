@@ -65,6 +65,46 @@ class EmlSerializerTest {
     }
 
     @Test
+    void testInlineCidReferenceRewrittenCaseInsensitively() throws Exception {
+        // The HTML body references the image with an upper-case cid: URL (cid: scheme + addr-spec are
+        // case-insensitive per RFC 2392 §2). routing is already case-insensitive, but before the fix the
+        // body rewrite that retargets the sanitized Content-ID was case-sensitive, so a "CID:LOGO" stayed
+        // pointing at the un-suffixed id and the inline image no longer resolved.
+        var serializer = new EmlSerializer();
+        serializer.addBody("<img src=\"CID:LOGO\">", "text/html; charset=UTF-8");
+        serializer.addAttachment("logo.png", "image/png", "img".getBytes(StandardCharsets.UTF_8), "logo", true);
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(eml.contains("multipart/related"), "Referenced inline image should be wrapped in related: " + eml);
+        assertTrue(eml.contains("Content-ID: <logo@mailkit.invalid>"), "Sanitized Content-ID header expected: " + eml);
+        assertTrue(
+                eml.contains("cid:logo@mailkit.invalid"),
+                "Body cid: must be retargeted to the sanitized id regardless of case: " + eml);
+        assertFalse(eml.contains("CID:LOGO"), "Stale upper-case cid: reference must be rewritten: " + eml);
+    }
+
+    @Test
+    void testFormatAddressPlainKeepsNonAsciiNameUnencoded() {
+        // formatAddress RFC-2047-encodes a non-ASCII name for a header; the plain variant is for a
+        // text/plain body, where an encoded-word is undefined and would render literally to the reader.
+        var plain = EmlSerializer.formatAddressPlain("Müller", "muller@example.com");
+        assertEquals("Müller <muller@example.com>", plain);
+        assertFalse(plain.contains("=?"), "A body address must not carry an RFC 2047 encoded-word: " + plain);
+        assertTrue(
+                EmlSerializer.formatAddress("Müller", "muller@example.com").contains("=?"),
+                "Sanity: the header variant still encodes");
+
+        assertEquals("<only@example.com>", EmlSerializer.formatAddressPlain(null, "only@example.com"));
+        assertEquals(
+                "Jane Doe <jane@example.com>",
+                EmlSerializer.formatAddressPlain("Jane\r\nDoe", "jane@example.com"),
+                "CR/LF in the name must collapse so each member stays on its own line");
+    }
+
+    @Test
     void testBodySortingAndAlternativeBoundary() throws Exception {
         EmlSerializer serializer = new EmlSerializer();
         serializer.addBody("RTF content", "text/rtf; charset=UTF-8");

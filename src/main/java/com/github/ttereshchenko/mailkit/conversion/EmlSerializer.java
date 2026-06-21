@@ -20,6 +20,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class EmlSerializer {
     private static final String CRLF = "\r\n";
@@ -615,6 +617,29 @@ public final class EmlSerializer {
     }
 
     /**
+     * Like {@link #formatAddress} but for a plain-text body rather than a header field: the display
+     * name is emitted verbatim (the enclosing body already declares a UTF-8 charset) instead of as an
+     * RFC 2047 encoded-word, which is only defined for header fields and would otherwise show up
+     * literally (e.g. {@code =?UTF-8?B?...?=}) to the reader. The address is still sanitized to strip
+     * control characters, and any CR/LF in the name is collapsed to a space so each entry stays on its
+     * own line.
+     */
+    public static String formatAddressPlain(String name, String email) {
+        var trimmedEmail = sanitizeAddress(email);
+        var trimmedName = name == null ? "" : name.trim().replaceAll("[\\r\\n]+", " ");
+        if (trimmedEmail.isEmpty()) {
+            if (trimmedName.isEmpty()) {
+                return "";
+            }
+            trimmedEmail = "undisclosed@invalid";
+        }
+        if (trimmedName.isEmpty()) {
+            return "<" + trimmedEmail + ">";
+        }
+        return trimmedName + " <" + trimmedEmail + ">";
+    }
+
+    /**
      * Strips characters an addr-spec can never legitimately contain — CR, LF, and the angle brackets
      * {@code <}/{@code >} that {@link #formatAddress} supplies itself. Without this, a crafted PST
      * address such as {@code "a@b\r\nBcc: victim"} would split the header line, or a stray {@code >}
@@ -864,7 +889,9 @@ public final class EmlSerializer {
     /**
      * The body text to emit: for HTML bodies, {@code cid:} references whose Content-ID was rewritten
      * by {@link #sanitizeContentId} (a missing {@code @}-domain) are retargeted so they keep
-     * resolving against the emitted {@code Content-ID} headers.
+     * resolving against the emitted {@code Content-ID} headers. The match is case-insensitive to stay
+     * symmetric with {@link #htmlBodyReferences} (a {@code cid:} URL scheme and addr-spec are
+     * case-insensitive per RFC 2392 §2), so a body that writes e.g. {@code CID:Foo} is still retargeted.
      */
     private String bodyTextForOutput(Body body) {
         if (!body.contentType.contains("text/html")) {
@@ -878,7 +905,8 @@ public final class EmlSerializer {
             }
             var cleaned = sanitizeContentId(original);
             if (!cleaned.equals(original.trim())) {
-                text = text.replace("cid:" + original.trim(), "cid:" + cleaned);
+                var reference = Pattern.compile("cid:" + original.trim(), Pattern.CASE_INSENSITIVE | Pattern.LITERAL);
+                text = reference.matcher(text).replaceAll(Matcher.quoteReplacement("cid:" + cleaned));
             }
         }
         return text;

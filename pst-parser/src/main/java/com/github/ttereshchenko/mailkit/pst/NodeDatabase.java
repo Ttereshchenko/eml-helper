@@ -37,8 +37,14 @@ final class NodeDatabase {
 
     private static final int MAX_BTREE_DEPTH = 64;
     private static final int PAGE_CACHE_CAPACITY = 256;
-    /** Masks the "internal" flag (bit 1) off a BID; BIDs are allocated in increments of 4. */
-    private static final long BID_FLAG_MASK = ~0x02L;
+    /**
+     * Masks both flag bits off a block BID before a BBT lookup: bit 0 is the reserved bit that
+     * [MS-PST] §2.2.2.2 says "Readers MUST ignore ... and treat ... as zero before looking up the
+     * BID from the BBT", and bit 1 is the "internal" (XBLOCK) flag. Block BIDs reserve the two least
+     * significant bits for flags and are allocated in increments of 4, so masking both is safe (the
+     * bidIndex in the remaining bits uniquely identifies the block).
+     */
+    private static final long BID_FLAG_MASK = ~0x03L;
 
     private final FileChannel channel;
     private final PstFile.Format format;
