@@ -338,6 +338,15 @@ public final class MapiProperties {
     /** The contact's surname (PidTagSurname). EML alternative: vCard N. */
     public static final int PR_SURNAME_W = 0x3A11;
 
+    /** The contact's middle name (PidTagMiddleName). EML alternative: vCard N (Additional). */
+    public static final int PR_MIDDLE_NAME_W = 0x3A44;
+
+    /** The contact's title prefix such as "Dr." (PidTagDisplayNamePrefix). EML alternative: vCard N (Prefixes). */
+    public static final int PR_DISPLAY_NAME_PREFIX_W = 0x3A45;
+
+    /** The contact's generational suffix such as "Jr." (PidTagGeneration). EML alternative: vCard N (Suffixes). */
+    public static final int PR_GENERATION_W = 0x3A05;
+
     /** The contact's company (PidTagCompanyName). EML alternative: vCard ORG. */
     public static final int PR_COMPANY_NAME_W = 0x3A16;
 

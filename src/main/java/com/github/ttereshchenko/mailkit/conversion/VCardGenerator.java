@@ -17,6 +17,9 @@ public final class VCardGenerator {
         private String displayName;
         private String givenName;
         private String surname;
+        private String middleName;
+        private String namePrefix;
+        private String nameSuffix;
         private String company;
         private String jobTitle;
         private final List<String> emails = new ArrayList<>();
@@ -34,6 +37,24 @@ public final class VCardGenerator {
 
         public Contact surname(String value) {
             this.surname = value;
+            return this;
+        }
+
+        /** Sets the middle name(s) — the "Additional Names" component of the vCard N property. */
+        public Contact middleName(String value) {
+            this.middleName = value;
+            return this;
+        }
+
+        /** Sets the honorific prefix such as "Dr." — the "Honorific Prefixes" component of vCard N. */
+        public Contact namePrefix(String value) {
+            this.namePrefix = value;
+            return this;
+        }
+
+        /** Sets the honorific suffix such as "Jr." — the "Honorific Suffixes" component of vCard N. */
+        public Contact nameSuffix(String value) {
+            this.nameSuffix = value;
             return this;
         }
 
@@ -76,7 +97,9 @@ public final class VCardGenerator {
         appendFolded(card, "FN:" + escape(formattedName));
         appendFolded(
                 card,
-                "N:" + escape(blankToEmpty(contact.surname)) + ';' + escape(blankToEmpty(contact.givenName)) + ";;;");
+                "N:" + escape(blankToEmpty(contact.surname)) + ';' + escape(blankToEmpty(contact.givenName)) + ';'
+                        + escape(blankToEmpty(contact.middleName)) + ';' + escape(blankToEmpty(contact.namePrefix))
+                        + ';' + escape(blankToEmpty(contact.nameSuffix)));
         if (contact.company != null && !contact.company.isBlank()) {
             appendFolded(card, "ORG:" + escape(contact.company.trim()));
         }

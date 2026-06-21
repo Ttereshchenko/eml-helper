@@ -44,6 +44,26 @@ class RtfStripperTest {
     }
 
     @Test
+    void deEncapsulateHtmlDropsFontColorAndStyleHeaderTables() {
+        // [MS-OXRTFEX] section 2.1.3.1: the fonttbl/colortbl/stylesheet/info header tables are RTF
+        // infrastructure, not de-encapsulated HTML. Before the fix the generic control-word skip ate
+        // only the table keyword and then leaked the group's literal text (font face names, the
+        // colortbl ';' separators, style names) into the recovered body — real Outlook fromhtml RTF
+        // always carries a font table.
+        var rtf = "{\\rtf1\\ansi\\ansicpg1252\\fromhtml1\\deff0"
+                + "{\\fonttbl{\\f0\\fswiss Calibri;}{\\f1\\fmodern Courier New;}}"
+                + "{\\colortbl;\\red0\\green0\\blue0;\\red255\\green0\\blue0;}"
+                + "{\\stylesheet{\\s0 Normal;}}"
+                + "{\\*\\htmltag84 <html>}{\\*\\htmltag64 <body>}Hello world"
+                + "{\\*\\htmltag72 </body>}{\\*\\htmltag14 </html>}}";
+        var html = RtfStripper.deEncapsulateHtml(rtf);
+        assertEquals("<html><body>Hello world</body></html>", html);
+        assertFalse(html.contains("Calibri"), html);
+        assertFalse(html.contains("Courier"), html);
+        assertFalse(html.contains("Normal"), html);
+    }
+
+    @Test
     void treatsParAsNewline() {
         var rtf = "{\\rtf1 Line1\\par Line2}";
         var output = RtfStripper.strip(rtf);

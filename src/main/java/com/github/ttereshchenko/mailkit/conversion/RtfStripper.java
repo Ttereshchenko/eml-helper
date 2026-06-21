@@ -230,6 +230,20 @@ public final class RtfStripper {
                 index = skipIgnorableGroup(rtfText, index);
                 continue;
             }
+            // The fonttbl/colortbl/stylesheet/info header tables are RTF infrastructure, not
+            // de-encapsulated HTML ([MS-OXRTFEX] section 2.1.3.1: only htmltag destinations and the
+            // non-htmlrtf character runs carry HTML). They are not the ignorable destinations the
+            // skip above handles, so without dropping them whole the generic control-word skip below
+            // eats only the keyword and then leaks the group's literal text (font face names, the
+            // colortbl ';' separators, style names) into the body. The PST fork
+            // (Message.extractHtmlFromRtf via isNonRenderableGroupStart) skips the same set.
+            if (rtfText.startsWith("{\\fonttbl", index)
+                    || rtfText.startsWith("{\\colortbl", index)
+                    || rtfText.startsWith("{\\stylesheet", index)
+                    || rtfText.startsWith("{\\info", index)) {
+                index = skipIgnorableGroup(rtfText, index);
+                continue;
+            }
             var character = rtfText.charAt(index);
             // Maintain the group-state stack even inside an \htmlrtf-suppressed run so it stays balanced;
             // a '{' saves the current state and the matching '}' restores it.
