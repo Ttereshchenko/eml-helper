@@ -205,6 +205,12 @@ public final class MsgToEmlConverter {
             } else if (!author.email().equalsIgnoreCase(sender.email())) {
                 from = author;
                 serializer.setTransmitter(sender.name(), sender.email());
+            } else if (from.name() == null || from.name().isBlank()) {
+                // Same address for sender and represented author but PR_SENDER_NAME is absent: pair the
+                // author's display name with the From address instead of emitting an address-only From
+                // (RFC 5322 §3.6.2). Mirrors the PST path, which backfills the represented author's name
+                // when the sender name is blank.
+                from = new MailboxIdentity(author.name(), from.email());
             }
         } else if (sender.isBlank() && !author.isBlank()) {
             from = author;

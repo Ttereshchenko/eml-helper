@@ -27,6 +27,23 @@ class RtfStripperTest {
     }
 
     @Test
+    void deEncapsulateHtmlSkipsMhtmltagDestination() {
+        // [MS-OXRTF]: the \mhtmltag destination is the MHTML twin of \htmltag and must not be emitted
+        // during HTML de-encapsulation. Before the fix its literal content leaked, doubling the <img>.
+        var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1 {\\*\\htmltag84 <img src=\"cid:image001\">}"
+                + "{\\*\\mhtmltag84 <img src=\"http://example.com/x.png\">}}");
+        assertEquals("<img src=\"cid:image001\">", html);
+    }
+
+    @Test
+    void deEncapsulateHtmlSkipsIgnorableGeneratorDestination() {
+        // A {\*\generator …} ignorable destination carries no recovered HTML; its text must not leak
+        // into the output (RTF spec: an unrecognized \* destination group is dropped whole).
+        var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1 {\\*\\generator Microsoft Word 15}<p>Hi</p>}");
+        assertEquals("<p>Hi</p>", html);
+    }
+
+    @Test
     void treatsParAsNewline() {
         var rtf = "{\\rtf1 Line1\\par Line2}";
         var output = RtfStripper.strip(rtf);

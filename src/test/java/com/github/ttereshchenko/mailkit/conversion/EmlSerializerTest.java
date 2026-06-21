@@ -20,6 +20,42 @@ class EmlSerializerTest {
     }
 
     @Test
+    void testTransportHeaderLoneCarriageReturnIsNeutralized() throws Exception {
+        // A bare CR (no LF) inside a passed-through transport header must not act as a line break a
+        // lenient parser reads as an injected header (RFC 5322 §2.2). Before the fix it was emitted
+        // raw; now it folds into a single field, matching the synthesized-header path.
+        var serializer = new EmlSerializer();
+        serializer.setTransportHeaders("X-Trace: ok\r\nX-Evil: a\rBcc: victim@evil.test\r\n");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertFalse(eml.contains("a\rBcc"), "bare CR must not survive as a line break: " + eml);
+        assertTrue(eml.contains("X-Evil: a Bcc: victim@evil.test"), "lone CR folds into one field: " + eml);
+    }
+
+    @Test
+    void testCustomHeaderDoesNotDuplicateSynthesizedSubject() throws Exception {
+        // A synthesized essential (Subject) must not be re-emitted from a custom header — RFC 5322
+        // §3.6 allows Subject at most once. Before the fix the dedup guard checked only the transport
+        // block, so a custom "Subject" slipped through as a second copy.
+        var serializer = new EmlSerializer();
+        serializer.setSubject("Real Subject");
+        serializer.addCustomHeader("Subject", "Injected Subject");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertEquals(1, eml.split("Subject: ", -1).length - 1, "exactly one Subject header: " + eml);
+        assertTrue(eml.contains("Subject: Real Subject"), "keeps the synthesized Subject: " + eml);
+        assertFalse(eml.contains("Injected Subject"), "drops the duplicate custom Subject: " + eml);
+    }
+
+    @Test
     void testMessageIdAndInlineAttachments() throws Exception {
         EmlSerializer serializer = new EmlSerializer();
         serializer.setMessageId("<test-message-id@mailkit.org>");

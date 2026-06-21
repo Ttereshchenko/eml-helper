@@ -305,6 +305,14 @@ public final class EmlSerializer {
             appendHeader(out, "X-MailKit-Synthesized-Headers", String.join(", ", synthesized));
         }
 
+        // A synthesized essential header (From/Sender/To/Cc/Bcc/Subject/Date/Message-ID) counts as
+        // already present for the custom-header pass: emitting a second copy from customHeaders would
+        // duplicate a field RFC 5322 §3.6 allows at most once. present held only the transport block's
+        // names, so fold in the just-synthesized ones too.
+        for (var name : synthesized) {
+            present.add(name.toLowerCase(Locale.ROOT));
+        }
+
         for (var entry : customHeaders.entrySet()) {
             String headerName = entry.getKey();
             if (!present.contains(headerName.toLowerCase(Locale.ROOT))) {
@@ -942,12 +950,21 @@ public final class EmlSerializer {
     }
 
     /**
-     * Emits one original transport-header line verbatim, except that a line longer than the
-     * RFC 5322 §2.1.1 hard limit of 998 characters is re-folded at whitespace so the passthrough
-     * cannot produce an unparseable message. A line with no foldable whitespace is left overlong
-     * rather than corrupted by an arbitrary split.
+     * Emits one original transport-header line verbatim, with two safety transforms. First, a stray
+     * lone CR or LF still embedded in the value — one not consumed as the CRLF/LF the caller split the
+     * block on — is replaced with a space: a bare CR/LF is illegal inside a header field (RFC 5322
+     * §2.2), and a lenient parser could otherwise treat it as a line terminator and read the remainder
+     * as an injected header (e.g. a smuggled {@code Bcc:}). Second, a line longer than the RFC 5322
+     * §2.1.1 hard limit of 998 characters is re-folded at whitespace so the passthrough cannot produce
+     * an unparseable message; a line with no foldable whitespace is left overlong rather than corrupted
+     * by an arbitrary split.
      */
     private static void appendRawHeaderLine(Writer writer, String line) throws IOException {
+        // Neutralize any lone CR/LF the way the synthesized path does in appendHeader. Well-formed
+        // input has none here (the caller already split on CRLF/LF), so this is a no-op for it.
+        if (line.indexOf('\r') >= 0 || line.indexOf('\n') >= 0) {
+            line = line.replace('\r', ' ').replace('\n', ' ');
+        }
         while (line.length() > MAX_HEADER_LINE_LENGTH) {
             int breakPos = -1;
             for (int candidate = MAX_HEADER_LINE_LENGTH; candidate > 0; candidate--) {
