@@ -220,6 +220,16 @@ public final class RtfStripper {
                 index = appendHtmlTag(rtfText, index, charset, html, unicodeSkip);
                 continue;
             }
+            // Any other {\*\…} ignorable destination (\mhtmltag, \generator, \fldinst, \datafield, …)
+            // carries no recovered HTML and must be skipped whole (RTF spec / [MS-OXRTF]: an
+            // unrecognized \* destination group is dropped). Without this, the generic control-word
+            // skip below swallows only the \* and control words and then appends the destination's
+            // literal text as HTML — e.g. the \mhtmltag paired with each \htmltag leaks a duplicate
+            // <img>/<a> tag. strip() suppresses these via skipDepth; here we skip to the close brace.
+            if (rtfText.startsWith("{\\*\\", index)) {
+                index = skipIgnorableGroup(rtfText, index);
+                continue;
+            }
             var character = rtfText.charAt(index);
             // Maintain the group-state stack even inside an \htmlrtf-suppressed run so it stays balanced;
             // a '{' saves the current state and the matching '}' restores it.
@@ -409,6 +419,38 @@ public final class RtfStripper {
         }
         // Unterminated group: emit nothing and let the caller resume after the opening brace.
         return startIndex + 1;
+    }
+
+    /**
+     * Skips a <code>{\*\…}</code> ignorable destination other than <code>\htmltag</code> — both its
+     * control words and any literal content — so destinations such as <code>\mhtmltag</code>, <code>
+     * \generator</code>, or <code>\fldinst</code> do not leak into the recovered HTML. RTF spec /
+     * [MS-OXRTF]: a <code>\*</code> destination a reader does not recognize is dropped whole. Escaped
+     * braces (<code>\{</code>, <code>\}</code>, <code>\\</code>) are honored so a literal brace inside
+     * the group does not end it early. Returns the index just past the matching close brace, or the
+     * end of input when the group never closes.
+     */
+    private static int skipIgnorableGroup(String rtfText, int startIndex) {
+        var depth = 0;
+        var index = startIndex;
+        while (index < rtfText.length()) {
+            var character = rtfText.charAt(index);
+            if (character == '\\' && index + 1 < rtfText.length()) {
+                // An escaped \{ \} \\ — or the leading char of any control word — is not a group brace.
+                index += 2;
+                continue;
+            }
+            if (character == '{') {
+                depth++;
+            } else if (character == '}') {
+                depth--;
+                if (depth == 0) {
+                    return index + 1;
+                }
+            }
+            index++;
+        }
+        return index;
     }
 
     private static Charset resolveCharset(String rtf) {

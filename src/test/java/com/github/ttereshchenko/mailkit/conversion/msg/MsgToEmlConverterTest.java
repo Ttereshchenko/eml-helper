@@ -42,6 +42,26 @@ class MsgToEmlConverterTest {
         assertTrue(eml.contains("Content-Transfer-Encoding: quoted-printable"), eml);
     }
 
+    @Test
+    void fromNameBackfilledFromSentRepresentingWhenSenderNameAbsent() throws Exception {
+        // PR_SENDER_NAME absent but PR_SENT_REPRESENTING_NAME present with the same address: From must
+        // carry the represented author's display name, not an address-only From (rfc5322 §3.6.2).
+        // Before the fix the MSG path emitted "From: <bob@example.com>", diverging from the PST path.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Backfilled From name")
+                .sender(null, "bob@example.com") // PR_SENDER_EMAIL_ADDRESS only; PR_SENDER_NAME absent
+                .sentRepresenting("Bob Author", "bob@example.com")
+                .recipientTo("Carol", "carol@example.com")
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("From: \"Bob Author\" <bob@example.com>"), eml);
+        // Same address for sender and author, so no redundant Sender header.
+        assertFalse(eml.contains("Sender:"), eml);
+    }
+
     // M1: the Date header is the origination time (rfc5322 §3.6.1). When both PR_CLIENT_SUBMIT_TIME and
     // PR_MESSAGE_DELIVERY_TIME are present, Date must be the submit time, not the delivery time (the old
     // code preferred delivery, diverging from the PST pipeline).

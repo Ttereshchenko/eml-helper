@@ -604,12 +604,45 @@ public final class ICalendarGenerator {
      * vCard escaper) rather than silently deleting a stray CR.
      */
     private static String escapeIcal(String text) {
-        return text.replace("\\", "\\\\")
+        return stripForbiddenControls(text)
+                .replace("\\", "\\\\")
                 .replace(";", "\\;")
                 .replace(",", "\\,")
                 .replace("\r\n", "\\n")
                 .replace("\r", "\\n")
                 .replace("\n", "\\n");
+    }
+
+    /**
+     * Drops the control characters rfc5545 §3.3.11 forbids in a TEXT value: every C0 control below
+     * {@code U+0020} except TAB (a valid {@code WSP}) and the CR/LF that {@link #escapeIcal} turns
+     * into the literal {@code \n} escape, plus DEL ({@code U+007F}). A stray control — e.g. a form
+     * feed pasted into a meeting location — would otherwise emit an unparseable content line a strict
+     * iCalendar reader rejects. Text with no such control is returned unchanged.
+     */
+    private static String stripForbiddenControls(String text) {
+        var hasForbidden = false;
+        for (var index = 0; index < text.length(); index++) {
+            if (isForbiddenControl(text.charAt(index))) {
+                hasForbidden = true;
+                break;
+            }
+        }
+        if (!hasForbidden) {
+            return text;
+        }
+        var builder = new StringBuilder(text.length());
+        for (var index = 0; index < text.length(); index++) {
+            var character = text.charAt(index);
+            if (!isForbiddenControl(character)) {
+                builder.append(character);
+            }
+        }
+        return builder.toString();
+    }
+
+    private static boolean isForbiddenControl(char character) {
+        return (character < 0x20 && character != '\t' && character != '\r' && character != '\n') || character == 0x7F;
     }
 
     /**

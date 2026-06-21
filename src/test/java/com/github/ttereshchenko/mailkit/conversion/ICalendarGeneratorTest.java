@@ -352,6 +352,20 @@ class ICalendarGeneratorTest {
                 "lone CR must not be deleted (which would join beta and gamma): " + unfolded);
     }
 
+    @Test
+    void escapeIcalDropsForbiddenControlCharacters() {
+        // rfc5545 §3.3.11: a TEXT value may not contain C0 controls other than TAB (and the CR/LF that
+        // become the \n escape). A stray control — here a form feed and a backspace — must be dropped, not
+        // emitted raw, while a TAB (a valid WSP) is preserved.
+        var description = "Room\f1\tkeep\bdrop";
+        var todo = ICalendarGenerator.generateTodo("Subject", description, null, null, null, false);
+
+        var unfolded = todo.replace("\r\n ", "");
+        assertTrue(unfolded.contains("DESCRIPTION:Room1\tkeepdrop"), "controls dropped, TAB kept: " + unfolded);
+        assertFalse(unfolded.contains("\f"), "no form feed in output: " + unfolded);
+        assertFalse(unfolded.contains("\b"), "no backspace in output: " + unfolded);
+    }
+
     // -----------------------------------------------------------------------
     // responsePartStat — maps meeting-response message classes to PARTSTAT
     // -----------------------------------------------------------------------

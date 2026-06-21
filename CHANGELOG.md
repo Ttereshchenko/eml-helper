@@ -19,6 +19,10 @@
 - A `.pst`/`.ost` message sent on another person's behalf whose sender record carries no name of its own now keeps that author's display name in `From:` instead of showing only their bare address.
 - A task (to-do) converted from `.msg`/`.pst`/`.ost` now records whether it is not started, in progress, or completed — previously only completed tasks were marked, so an in-progress or not-started task showed no status in a calendar/task client.
 - A completed task converted from `.msg`/`.pst`/`.ost` now also carries the date it was completed.
+- An HTML message converted from a `.msg`/`.pst`/`.ost` that stored its body only as rich text (HTML-encapsulated RTF) no longer shows duplicated or stray markup — for example an inline image appearing twice — that leaked in from the RTF's parallel MHTML and generator/field data; only the intended HTML is now recovered.
+- A `.msg` message sent on another person's behalf whose sender record carries no name of its own now keeps that author's display name in `From:` instead of showing only their bare address — the `.pst`/`.ost` conversion already did this, so the two now match.
+- An appointment or task converted from `.msg`/`.pst`/`.ost` whose subject, location, or description contained a stray control character now produces a valid calendar entry instead of a line a strict calendar client may reject.
+- When converting a `.msg`/`.pst`/`.ost`, a stray carriage return inside the message's original headers can no longer be misread as the start of an extra header in the generated `.eml`; the line is kept as a single header value.
 
 ## 1.2.2 - 2026-06-18
 
