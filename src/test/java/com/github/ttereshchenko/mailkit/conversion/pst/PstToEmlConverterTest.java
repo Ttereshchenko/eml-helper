@@ -2351,6 +2351,94 @@ class PstToEmlConverterTest {
     }
 
     /**
+     * round-4 audit: a meeting's iCal UID MUST be its stable identity (PidLidCleanGlobalObjectId,
+     * PSETID_Meeting LID 0x0023), not a random UUID, so a REQUEST/REPLY/CANCEL of the same meeting
+     * share one UID (rfc5545 §3.8.4.7, rfc5546 §3.2; [MS-OXCICAL] §2.1.3.1.1.20.26 maps the bytes to
+     * UID as uppercase hex). dist-list.pst already defines that named property, so the path is driven
+     * end-to-end through the converter rather than only the generator.
+     */
+    @Test
+    void meetingInviteUidIsUppercaseHexOfCleanGlobalObjectId() throws Exception {
+        var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
+        try (var pstFile = new PstFile(distListPst)) {
+            var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
+            var cleanGoidId = pstFile.namedPropertyId(UUID.fromString("6ED8DA90-450B-101B-98DA-00AA003F1305"), 0x0023);
+            org.junit.jupiter.api.Assertions.assertNotNull(
+                    cleanGoidId, "dist-list.pst must define the PSETID_Meeting CleanGlobalObjectId named property");
+            var cleanGoid = new byte[] {
+                0x04, 0x00, 0x00, 0x00, (byte) 0x82, 0x00, (byte) 0xE0, 0x00,
+                0x74, (byte) 0xC5, (byte) 0xB7, 0x10, 0x1A, (byte) 0x82, (byte) 0xE0, 0x08,
+                0x00, 0x00, 0x00, 0x00, (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, 0x01
+            };
+
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Schedule.Meeting.Request";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Project kickoff";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Chair";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "chair@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of(new Recipient(1, "Attendee", "attendee@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    if (propertyId == startId) {
+                        return Instant.parse("2026-07-01T15:00:00Z");
+                    }
+                    if (propertyId == cleanGoidId) {
+                        return cleanGoid;
+                    }
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            var icsMatcher = Pattern.compile("(?s)name=\"invite\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                    .matcher(eml);
+            org.junit.jupiter.api.Assertions.assertTrue(icsMatcher.find(), "invite.ics must be base64-encoded: " + eml);
+            var ics = new String(Base64.getMimeDecoder().decode(icsMatcher.group(1)), StandardCharsets.UTF_8)
+                    .replace("\r\n ", "")
+                    .replace("\r\n\t", "");
+
+            var expectedUid = java.util.HexFormat.of().withUpperCase().formatHex(cleanGoid);
+            assertTrue(
+                    ics.contains("UID:" + expectedUid + "\r\n"),
+                    "the VEVENT UID must be the uppercase hex of PidLidCleanGlobalObjectId: " + ics);
+        }
+    }
+
+    /**
      * An {@code IPM.Schedule.Meeting.Resp.Neg} (declined) message must carry {@code PARTSTAT=DECLINED}.
      */
     @Test

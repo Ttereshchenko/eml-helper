@@ -123,6 +123,62 @@ class EmlSerializerTest {
     }
 
     @Test
+    void testCidReferenceRequiresWholeTokenNotPrefix() throws Exception {
+        // The HTML cites only cid:image10. "cid:image1" is a substring of "cid:image10", but a cid: URL
+        // maps to one specific Content-ID (RFC 2392 §2), so the image1 part is NOT referenced and must
+        // stay a visible attachment. Before the fix the substring match pulled image1 into
+        // multipart/related as an inline member, where common clients neither render nor list it.
+        var serializer = new EmlSerializer();
+        serializer.addBody("<img src=\"cid:image10\">", "text/html; charset=UTF-8");
+        serializer.addAttachment("pic1.png", "image/png", "a".getBytes(StandardCharsets.UTF_8), "image1", true);
+        serializer.addAttachment("pic10.png", "image/png", "b".getBytes(StandardCharsets.UTF_8), "image10", true);
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(eml.contains("multipart/related"), "the genuinely referenced image10 must be related: " + eml);
+        assertTrue(
+                eml.contains("Content-Disposition: attachment; filename=\"pic1.png\""),
+                "image1 is only a prefix of cid:image10, so it must stay a visible attachment: " + eml);
+        assertFalse(
+                eml.contains("Content-Disposition: attachment; filename=\"pic10.png\""),
+                "image10 is referenced, so it stays inline rather than a visible attachment: " + eml);
+    }
+
+    @Test
+    void testLiteralEncodedWordSubjectIsReEncoded() throws Exception {
+        // A pure-ASCII Subject that literally contains RFC 2047 encoded-word syntax must be re-encoded,
+        // else a receiver decodes "=?ISO-8859-1?Q?p=F6=F6?=" and shows "pöö" instead of the literal
+        // text the user typed. Before the fix isPureAscii short-circuited and the literal went out raw.
+        var serializer = new EmlSerializer();
+        serializer.setSubject("=?ISO-8859-1?Q?p=F6=F6?=");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertFalse(
+                eml.contains("=?ISO-8859-1?Q?"),
+                "the literal encoded-word must be re-encoded, not emitted raw: " + eml);
+        assertTrue(eml.contains("Subject: =?UTF-8?B?"), "Subject must be wrapped as a UTF-8 encoded-word: " + eml);
+    }
+
+    @Test
+    void testLiteralEncodedWordDisplayNameIsReEncoded() {
+        // formatAddress's pure-ASCII branch emits the name as a quoted phrase; a name that literally
+        // contains encoded-word syntax would then be decoded by the receiver, so it must be re-encoded.
+        var formatted = EmlSerializer.formatAddress("=?utf-8?q?x?=", "user@example.com");
+
+        assertFalse(
+                formatted.contains("=?utf-8?q?x?="),
+                "literal encoded-word name must not pass through quoted: " + formatted);
+        assertTrue(formatted.startsWith("=?UTF-8?B?"), "name must be re-encoded as an encoded-word: " + formatted);
+        assertTrue(formatted.contains("<user@example.com>"), "address must be preserved: " + formatted);
+    }
+
+    @Test
     void testFormatAddressPlainKeepsNonAsciiNameUnencoded() {
         // formatAddress RFC-2047-encodes a non-ASCII name for a header; the plain variant is for a
         // text/plain body, where an encoded-word is undefined and would render literally to the reader.

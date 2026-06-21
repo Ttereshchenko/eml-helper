@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
+import java.util.HexFormat;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
@@ -1356,6 +1357,61 @@ class MsgToEmlConverterTest {
         assertTrue(
                 invite.contains("ATTENDEE;CN=\"Responding Attendee\";PARTSTAT=ACCEPTED:mailto:responder@example.com"),
                 "the REPLY's single ATTENDEE is the responder carrying PARTSTAT: " + invite);
+    }
+
+    // round-4 audit: a meeting's iCal UID MUST be its stable identity (PidLidCleanGlobalObjectId),
+    // not a random UUID, or a client cannot correlate a REQUEST/REPLY/CANCEL of the same meeting
+    // (rfc5545 §3.8.4.7, rfc5546 §3.2; [MS-OXCICAL] §2.1.3.1.1.20.26 maps the bytes to UID as
+    // uppercase hex).
+    @Test
+    void meetingInviteUidIsUppercaseHexOfCleanGlobalObjectId() throws Exception {
+        // A representative CleanGlobalObjectId: the [MS-OXOCAL] byte-array id header followed by a
+        // mixed-case-significant tail, so the assertion proves both the source property and the
+        // uppercase-hex formatting.
+        var cleanGoid = new byte[] {
+            0x04, 0x00, 0x00, 0x00, (byte) 0x82, 0x00, (byte) 0xE0, 0x00,
+            0x74, (byte) 0xC5, (byte) 0xB7, 0x10, 0x1A, (byte) 0x82, (byte) 0xE0, 0x08,
+            0x00, 0x00, 0x00, 0x00, (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, 0x01
+        };
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Schedule.Meeting.Request")
+                .subject("Project kickoff")
+                .sender("Chair Person", "chair@example.com")
+                .recipientTo("Visible Attendee", "visible@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                .meetingCleanGlobalObjectId(cleanGoid)
+                .textBody("Agenda inside")
+                .toBytes();
+
+        var eml = convertString(bytes);
+        // Unfold first: a full GlobalObjectId is long enough that UID may wrap (rfc5545 §3.1).
+        var invite = decodedInvite(eml).replace("\r\n ", "").replace("\r\n\t", "");
+
+        var expectedUid = HexFormat.of().withUpperCase().formatHex(cleanGoid);
+        assertTrue(
+                invite.contains("UID:" + expectedUid + "\r\n"),
+                "the VEVENT UID must be the uppercase hex of PidLidCleanGlobalObjectId: " + invite);
+    }
+
+    // The fallback half of the same fix: a personal appointment stores no GlobalObjectId, so the UID
+    // stays a generated value — but a UID line must still be present and well-formed (rfc5545 §3.8.4.7).
+    @Test
+    void appointmentWithoutCleanGlobalObjectIdStillCarriesAUid() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Appointment")
+                .subject("Solo focus block")
+                .sender("Organizer", "organizer@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                .textBody("Heads down")
+                .toBytes();
+
+        var eml = convertString(bytes);
+        var invite = decodedInvite(eml).replace("\r\n ", "").replace("\r\n\t", "");
+
+        // No value assertion (it is random); only that exactly one non-empty UID line was emitted.
+        assertTrue(
+                Pattern.compile("\r\nUID:\\S+\r\n").matcher(invite).find(),
+                "every VEVENT must carry a UID even without a stored meeting identity: " + invite);
     }
 
     // --- finding 4: In-Reply-To/References msg-id references must be angle-bracketed (rfc5322

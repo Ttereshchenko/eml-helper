@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Date;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class ICalendarGeneratorTest {
@@ -589,5 +590,66 @@ class ICalendarGeneratorTest {
         assertTrue(ical.contains("METHOD:PUBLISH\r\n"), "must downgrade to PUBLISH without an organizer: " + ical);
         assertFalse(ical.contains("ATTENDEE"), "a publication must not carry attendees: " + ical);
         assertFalse(ical.contains("ORGANIZER"), "no organizer address means no ORGANIZER line: " + ical);
+    }
+
+    // -----------------------------------------------------------------------
+    // UID — the meeting's stable identity (PidLidCleanGlobalObjectId)
+    // -----------------------------------------------------------------------
+
+    // rfc5545 §3.8.4.7 + rfc5546 §3.2: a REQUEST/REPLY/CANCEL of one meeting MUST share one UID so a
+    // client can correlate them. [MS-OXCICAL] §2.1.3.1.1.20.26 derives that UID from
+    // PidLidCleanGlobalObjectId as an uppercase-hex string.
+    @Test
+    void uidIsUppercaseHexOfCleanGlobalObjectIdWhenPresent() {
+        var cleanGoid = new byte[] {0x01, (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, 0x10, 0x20, 0x30, 0x40};
+        var ical = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
+                "REQUEST",
+                START,
+                END,
+                null,
+                "Subject",
+                "Org",
+                "org@example.com",
+                null,
+                List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")),
+                false,
+                null,
+                null,
+                0,
+                cleanGoid));
+
+        assertTrue(ical.contains("UID:01ABCDEF10203040\r\n"), "UID must be uppercase hex of the GOID: " + ical);
+    }
+
+    // The fallback: with no stored GlobalObjectId the UID is a fresh value, but a non-empty UID line
+    // must still be emitted (and an empty byte[] is treated the same as absent).
+    @Test
+    void uidFallsBackToGeneratedValueWhenCleanGlobalObjectIdAbsentOrEmpty() {
+        var withoutGoid = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
+                "PUBLISH", START, END, null, "Subject", "Org", "org@example.com", null, List.of(), false, null, null));
+        assertTrue(
+                Pattern.compile("\r\nUID:\\S+\r\n").matcher(withoutGoid).find(),
+                "a UID line must still be present without a GOID: " + withoutGoid);
+
+        var emptyGoid = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "Org",
+                "org@example.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                new byte[0]));
+        // An empty GOID must not produce "UID:\r\n" — it falls back to a generated value.
+        assertFalse(emptyGoid.contains("UID:\r\n"), "an empty GOID must not yield a blank UID: " + emptyGoid);
+        assertTrue(
+                Pattern.compile("\r\nUID:\\S+\r\n").matcher(emptyGoid).find(),
+                "an empty GOID must fall back to a generated UID: " + emptyGoid);
     }
 }

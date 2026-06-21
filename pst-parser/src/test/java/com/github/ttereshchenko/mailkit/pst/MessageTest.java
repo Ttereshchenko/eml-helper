@@ -426,4 +426,33 @@ class MessageTest {
                         StandardCharsets.UTF_8,
                         Message.AddressPreference.PREFER_SMTP));
     }
+
+    // Round-4 regression: \htmlrtf is group-scoped RTF state ([MS-OXRTFEX] section 2.1.3.1.3). An
+    // \htmlrtf turned on inside a group and ended by the closing brace (not an explicit \htmlrtf0)
+    // used to stay on forever because the brace did not restore the saved state, so every <p> after
+    // it was dropped. Both paragraphs must survive.
+    @Test
+    void htmlRtfToggleIsRestoredAtGroupClose() {
+        var rtf = "{\\rtf1\\ansi\\fromhtml1 \\htmlrtf0 <p>before</p>{\\htmlrtf hidden}<p>after</p>}";
+        assertEquals("<p>before</p><p>after</p>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    // Round-4 regression: \\uc is group-scoped too. A {\\uc3 ...} group used to leak uc=3 past its
+    // closing brace, so a later \\uNNNN over-skipped three "fallback" characters and ate real markup.
+    // After the group closes, uc must revert to 1, leaving the post-group markup intact.
+    @Test
+    void unicodeFallbackCountIsRestoredAtGroupClose() {
+        var rtf = "{\\rtf1\\ansi\\fromhtml1 \\htmlrtf0 {\\uc3 \\u8364 abc}<x>\\u233 ?yz</x>}";
+        assertEquals((char) 8364 + "<x>" + (char) 233 + "yz</x>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    // Round-4 regression: a \\uNNNN escape inside a {\*\htmltag…} destination used to fall through the
+    // tag-content control-word switch (which handled only par/line/tab), so a non-ASCII character in
+    // an attribute value was lost and its ANSI fallback ('?') leaked. The é (U+00E9) must be kept and
+    // the one fallback character skipped.
+    @Test
+    void htmlTagContentDecodesUnicodeEscape() {
+        var rtf = "{\\*\\htmltag84 <a title=\"\\u233 ?x\">}";
+        assertEquals("<a title=\"" + (char) 233 + "x\">", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
 }

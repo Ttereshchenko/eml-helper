@@ -8,7 +8,9 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import org.apache.poi.hpsf.ClassID;
 import org.apache.poi.poifs.filesystem.DirectoryEntry;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 
@@ -81,12 +83,18 @@ final class MsgFixtureBuilder {
     private static final int ATTACH_METHOD_EMBEDDED_MESSAGE = 5;
     private static final int ATTACH_METHOD_OLE = 6;
 
-    // PSETID_Appointment ({00062002-0000-0000-C000-000000000046}) in raw little-endian registry-GUID
-    // byte order, the layout POI's NameIdChunks reads from the __nameid GUID stream.
-    private static final byte[] PSETID_APPOINTMENT_GUID = {
-        0x02, 0x20, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, (byte) 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46
-    };
+    // Property-set GUIDs in raw little-endian registry-GUID byte order, the layout POI's NameIdChunks
+    // reads from the __nameid GUID stream. Derived through POI's own ClassID#write so the byte order is
+    // exactly what NameIdChunks#getPropertyGUID expects (Data1/2/3 byte-swapped, Data4 as-is).
+    private static final byte[] PSETID_APPOINTMENT_GUID = guidStreamBytes("{00062002-0000-0000-C000-000000000046}");
+    private static final byte[] PSETID_MEETING_GUID = guidStreamBytes("{6ED8DA90-450B-101B-98DA-00AA003F1305}");
     private static final int NAMED_BASE_TAG = 0x8000;
+
+    private static byte[] guidStreamBytes(String externalForm) {
+        var stream = new byte[ClassID.LENGTH];
+        new ClassID(externalForm).write(stream, 0);
+        return stream;
+    }
 
     private final List<VarProperty> varProperties = new ArrayList<>();
     private final List<FixedProperty> fixedProperties = new ArrayList<>();
@@ -383,10 +391,21 @@ final class MsgFixtureBuilder {
      * them — the minimum needed to drive the calendar-invite path without a vendored fixture.
      */
     MsgFixtureBuilder appointmentStartEnd(Date start, Date end) {
-        namedProperties.add(new NamedNumericProperty(0x820D, TYPE_SYSTIME, fileTime(start)));
+        namedProperties.add(new NamedNumericProperty(PSETID_APPOINTMENT_GUID, 0x820D, TYPE_SYSTIME, fileTime(start)));
         if (end != null) {
-            namedProperties.add(new NamedNumericProperty(0x820E, TYPE_SYSTIME, fileTime(end)));
+            namedProperties.add(new NamedNumericProperty(PSETID_APPOINTMENT_GUID, 0x820E, TYPE_SYSTIME, fileTime(end)));
         }
+        return this;
+    }
+
+    /**
+     * PidLidCleanGlobalObjectId (PSETID_Meeting {@code {6ED8DA90-450B-101B-98DA-00AA003F1305}}, LID
+     * 0x0023, PT_BINARY): the meeting's stable identity that the converter maps to the iCal UID
+     * ([MS-OXCICAL] §2.1.3.1.1.20.26). Written under a second property-set GUID so the named-property
+     * mapping exercises the converter's PSETID_Meeting lookup, not just PSETID_Appointment.
+     */
+    MsgFixtureBuilder meetingCleanGlobalObjectId(byte[] objectId) {
+        namedProperties.add(new NamedNumericProperty(PSETID_MEETING_GUID, 0x0023, TYPE_BINARY, objectId.clone()));
         return this;
     }
 
@@ -511,35 +530,41 @@ final class MsgFixtureBuilder {
 
     /**
      * Writes the {@code __nameid_version1.0} streams for the numeric named properties: the GUID
-     * stream (the property-set GUID), the entry stream (one 8-byte record per property), and the
-     * hashed match-chunk streams POI's {@code NameIdChunks#getPropertyTag} cross-references. Only
-     * numeric ({@code propertyKind == 0}, PSETID_Appointment) named properties are supported — enough
-     * to drive the calendar-invite path. The match-chunk stream id and the per-record layout mirror
-     * POI's reader exactly (guidIndex 3 = the first GUID in the GUID stream).
+     * stream (one or more property-set GUIDs), the entry stream (one 8-byte record per property), and
+     * the hashed match-chunk streams POI's {@code NameIdChunks#getPropertyTag} cross-references. Only
+     * numeric ({@code propertyKind == 0}) named properties are supported. Each property records which
+     * GUID it belongs to; distinct GUIDs are laid out in first-seen order and addressed by the
+     * 1-based-from-3 {@code guidIndex} POI's {@code getPropertyGUID} expects ({@code (guidIndex - 3) *
+     * 0x10} into the GUID stream). The per-record layout and the match-chunk stream id mirror POI's
+     * reader exactly.
      */
     private void writeNameIdMapping(DirectoryEntry root) throws IOException {
-        var nameId = root.createDirectory("__nameid_version1.0");
-        var guidIndex = 3; // first custom GUID in the GUID stream
+        // Distinct property-set GUIDs in first-seen order; guidIndex == 3 + position in this list.
+        var guids = new ArrayList<byte[]>();
+        var guidStream = new ByteArrayOutputStream();
         var entryStream = new ByteArrayOutputStream();
         // matchChunks: stream id (0x1000 + (id ^ (guidIndex<<1)) % 0x1F) -> its 8-byte records.
-        var matchChunks = new java.util.LinkedHashMap<Integer, ByteArrayOutputStream>();
+        var matchChunks = new LinkedHashMap<Integer, ByteArrayOutputStream>();
         for (var propertyIndex = 0; propertyIndex < namedProperties.size(); propertyIndex++) {
-            var propertyId = namedProperties.get(propertyIndex).id;
+            var named = namedProperties.get(propertyIndex);
+            var guidIndex = 3 + indexOfGuid(guids, named.propertySetGuid, guidStream);
+
             var entry = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
-            entry.putInt(propertyId); // nameOffset == numeric id (propertyKind 0)
+            entry.putInt(named.id); // nameOffset == numeric id (propertyKind 0)
             entry.putShort((short) (guidIndex << 1)); // low bit 0 => numeric named property
             entry.putShort((short) propertyIndex);
             entryStream.write(entry.array());
 
-            var streamId = 0x1000 + ((propertyId ^ (guidIndex << 1)) % 0x1F);
+            var streamId = 0x1000 + ((named.id ^ (guidIndex << 1)) % 0x1F);
             var match = matchChunks.computeIfAbsent(streamId, ignored -> new ByteArrayOutputStream());
             var record = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
-            record.putInt(propertyId); // nameCRC == numeric id (propertyKind 0)
+            record.putInt(named.id); // nameCRC == numeric id (propertyKind 0)
             record.putShort((short) (guidIndex << 1));
             record.putShort((short) propertyIndex);
             match.write(record.array());
         }
-        nameId.createDocument(substgName(0x00020102), new ByteArrayInputStream(PSETID_APPOINTMENT_GUID));
+        var nameId = root.createDirectory("__nameid_version1.0");
+        nameId.createDocument(substgName(0x00020102), new ByteArrayInputStream(guidStream.toByteArray()));
         nameId.createDocument(substgName(0x00030102), new ByteArrayInputStream(entryStream.toByteArray()));
         // The string stream (0x0004) holds names for string-kind properties; it is empty here (all
         // properties are numeric) but POI's reader returns 0 from getPropertyTag unless it is present.
@@ -550,6 +575,23 @@ final class MsgFixtureBuilder {
                     substgName(tag),
                     new ByteArrayInputStream(matchChunk.getValue().toByteArray()));
         }
+    }
+
+    /**
+     * Returns the position of {@code guid} in {@code guids}, appending it (and its 16 bytes to
+     * {@code guidStream}) on first sight. The position is the offset POI's {@code getPropertyGUID}
+     * resolves through {@code (guidIndex - 3) * 0x10}.
+     */
+    private static int indexOfGuid(List<byte[]> guids, byte[] guid, ByteArrayOutputStream guidStream)
+            throws IOException {
+        for (var index = 0; index < guids.size(); index++) {
+            if (java.util.Arrays.equals(guids.get(index), guid)) {
+                return index;
+            }
+        }
+        guids.add(guid);
+        guidStream.write(guid);
+        return guids.size() - 1;
     }
 
     private static void writeFixedEntry(ByteArrayOutputStream stream, FixedProperty property) throws IOException {
@@ -603,8 +645,11 @@ final class MsgFixtureBuilder {
 
     private record FixedProperty(int tag, byte[] data) {}
 
-    /** A numeric named property (PSETID_Appointment): its named id, its PT_ type, and its value bytes. */
-    private record NamedNumericProperty(int id, int ptType, byte[] value) {}
+    /**
+     * A numeric named property: the property-set GUID it belongs to (in GUID-stream byte order), its
+     * numeric id, its PT_ type, and its value bytes.
+     */
+    private record NamedNumericProperty(byte[] propertySetGuid, int id, int ptType, byte[] value) {}
 
     private record AttachmentSpec(
             String filename,
