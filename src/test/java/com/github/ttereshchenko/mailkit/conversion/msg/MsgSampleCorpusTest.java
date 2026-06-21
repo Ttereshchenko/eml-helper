@@ -388,7 +388,10 @@ class MsgSampleCorpusTest {
     void distributionListMembersDecodedWithCorrectOneOffMuid() throws Exception {
         // msgreader_distribution_list.msg: IPM.DistList, 3 one-off SMTP members.
         var eml = convert("msgreader_distribution_list.msg");
-        var body = bodyOf(eml);
+        // The member listing is a UTF-8 text/plain body, so non-ASCII member names are quoted-printable
+        // encoded and long lines are soft-wrapped (=CRLF). Decode it so the assertions see the
+        // reconstructed addresses/names rather than =XX escapes split across a soft wrap.
+        var body = decodeQuotedPrintable(bodyOf(eml));
 
         // The converter synthesizes a plain-text body starting with this sentinel line.
         assertTrue(body.contains("Distribution list members:"), "member listing header missing:\n" + body);
@@ -399,6 +402,10 @@ class MsgSampleCorpusTest {
         assertTrue(body.contains("user2@mail.com"), "user2@mail.com missing from:\n" + body);
         // The IDN address for the unicode member (Punycode-encoded domain).
         assertTrue(body.contains("xn--auslnder-3za.com"), "IDN domain xn--auslnder-3za.com missing from:\n" + body);
+        // The non-ASCII member name is carried verbatim in the UTF-8 body, never as an RFC 2047
+        // encoded-word (which is only defined for header fields and would render literally here).
+        assertTrue(body.contains("ausländer"), "decoded member name expected in body:\n" + body);
+        assertFalse(body.contains("=?UTF-8?"), "no RFC 2047 encoded-word should leak into the body:\n" + body);
     }
 
     /** Finds the named base64 attachment part and decodes its payload to UTF-8 text. */

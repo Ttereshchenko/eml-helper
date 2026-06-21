@@ -795,6 +795,30 @@ class PstToEmlConverterTest {
         assertFalse(byNid.get(orphanMessage).fromVisitedFolder(), "parent outside the tree -> orphan");
     }
 
+    @Test
+    void findUnreferencedMessagesReturnsDeterministicNidOrder() {
+        var folderNid = 0x122;
+        // Insert the message nodes in descending NID order. getAllNodes() hands back a HashMap snapshot
+        // whose iteration order is undefined, so recovery must sort by NID — otherwise which messages
+        // survive a limit, and the _N suffixes they receive, would vary run-to-run.
+        var nodes = new java.util.LinkedHashMap<Integer, NodeEntry>();
+        nodes.put(0x600004, new NodeEntry(0x600004, 1, 0, folderNid));
+        nodes.put(0x400004, new NodeEntry(0x400004, 2, 0, folderNid));
+        nodes.put(0x500004, new NodeEntry(0x500004, 3, 0, folderNid));
+        nodes.put(0x300004, new NodeEntry(0x300004, 4, 0, folderNid));
+
+        var candidates =
+                PstToEmlConverter.findUnreferencedMessages(nodes, java.util.Set.of(), java.util.Set.of(folderNid));
+
+        var nids = candidates.stream()
+                .map(PstToEmlConverter.RecoveryCandidate::nid)
+                .toList();
+        assertEquals(
+                java.util.List.of(0x300004, 0x400004, 0x500004, 0x600004),
+                nids,
+                "recovery order must be ascending NID");
+    }
+
     /** Collects console output so tests can assert on conversion diagnostics. */
     private static final class RecordingLog implements ConversionLog {
         final List<String> infos = new ArrayList<>();

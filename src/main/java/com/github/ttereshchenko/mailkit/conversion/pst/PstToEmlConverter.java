@@ -288,6 +288,11 @@ public final class PstToEmlConverter {
      * contents table referenced. {@code fromVisitedFolder} is true when the node's parent is a folder
      * the walk visited — i.e. it was soft-deleted from a real folder (Dumpster, #7) — and false when
      * the parent is outside the folder tree entirely — i.e. a detached orphan (#8).
+     *
+     * <p>The candidates are returned in ascending (unsigned) NID order. {@link #getAllNodes()} hands
+     * back a {@link java.util.HashMap}-backed snapshot whose iteration order is undefined, so without
+     * an explicit sort both <em>which</em> recovered messages survive a {@code limit} and the {@code _N}
+     * suffix they receive would vary run-to-run; sorting makes recovery deterministic.
      */
     static List<RecoveryCandidate> findUnreferencedMessages(
             Map<Integer, NodeEntry> allNodes, Set<Integer> knownMessages, Set<Integer> visitedFolders) {
@@ -302,6 +307,7 @@ public final class PstToEmlConverter {
             }
             candidates.add(new RecoveryCandidate(nid, visitedFolders.contains(entry.parentNodeId())));
         }
+        candidates.sort((first, second) -> Integer.compareUnsigned(first.nid(), second.nid()));
         return candidates;
     }
 
@@ -1266,7 +1272,7 @@ public final class PstToEmlConverter {
         }
         var listing = new StringBuilder("Distribution list members:\r\n");
         for (Message.Recipient member : members) {
-            var formatted = EmlSerializer.formatAddress(member.name, member.email);
+            var formatted = EmlSerializer.formatAddressPlain(member.name, member.email);
             if (!formatted.isBlank()) {
                 listing.append("- ").append(formatted).append("\r\n");
             }

@@ -999,7 +999,7 @@ public final class MsgToEmlConverter {
         }
         var listing = new StringBuilder("Distribution list members:\r\n");
         for (var member : members) {
-            var formatted = EmlSerializer.formatAddress(member.name(), member.email());
+            var formatted = EmlSerializer.formatAddressPlain(member.name(), member.email());
             if (!formatted.isBlank()) {
                 listing.append("- ").append(formatted).append("\r\n");
             }
@@ -1274,8 +1274,13 @@ public final class MsgToEmlConverter {
             var limit = Math.min(details.length, MAX_RECIPIENTS);
             for (var index = 0; index < limit; index++) {
                 var chunks = details[index];
+                // [MS-OXOMSG] §2.2.3.1 makes PidTagRecipientType mandatory on every recipient row; when
+                // it is absent (a malformed .msg) default the row to To rather than dropping it, matching
+                // the PST path (Message.parseRecipients defaults an untyped recipient to MAPI_TO) so the
+                // address is still preserved in the output.
                 var type = readRecipientType(chunks);
-                if (type != null && type == wantedType) {
+                var effectiveType = type != null ? type : EmlSerializer.RECIPIENT_TYPE_TO;
+                if (effectiveType == wantedType) {
                     var name = chunks.getRecipientName();
                     var address = resolveRecipientAddress(chunks);
                     // Only treat the row as a usable recipient (and so suppress the PR_DISPLAY_* fallback)
