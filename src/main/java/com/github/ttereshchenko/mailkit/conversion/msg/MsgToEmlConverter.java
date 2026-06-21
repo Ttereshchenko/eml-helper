@@ -1368,8 +1368,19 @@ public final class MsgToEmlConverter {
         // PR_MESSAGE_DELIVERY_TIME, mirroring the PST pipeline (Message.getMessageDate). Reading the two
         // time properties directly also avoids POI getMessageDate()'s further fallback to the
         // modification/creation time, which corresponds to no Date: source.
-        var submitDate = readTimeProperty(message, MAPIProperty.CLIENT_SUBMIT_TIME);
-        return submitDate != null ? submitDate : readTimeProperty(message, MAPIProperty.MESSAGE_DELIVERY_TIME);
+        var submitDate = nonSentinelDate(readTimeProperty(message, MAPIProperty.CLIENT_SUBMIT_TIME));
+        return submitDate != null
+                ? submitDate
+                : nonSentinelDate(readTimeProperty(message, MAPIProperty.MESSAGE_DELIVERY_TIME));
+    }
+
+    /**
+     * Treats the FILETIME-0 sentinel (1601-01-01T00:00:00Z, i.e. {@code -11_644_473_600_000} ms) as
+     * "no date", mirroring {@code Message.nonSentinelDate} on the PST side so a message whose
+     * PR_CLIENT_SUBMIT_TIME is stored as 0 does not export a bogus {@code Date: ... 1 Jan 1601} header.
+     */
+    static Date nonSentinelDate(Date date) {
+        return date != null && date.getTime() > -11_644_473_600_000L ? date : null;
     }
 
     private static Date readTimeProperty(MAPIMessage message, MAPIProperty property) {

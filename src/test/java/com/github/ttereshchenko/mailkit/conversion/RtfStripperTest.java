@@ -260,6 +260,20 @@ class RtfStripperTest {
 
     // F9 (audit follow-up): a \\uN escape inside a {\*\htmltag ...} run honors the active \\ucN fallback
     // count instead of a hardcoded 1, so surplus fallback bytes do not leak into the recovered tag text.
+    // H1 regression: ansicpg950 (Big5/Traditional Chinese) must resolve to x-windows-950, not
+    // Cp950 (IBM-950). The two charsets diverge on a handful of Big5 byte pairs: for example, the
+    // byte pair 0xC2 0x55 decodes to U+5F5D (彝) under x-windows-950 but to U+5F5E (彞) under
+    // Cp950. On the old code Cp950 was chosen first and produced the wrong character.
+    @Test
+    void ansicpg950ResolvesToXWindows950NotCp950() {
+        // \'c2\'55 is the Big5 byte pair 0xC2 0x55.
+        var rtf = "{\\rtf1\\ansi\\ansicpg950\\fs20 \\'c2\\'55}";
+        var result = RtfStripper.strip(rtf);
+        // x-windows-950: U+5F5D (彝); Cp950: U+5F5E (彞).
+        assertEquals("彝", result, "ansicpg950 must use x-windows-950 (U+5F5D 彝), not Cp950 (U+5F5E 彞). Got: " + result);
+        assertFalse(result.contains("彞"), "Cp950-decoded character U+5F5E (彞) must not appear in the result");
+    }
+
     @Test
     void htmlTagUnicodeFallbackHonorsActiveUcCount() {
         var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1\\uc2 {\\*\\htmltag84 \\u8364XX<b>}done}");

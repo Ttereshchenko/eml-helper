@@ -462,8 +462,11 @@ public final class RtfStripper {
         if ("65001".equals(codePage)) {
             return StandardCharsets.UTF_8;
         }
-        // windows-<cp> covers 1250-1258/874; Cp<cp> covers the DBCS pages (932/936/949/950).
-        for (var candidate : new String[] {"windows-" + codePage, "Cp" + codePage}) {
+        // Prefer the Microsoft x-windows-<cp> variant (matching the PST CodePages mapping) so a Windows
+        // code page resolves to its MS flavour rather than the IBM one: cp950 is x-windows-950
+        // (MS950/Big5), not Cp950 (x-IBM950), and the two differ on a few Big5 byte pairs. The alias is
+        // a no-op where it does not exist. windows-<cp> covers 1250-1258/874; Cp<cp> covers 932/936.
+        for (var candidate : new String[] {"x-windows-" + codePage, "windows-" + codePage, "Cp" + codePage}) {
             try {
                 return Charset.forName(candidate);
             } catch (RuntimeException ignored) {
