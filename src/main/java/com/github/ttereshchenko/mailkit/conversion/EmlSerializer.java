@@ -30,6 +30,11 @@ public final class EmlSerializer {
     public static final int RECIPIENT_TYPE_TO = 1;
     public static final int RECIPIENT_TYPE_CC = 2;
     public static final int RECIPIENT_TYPE_BCC = 3;
+    // RFC 2047 §2/§6: a receiving agent decodes any token shaped like "=?charset?B|Q?text?=". A
+    // pure-ASCII header value (Subject, custom header, or display name) that literally contains such a
+    // token would be silently decoded and corrupted on display, so it must itself be re-encoded as an
+    // encoded-word even though it carries no non-ASCII octet.
+    private static final Pattern ENCODED_WORD_TOKEN = Pattern.compile("=\\?[^?\\s]+\\?[bBqQ]\\?");
 
     private String subject;
     private String senderName;
@@ -166,11 +171,45 @@ public final class EmlSerializer {
         var reference = "cid:" + contentId.trim().toLowerCase(Locale.ROOT);
         for (var body : bodies) {
             if (body.contentType.contains("text/html")
-                    && body.text.toLowerCase(Locale.ROOT).contains(reference)) {
+                    && containsCidReference(body.text.toLowerCase(Locale.ROOT), reference)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * True when {@code haystack} cites {@code reference} ({@code "cid:" + id}) as a whole {@code cid:}
+     * URL token — the match must not be immediately followed by another Content-ID character. A plain
+     * substring test would treat {@code cid:image1} as referenced by HTML that only cites
+     * {@code cid:image10}, wrongly pulling the unreferenced {@code image1} part into multipart/related
+     * where common clients neither render nor list it (perceived data loss). RFC 2392 §2 maps a
+     * {@code cid:} URL to one specific Content-ID, so a prefix match must not count.
+     */
+    private static boolean containsCidReference(String haystack, String reference) {
+        var searchFrom = 0;
+        while (true) {
+            var matchIndex = haystack.indexOf(reference, searchFrom);
+            if (matchIndex < 0) {
+                return false;
+            }
+            var afterMatch = matchIndex + reference.length();
+            if (afterMatch >= haystack.length() || !isContentIdChar(haystack.charAt(afterMatch))) {
+                return true;
+            }
+            searchFrom = matchIndex + 1;
+        }
+    }
+
+    /** Characters that can continue a Content-ID (a msg-id addr-spec) just past a {@code cid:} match. */
+    private static boolean isContentIdChar(char character) {
+        return Character.isLetterOrDigit(character)
+                || character == '.'
+                || character == '-'
+                || character == '_'
+                || character == '+'
+                || character == '%'
+                || character == '@';
     }
 
     /**
@@ -618,7 +657,7 @@ public final class EmlSerializer {
         if (trimmedName.isEmpty()) {
             return "<" + trimmedEmail + ">";
         }
-        if (isPureAscii(trimmedName)) {
+        if (isPureAscii(trimmedName) && !containsEncodedWord(trimmedName)) {
             return "\"" + trimmedName.replace("\\", "\\\\").replace("\"", "\\\"") + "\" <" + trimmedEmail + ">";
         }
         return encodeHeaderIfNeeded(trimmedName) + " <" + trimmedEmail + ">";
@@ -671,7 +710,7 @@ public final class EmlSerializer {
         if (value == null || value.isEmpty()) {
             return "";
         }
-        if (isPureAscii(value)) {
+        if (isPureAscii(value) && !containsEncodedWord(value)) {
             return value;
         }
         var builder = new StringBuilder();
@@ -839,6 +878,15 @@ public final class EmlSerializer {
             }
         }
         return true;
+    }
+
+    /**
+     * True when {@code value} literally contains an RFC 2047 encoded-word token
+     * ({@code =?charset?B|Q?...}). Such a value must be re-encoded even when pure ASCII so a receiver
+     * does not decode the literal text and corrupt it.
+     */
+    private static boolean containsEncodedWord(String value) {
+        return ENCODED_WORD_TOKEN.matcher(value).find();
     }
 
     /**

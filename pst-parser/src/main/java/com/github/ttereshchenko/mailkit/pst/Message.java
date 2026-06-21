@@ -7,6 +7,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -323,11 +324,18 @@ public class Message {
             }
         }
 
-        StringBuilder html = new StringBuilder();
-        int index = 0;
-        boolean inHtmlRtf = false;
-        int unicodeFallbackCount =
-                1; // current "uc" control-word value; one fallback char per unicode escape by default
+        var html = new StringBuilder();
+        var index = 0;
+        var inHtmlRtf = false;
+        // current "uc" control-word value; one fallback char per unicode escape by default
+        var unicodeFallbackCount = 1;
+        // \htmlrtf and \\uc are group-scoped RTF state ([MS-OXRTFEX] section 2.1.3.1.3): a value set
+        // inside a group is restored when its closing brace is reached. Save the current
+        // {inHtmlRtf, unicodeFallbackCount} on each '{' and restore it on the matching '}' so an
+        // \htmlrtf turned on inside a group (and ended by the brace rather than \htmlrtf0) does not
+        // stay on forever, and a {\\ucN ...} group does not leak its fallback count into later
+        // \\uN escapes.
+        var groupState = new ArrayDeque<int[]>();
         while (index < rtf.length()) {
             if (rtf.startsWith("\\htmlrtf0", index)) {
                 inHtmlRtf = false;
@@ -359,27 +367,41 @@ public class Message {
             }
             // RTF header/metadata groups are not renderable content ([MS-OXRTFEX]): plain text inside
             // {\fonttbl…} & co. and inside non-htmltag {\*\…} destinations ({\*\generator …},
-            // {\*\formatConverter …}) must not leak into the extracted HTML as body text.
+            // {\*\formatConverter …}) must not leak into the extracted HTML as body text. skipGroup
+            // consumes the whole group including its closing brace, so it stays balanced on its own.
             if (isNonRenderableGroupStart(rtf, index)) {
                 index = skipGroup(rtf, index);
+                continue;
+            }
+            var character = rtf.charAt(index);
+            // Maintain the group-state stack even inside an \htmlrtf-suppressed run so it stays
+            // balanced: a '{' saves the current state and the matching '}' restores it.
+            if (character == '{') {
+                groupState.push(new int[] {inHtmlRtf ? 1 : 0, unicodeFallbackCount});
+                index++;
+                continue;
+            }
+            if (character == '}') {
+                if (!groupState.isEmpty()) {
+                    var restored = groupState.pop();
+                    inHtmlRtf = restored[0] != 0;
+                    unicodeFallbackCount = restored[1];
+                }
+                index++;
                 continue;
             }
             if (inHtmlRtf) {
                 index++;
                 continue;
             }
-            if (rtf.charAt(index) == '{' || rtf.charAt(index) == '}') {
-                index++;
-                continue;
-            }
-            if (rtf.charAt(index) == '\r' || rtf.charAt(index) == '\n') {
+            if (character == '\r' || character == '\n') {
                 // Raw CR/LF in RTF source is wrapping, not content — line breaks are \par / \line.
                 index++;
                 continue;
             }
-            if (rtf.charAt(index) == '\\') {
+            if (character == '\\') {
                 if (index + 3 < rtf.length() && rtf.charAt(index + 1) == '\'') {
-                    ByteArrayOutputStream hexBuffer = new ByteArrayOutputStream();
+                    var hexBuffer = new ByteArrayOutputStream();
                     while (index + 3 < rtf.length() && rtf.charAt(index) == '\\' && rtf.charAt(index + 1) == '\'') {
                         String hex = rtf.substring(index + 2, index + 4);
                         try {
@@ -459,7 +481,7 @@ public class Message {
                 if (index < rtf.length() && rtf.charAt(index) == ' ') index++; // skip the trailing space
                 continue;
             }
-            html.append(rtf.charAt(index));
+            html.append(character);
             index++;
         }
         return html.toString().trim();
@@ -538,12 +560,18 @@ public class Message {
      * Decodes the RTF escapes inside a {@code {\*\htmltag…}} destination's content ([MS-OXRTFEX]
      * §2.1.3.1.2): {@code \'hh} runs are decoded with the message's code page (runs decoded
      * together so multi-byte encodings survive), {@code \{ \} \\} unescape to the literal
-     * character, {@code \par}/{@code \line} become CRLF, {@code \tab} a tab; any other control
-     * word is dropped rather than leaked into the HTML as literal RTF syntax.
+     * character, {@code \\uN} becomes its code point with the trailing {@code \\uc}-counted ANSI
+     * fallback skipped, {@code \par}/{@code \line} become CRLF, {@code \tab} a tab; any other
+     * control word is dropped rather than leaked into the HTML as literal RTF syntax. Without the
+     * {@code \\uN} branch, a non-ASCII character in a tag attribute (title/alt/href) is lost and its
+     * fallback leaks.
      */
     static String decodeHtmlTagContent(String content, String charsetName) {
         var html = new StringBuilder();
         int index = 0;
+        // \\uc is group-scoped state; a tag's content is its own group, so it starts at the RTF
+        // default of one fallback char per \\uN escape and may be overridden by an inline \\ucN.
+        int unicodeFallbackCount = 1;
         while (index < content.length()) {
             char current = content.charAt(index);
             if (current != '\\') {
@@ -582,28 +610,64 @@ public class Message {
                 index += 2;
                 continue;
             }
-            // Control word: consume the word (letters then an optional numeric parameter) plus its
-            // single delimiting space, translating the line-break words.
+            // Control word: consume the word (letters) then an optional numeric parameter and its
+            // single delimiting space, translating the line-break words and \\uN.
             int wordEnd = index + 1;
             while (wordEnd < content.length() && Character.isLetter(content.charAt(wordEnd))) {
                 wordEnd++;
             }
             String word = content.substring(index + 1, wordEnd);
-            while (wordEnd < content.length()
-                    && (Character.isDigit(content.charAt(wordEnd)) || content.charAt(wordEnd) == '-')) {
+            int paramStart = wordEnd;
+            if (wordEnd < content.length() && content.charAt(wordEnd) == '-') {
                 wordEnd++;
             }
+            while (wordEnd < content.length() && Character.isDigit(content.charAt(wordEnd))) {
+                wordEnd++;
+            }
+            int paramEnd = wordEnd;
             if (wordEnd < content.length() && content.charAt(wordEnd) == ' ') {
                 wordEnd++;
             }
+            index = wordEnd;
             switch (word) {
                 case "par", "line" -> html.append("\r\n");
                 case "tab" -> html.append('\t');
+                case "uc" -> {
+                    try {
+                        unicodeFallbackCount = Integer.parseInt(content.substring(paramStart, paramEnd));
+                    } catch (NumberFormatException ignored) {
+                        // implausibly long "uc" parameter — keep the current fallback count
+                    }
+                }
+                case "u" -> {
+                    try {
+                        // Match extractHtmlFromRtf: a \\uN parameter is nominally signed 16-bit but is
+                        // also seen unsigned in the wild; accept both and truncate to a char.
+                        int codePoint = Integer.parseInt(content.substring(paramStart, paramEnd));
+                        html.append((char) codePoint);
+                    } catch (NumberFormatException ignored) {
+                        // malformed \\uN escape — skip this code point
+                    }
+                    // Skip the \\uc-counted ANSI fallback characters that trail the escape so they do
+                    // not leak into the attribute value as duplicate text.
+                    for (int skipped = 0; skipped < unicodeFallbackCount && index < content.length(); skipped++) {
+                        char fallback = content.charAt(index);
+                        if (fallback == '{' || fallback == '}') {
+                            break;
+                        }
+                        if (fallback == '\\' && index + 3 < content.length() && content.charAt(index + 1) == '\'') {
+                            index += 4;
+                        } else if (fallback == '\\') {
+                            break;
+                        } else {
+                            index++;
+                        }
+                    }
+                }
                 default -> {
                     // other control words (formatting noise) are dropped
                 }
             }
-            index = wordEnd;
         }
         return html.toString();
     }

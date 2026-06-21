@@ -99,6 +99,7 @@ public final class PstToEmlConverter {
 
     // Named-property sets ([MS-OXPROPS] §1.3.2) for appointment, task and contact properties.
     private static final UUID PSETID_APPOINTMENT = UUID.fromString("00062002-0000-0000-C000-000000000046");
+    private static final UUID PSETID_MEETING = UUID.fromString("6ED8DA90-450B-101B-98DA-00AA003F1305");
     private static final UUID PSETID_TASK = UUID.fromString("00062003-0000-0000-C000-000000000046");
     private static final UUID PSETID_ADDRESS = UUID.fromString("00062004-0000-0000-C000-000000000046");
     private static final UUID PS_PUBLIC_STRINGS = UUID.fromString("00020329-0000-0000-C000-000000000046");
@@ -1074,6 +1075,13 @@ public final class PstToEmlConverter {
                 int sequence = sequenceId != null && message.getProperty(sequenceId) instanceof Number sequenceValue
                         ? sequenceValue.intValue()
                         : 0;
+                // PidLidCleanGlobalObjectId (PSETID_Meeting, LID 0x0023, PT_BINARY): the meeting's stable
+                // identity that maps to the iCal UID ([MS-OXCICAL] §2.1.3.1.1.20.26), so a
+                // REQUEST/REPLY/CANCEL of the same meeting share one UID (RFC 5546 §3.2). Absent on
+                // personal appointments, which then fall back to a random UID.
+                Integer cleanGoidId = pstFile.namedPropertyId(PSETID_MEETING, 0x0023);
+                byte[] cleanGlobalObjectId =
+                        cleanGoidId != null && message.getProperty(cleanGoidId) instanceof byte[] goid ? goid : null;
                 var eventDetails = new ICalendarGenerator.EventDetails(
                         method,
                         Date.from(start),
@@ -1087,7 +1095,8 @@ public final class PstToEmlConverter {
                         allDay,
                         timeZone,
                         recurrence,
-                        sequence);
+                        sequence,
+                        cleanGlobalObjectId);
                 String ical = ICalendarGenerator.generate(eventDetails);
                 serializer.addAttachment(
                         "invite.ics",

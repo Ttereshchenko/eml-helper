@@ -78,6 +78,7 @@ public final class MsgToEmlConverter {
 
     // Named-property sets ([MS-OXPROPS] §1.3.2) resolved through the message's __nameid mapping.
     private static final ClassID PSETID_APPOINTMENT = new ClassID("{00062002-0000-0000-C000-000000000046}");
+    private static final ClassID PSETID_MEETING = new ClassID("{6ED8DA90-450B-101B-98DA-00AA003F1305}");
     private static final ClassID PSETID_TASK = new ClassID("{00062003-0000-0000-C000-000000000046}");
     private static final ClassID PSETID_ADDRESS = new ClassID("{00062004-0000-0000-C000-000000000046}");
     private static final ClassID PS_PUBLIC_STRINGS = new ClassID("{00020329-0000-0000-C000-000000000046}");
@@ -806,6 +807,10 @@ public final class MsgToEmlConverter {
                     organizer.name(), organizer.email(), ICalendarGenerator.responsePartStat(messageClass)));
         }
         var sequence = readNamedLong(message, PSETID_APPOINTMENT, 0x8201); // PidLidAppointmentSequence
+        // PidLidCleanGlobalObjectId (PSETID_Meeting, LID 0x0023, PT_BINARY): the meeting's stable
+        // identity that maps to the iCal UID ([MS-OXCICAL] §2.1.3.1.1.20.26), so a REQUEST/REPLY/CANCEL
+        // of the same meeting share one UID. Absent on personal appointments, which then get a random UID.
+        var cleanGlobalObjectId = readNamedBytes(message, PSETID_MEETING, 0x0023);
         var eventDetails = new ICalendarGenerator.EventDetails(
                 method,
                 start,
@@ -819,7 +824,8 @@ public final class MsgToEmlConverter {
                 allDay,
                 timeZone,
                 recurrence,
-                sequence != null ? sequence : 0);
+                sequence != null ? sequence : 0,
+                cleanGlobalObjectId);
         var ical = ICalendarGenerator.generate(eventDetails);
         serializer.addAttachment(
                 "invite.ics",

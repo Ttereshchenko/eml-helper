@@ -6,6 +6,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
@@ -39,10 +40,18 @@ public final class ICalendarGenerator {
     /**
      * Everything one VEVENT needs beyond the original nine arguments: the all-day flag
      * (PidLidAppointmentSubType), the event time zone (PidLidTimeZoneStruct), the recurrence
-     * (PidLidAppointmentRecur) and the iTIP revision number (PidLidAppointmentSequence) — each
-     * optional. {@code sequence} is the RFC 5546 {@code SEQUENCE} (RFC 5545 §3.8.7.4): a REPLY must
-     * echo the request's value and a CANCEL/updated REQUEST must carry a higher value than the
-     * original, or a client that already holds the event ignores the update; it defaults to 0.
+     * (PidLidAppointmentRecur), the iTIP revision number (PidLidAppointmentSequence) and the
+     * meeting's stable identity (PidLidCleanGlobalObjectId) — each optional. {@code sequence} is the
+     * RFC 5546 {@code SEQUENCE} (RFC 5545 §3.8.7.4): a REPLY must echo the request's value and a
+     * CANCEL/updated REQUEST must carry a higher value than the original, or a client that already
+     * holds the event ignores the update; it defaults to 0. {@code cleanGlobalObjectId} carries the
+     * raw bytes of PidLidCleanGlobalObjectId (PSETID_Meeting, LID 0x0023): [MS-OXCICAL]
+     * §2.1.3.1.1.20.26 maps it to the {@code UID} (RFC 5545 §3.8.4.7) as an uppercase-hex string, so a
+     * REQUEST/REPLY/CANCEL of the same meeting share one UID (RFC 5546 §3.2) and a client can
+     * correlate a response or cancellation with the event. CleanGlobalObjectId (not GlobalObjectId)
+     * is used because its exception-date bytes are zeroed, so a recurrence master and its exceptions
+     * share one UID. When it is {@code null}/empty (e.g. a personal appointment that stores no
+     * GlobalObjectId) the UID falls back to a fresh random value.
      */
     public record EventDetails(
             String method,
@@ -57,7 +66,40 @@ public final class ICalendarGenerator {
             boolean allDay,
             WindowsTimeZone timeZone,
             AppointmentRecurrence.Pattern recurrence,
-            int sequence) {
+            int sequence,
+            byte[] cleanGlobalObjectId) {
+
+        /** An event with no stored meeting identity ({@code UID} falls back to a random value). */
+        public EventDetails(
+                String method,
+                Date startTime,
+                Date endTime,
+                String location,
+                String subject,
+                String organizerName,
+                String organizerEmail,
+                String description,
+                List<Attendee> attendees,
+                boolean allDay,
+                WindowsTimeZone timeZone,
+                AppointmentRecurrence.Pattern recurrence,
+                int sequence) {
+            this(
+                    method,
+                    startTime,
+                    endTime,
+                    location,
+                    subject,
+                    organizerName,
+                    organizerEmail,
+                    description,
+                    attendees,
+                    allDay,
+                    timeZone,
+                    recurrence,
+                    sequence,
+                    null);
+        }
 
         /** An event with no explicit iTIP revision number ({@code SEQUENCE:0}). */
         public EventDetails(
@@ -86,7 +128,8 @@ public final class ICalendarGenerator {
                     allDay,
                     timeZone,
                     recurrence,
-                    0);
+                    0,
+                    null);
         }
     }
 
@@ -212,7 +255,16 @@ public final class ICalendarGenerator {
         // METHOD and the caller's text/calendar; method= parameter (rfc6047 §2.4) cannot disagree.
         var safeMethod = effectiveMethod(event);
         String dtStamp = utcFormat.format(new Date());
-        String uid = UUID.randomUUID().toString();
+
+        // RFC 5545 §3.8.4.7 + RFC 5546 §3.2: a REQUEST/REPLY/CANCEL of the same meeting MUST share one
+        // UID so a client can correlate a response or cancellation with the event. Outlook stores that
+        // stable identity in PidLidCleanGlobalObjectId, which [MS-OXCICAL] §2.1.3.1.1.20.26 maps to UID
+        // as an uppercase-hex string. A personal appointment with no GlobalObjectId stores nothing, so
+        // we fall back to a fresh random UID (a one-off PUBLISH needs no cross-message correlation).
+        var cleanGlobalObjectId = event.cleanGlobalObjectId();
+        String uid = cleanGlobalObjectId != null && cleanGlobalObjectId.length > 0
+                ? HexFormat.of().withUpperCase().formatHex(cleanGlobalObjectId)
+                : UUID.randomUUID().toString();
 
         // The zone only matters for timed events; all-day events are pure dates. (Real Outlook all-day
         // appointments — see MsgSampleCorpusTest — store a start whose UTC calendar date is already the

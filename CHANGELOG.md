@@ -23,6 +23,10 @@
 - A `.msg` message sent on another person's behalf whose sender record carries no name of its own now keeps that author's display name in `From:` instead of showing only their bare address — the `.pst`/`.ost` conversion already did this, so the two now match.
 - An appointment or task converted from `.msg`/`.pst`/`.ost` whose subject, location, or description contained a stray control character now produces a valid calendar entry instead of a line a strict calendar client may reject.
 - When converting a `.msg`/`.pst`/`.ost`, a stray carriage return inside the message's original headers can no longer be misread as the start of an extra header in the generated `.eml`; the line is kept as a single header value.
+- An HTML message converted from a `.pst`/`.ost` whose body was stored only as rich text (HTML-encapsulated RTF) no longer drops or garbles its text when the rich text switches formatting on and off inside a nested group — the full body is now recovered, and non-Latin characters inside a link or image tag (its `title`/`alt`/`href`) are kept too, matching what the `.msg` conversion already produced.
+- A meeting request or appointment converted from `.msg`/`.pst`/`.ost` that carries Outlook's global meeting identifier now uses it as the calendar entry's `UID`, so a later acceptance, decline, update, or cancellation is matched to the original meeting in your calendar client instead of showing up as a separate, unrelated event.
+- An inline image in a converted `.msg`/`.pst`/`.ost` whose Content-ID is a prefix of another image's Content-ID (for example `image1` alongside `image10`) is no longer wrongly hidden: only the image the message actually references is embedded inline, and the other stays a visible attachment.
+- A converted `.msg`/`.pst`/`.ost` whose subject or a sender/recipient display name literally contained RFC 2047 encoded-word text (for example `=?ISO-8859-1?Q?...?=` typed as plain text) is no longer silently re-interpreted and altered by the receiving client; the literal text is preserved.
 
 ## 1.2.2 - 2026-06-18
 
