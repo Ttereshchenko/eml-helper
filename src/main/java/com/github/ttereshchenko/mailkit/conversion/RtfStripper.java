@@ -331,6 +331,14 @@ public final class RtfStripper {
                 if (index < rtfText.length() && rtfText.charAt(index) == ' ') index++; // skip trailing space
                 continue;
             }
+            if (character == '\r' || character == '\n') {
+                // Raw CR/LF in the RTF stream is physical line wrapping, not content; real breaks are
+                // \par / \line. Outlook's \fromhtml writer hard-wraps text runs, so appending these would
+                // splice stray breaks into the recovered HTML body and diverge from the PST fork
+                // (Message.extractHtmlFromRtf) and the sibling strip()/appendHtmlTag loops, which all drop them.
+                index++;
+                continue;
+            }
             html.append(character);
             index++;
         }

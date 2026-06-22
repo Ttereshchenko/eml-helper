@@ -692,7 +692,7 @@ public final class MsgToEmlConverter {
                 }
             }
             if (!replyTo.isEmpty()) {
-                serializer.addCustomHeader("Reply-To", String.join(", ", replyTo));
+                serializer.addAddressHeader("Reply-To", String.join(", ", replyTo));
             }
         }
         var keywords = readNamedStrings(message, PS_PUBLIC_STRINGS, "Keywords", 0); // PidNameKeywords
@@ -701,7 +701,7 @@ public final class MsgToEmlConverter {
         }
         // PR_READ_RECEIPT_REQUESTED -> Disposition-Notification-To (RFC 8098), addressed to the author.
         if (Boolean.TRUE.equals(readMainBoolean(message, 0x0029)) && from.hasEmail()) {
-            serializer.addCustomHeader(
+            serializer.addAddressHeader(
                     "Disposition-Notification-To", EmlSerializer.formatAddress(from.name(), from.email()));
         }
     }
