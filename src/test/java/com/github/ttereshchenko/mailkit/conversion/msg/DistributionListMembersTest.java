@@ -45,6 +45,26 @@ class DistributionListMembersTest {
         (byte) 0x02
     };
 
+    /** The Address-Book EntryID provider UID ([MS-OXCDATA] §2.2.5.2). */
+    private static final byte[] ADDRESS_BOOK_MUID = {
+        (byte) 0xDC,
+        (byte) 0xA7,
+        (byte) 0x40,
+        (byte) 0xC8,
+        (byte) 0xC0,
+        (byte) 0x42,
+        (byte) 0x10,
+        (byte) 0x1A,
+        (byte) 0xB4,
+        (byte) 0xB9,
+        (byte) 0x08,
+        (byte) 0x00,
+        (byte) 0x2B,
+        (byte) 0x2F,
+        (byte) 0xE1,
+        (byte) 0x82
+    };
+
     // -----------------------------------------------------------------------
     // Happy paths
     // -----------------------------------------------------------------------
@@ -105,6 +125,45 @@ class DistributionListMembersTest {
 
         assertEquals(1, members.size());
         assertEquals("noreply@example.com", members.get(0).email());
+    }
+
+    @Test
+    void nonSmtpOneOffRetainsAddressTypeForEncapsulation() {
+        // A one-off member with a non-SMTP address type (here EX, an Exchange X.500 DN) must keep its
+        // address type so the converter can IMCEA-encapsulate it — the PST distribution-list path does
+        // the same. Before the fix the address type was discarded and the raw DN rendered un-routable.
+        var legacyDn = "/O=ORG/OU=EAG/CN=RECIPIENTS/CN=CAROL";
+        var blob = buildOneOff("Carol", "EX", legacyDn, true);
+
+        var members = DistributionListMembers.parse(new byte[][] {blob});
+
+        assertEquals(1, members.size());
+        assertEquals("EX", members.get(0).addressType());
+        assertEquals(legacyDn, members.get(0).email());
+    }
+
+    @Test
+    void smtpOneOffKeepsSmtpAddressType() {
+        var members = DistributionListMembers.parse(new byte[][] {buildOneOff("Bob", "SMTP", "bob@example.com", true)});
+
+        assertEquals(1, members.size());
+        assertEquals("SMTP", members.get(0).addressType());
+        assertEquals("bob@example.com", members.get(0).email());
+    }
+
+    @Test
+    void addressBookEntryIdDecodesX500DnAsExMember() {
+        // An Address-Book EntryID member embeds a resolvable X.500 DN; the PST recipient parser decodes
+        // it and IMCEA-encapsulates it. The MSG path must do the same instead of dropping the member.
+        var legacyDn = "/O=ORG/OU=EXCHANGE ADMINISTRATIVE GROUP/CN=RECIPIENTS/CN=DAVE";
+        var blob = buildAddressBookEntry(legacyDn);
+
+        var members = DistributionListMembers.parse(new byte[][] {blob});
+
+        assertEquals(1, members.size());
+        assertEquals("EX", members.get(0).addressType());
+        assertEquals(legacyDn, members.get(0).email());
+        assertTrue(members.get(0).name().isEmpty(), "an Address-Book EntryID has no inline display name");
     }
 
     // -----------------------------------------------------------------------
@@ -331,6 +390,22 @@ class DistributionListMembersTest {
         buffer.put(ONE_OFF_MUID);
         buffer.putShort((short) 0);
         buffer.putShort(unicode ? (short) 0x8000 : (short) 0);
+        return buffer.array();
+    }
+
+    /**
+     * Builds an Address-Book EntryID ([MS-OXCDATA] §2.2.5.2): 4-byte flags + 16-byte AB provider UID +
+     * 4-byte version + 4-byte type + the US-ASCII, null-terminated X.500 DN.
+     */
+    private static byte[] buildAddressBookEntry(String legacyDn) {
+        var dnBytes = legacyDn.getBytes(StandardCharsets.US_ASCII);
+        var buffer = ByteBuffer.allocate(28 + dnBytes.length + 1).order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putInt(0); // abFlags
+        buffer.put(ADDRESS_BOOK_MUID);
+        buffer.putInt(1); // Version
+        buffer.putInt(0); // Type (recipient)
+        buffer.put(dnBytes);
+        buffer.put((byte) 0); // null terminator
         return buffer.array();
     }
 

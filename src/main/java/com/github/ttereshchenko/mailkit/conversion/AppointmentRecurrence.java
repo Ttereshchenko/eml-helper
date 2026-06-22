@@ -102,7 +102,14 @@ public final class AppointmentRecurrence {
                 }
                 byParts = ";BYDAY=" + byDay + ";BYSETPOS=" + (occurrence == 5 ? -1 : occurrence);
             }
-            case PATTERN_MONTH_END -> byParts = ";BYMONTHDAY=-1";
+            case PATTERN_MONTH_END -> {
+                // [MS-OXOCAL] §2.2.1.44.1.3: PatternType 0x0004 (MonthEnd) carries the same 4-byte
+                // PatternTypeSpecific_Month (Day) field as 0x0002 (Month). Consume it — exactly like the
+                // Month arm above — so EndType/OccurrenceCount/FirstDOW and the instance-date arrays that
+                // follow are read from their real offsets instead of 4 bytes too early.
+                buffer.getInt();
+                byParts = ";BYMONTHDAY=-1";
+            }
             default -> {
                 return null; // Hijri (0x0A..0x0C) and unknown pattern types are not mapped
             }

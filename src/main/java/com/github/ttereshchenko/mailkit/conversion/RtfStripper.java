@@ -484,6 +484,17 @@ public final class RtfStripper {
         if ("65001".equals(codePage)) {
             return StandardCharsets.UTF_8;
         }
+        if ("1361".equals(codePage)) {
+            // Korean Johab: none of the x-windows-1361 / windows-1361 / Cp1361 aliases tried below exist
+            // in the JRE, so without this the page silently falls back to windows-1252 and mojibakes the
+            // text. Resolve it to x-Johab — the charset the pst-parser CodePages table uses for 1361 —
+            // keeping MSG and PST RTF de-encapsulation byte-identical.
+            try {
+                return Charset.forName("x-Johab");
+            } catch (RuntimeException ignored) {
+                return DEFAULT_RTF_CHARSET; // stripped JRE without x-Johab
+            }
+        }
         // Prefer the Microsoft x-windows-<cp> variant (matching the PST CodePages mapping) so a Windows
         // code page resolves to its MS flavour rather than the IBM one: cp950 is x-windows-950
         // (MS950/Big5), not Cp950 (x-IBM950), and the two differ on a few Big5 byte pairs. The alias is

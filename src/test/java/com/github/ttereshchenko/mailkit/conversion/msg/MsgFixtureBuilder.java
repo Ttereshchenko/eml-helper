@@ -70,6 +70,7 @@ final class MsgFixtureBuilder {
     private static final int TAG_ATTACH_DISPLAY_NAME = (0x3001 << 16) | TYPE_UNICODE;
 
     private static final int TAG_RECIPIENT_DISPLAY_NAME = (0x3001 << 16) | TYPE_UNICODE;
+    private static final int TAG_RECIPIENT_DISPLAY_NAME_ANSI = (0x3001 << 16) | TYPE_ANSI;
     private static final int TAG_RECIPIENT_EMAIL_ADDRESS = (0x3003 << 16) | TYPE_UNICODE;
     private static final int TAG_RECIPIENT_SMTP_ADDRESS = (0x39FE << 16) | TYPE_UNICODE;
     private static final int TAG_RECIPIENT_TYPE = (0x0C15 << 16) | TYPE_LONG;
@@ -167,6 +168,19 @@ final class MsgFixtureBuilder {
 
     MsgFixtureBuilder recipientTo(String name, String email) {
         recipientsTo.add(buildRecipient(name, email, RECIPIENT_TYPE_TO));
+        return this;
+    }
+
+    /** A To recipient whose PR_DISPLAY_NAME is a legacy PT_STRING8 (ANSI) chunk of raw codepage bytes. */
+    MsgFixtureBuilder recipientToAnsi(byte[] rawDisplayName, String email) {
+        var recipient = new MsgFixtureBuilder();
+        recipient.setBinary(TAG_RECIPIENT_DISPLAY_NAME_ANSI, rawDisplayName);
+        if (email != null) {
+            recipient.setUnicode(TAG_RECIPIENT_EMAIL_ADDRESS, email);
+            recipient.setUnicode(TAG_RECIPIENT_SMTP_ADDRESS, email);
+        }
+        recipient.fixedProperties.add(new FixedProperty(TAG_RECIPIENT_TYPE, longBytes(RECIPIENT_TYPE_TO)));
+        recipientsTo.add(recipient);
         return this;
     }
 

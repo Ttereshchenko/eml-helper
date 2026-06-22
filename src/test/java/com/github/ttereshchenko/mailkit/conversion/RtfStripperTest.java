@@ -107,6 +107,16 @@ class RtfStripperTest {
     }
 
     @Test
+    void honorsAnsiCpg1361KoreanJohab() {
+        // Code page 1361 (Korean Johab) has no x-windows-1361 / windows-1361 / Cp1361 JRE alias, so the
+        // pre-fix resolver fell back to windows-1252 and mojibaked the text. \\ansicpg1361 must resolve to
+        // x-Johab — the same charset the pst-parser CodePages table uses — so the byte pair 0x88 0x61
+        // decodes to the Hangul syllable 가 (U+AC00) instead of "ˆa" under windows-1252.
+        var rtf = "{\\rtf1\\ansi\\ansicpg1361 \\'88\\'61}";
+        assertEquals("가", RtfStripper.strip(rtf));
+    }
+
+    @Test
     void honorsUnicodeSkipCountForFallbackChars() {
         // \\uc2 means each \\u carries two ANSI fallback chars. The pre-fix stripper always skipped
         // exactly one, leaking the second '?' into the output as "EUR?Done".
