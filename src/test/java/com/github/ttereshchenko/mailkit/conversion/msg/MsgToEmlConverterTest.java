@@ -1586,6 +1586,35 @@ class MsgToEmlConverterTest {
         assertFalse(eml.contains("=EF=BF=BD"), "Body must NOT contain a U+FFFD replacement char: " + eml);
     }
 
+    /**
+     * Codepage regression (round 11): the round-8/10 charsetForCodepage fix corrected the body and
+     * attachment-name decode, but POI's guess7BitEncoding decodes EVERY non-body PT_STRING8 chunk —
+     * the Subject, display names and named-property values (PidLidLocation/PidLidEmail* feeding the
+     * iCal/vCard output) — with the same buggy general charset, and applySourceCodepage did not
+     * re-decode them. So a cp932 ANSI Subject kept Shift_JIS (U+301C) instead of windows-31j
+     * (U+FF5E). The fix widens applySourceCodepage to all non-body main-store strings.
+     */
+    @Test
+    void japaneseAnsiSubjectDecodedWithWindows31jNotShiftJis() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subjectAnsi(new byte[] {(byte) 0x81, (byte) 0x60}) // CP932 0x81 0x60 = U+FF5E FULLWIDTH TILDE
+                .textBody("Japanese subject codepage test")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .internetCpid(932)
+                .messageCodepage(932)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // Subject is RFC 2047 base64; U+FF5E ("～") UTF-8 EF BD 9E -> base64 "772e"
+        assertTrue(
+                eml.contains("=?UTF-8?B?772e?="),
+                "cp932 ANSI Subject must decode to U+FF5E via windows-31j, not Shift_JIS: " + eml);
+        // Buggy Shift_JIS U+301C ("〜") UTF-8 E3 80 9C -> base64 "44Cc"
+        assertFalse(eml.contains("=?UTF-8?B?44Cc?="), "Subject must not be Shift_JIS-mojibaked: " + eml);
+    }
+
     @Test
     void genuineRtfBodyPreservesWindows1252UndefinedBytes() throws Exception {
         // Audit M2: a genuine RTF body is preserved as a byte-faithful body.rtf attachment. The previous

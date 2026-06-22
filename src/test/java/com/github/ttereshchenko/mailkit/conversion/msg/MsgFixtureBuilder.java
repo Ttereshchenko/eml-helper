@@ -44,6 +44,7 @@ final class MsgFixtureBuilder {
     private static final int TAG_RECIPIENT_ADDRTYPE = (0x3002 << 16) | TYPE_UNICODE;
     private static final int TAG_BODY = (0x1000 << 16) | TYPE_UNICODE;
     private static final int TAG_BODY_ANSI = (0x1000 << 16) | TYPE_ANSI;
+    private static final int TAG_SUBJECT_ANSI = (0x0037 << 16) | TYPE_ANSI;
     private static final int TAG_INTERNET_CPID = (0x3FDE << 16) | TYPE_LONG;
     private static final int TAG_MESSAGE_CODEPAGE = (0x3FFD << 16) | TYPE_LONG;
     private static final int TAG_ATTACH_LONG_FILENAME_ANSI = (0x3707 << 16) | TYPE_ANSI;
@@ -129,6 +130,11 @@ final class MsgFixtureBuilder {
      */
     MsgFixtureBuilder textBodyAnsi(byte[] rawBytes) {
         return setBinary(TAG_BODY_ANSI, rawBytes);
+    }
+
+    /** PR_SUBJECT as a legacy PT_STRING8 (ANSI) chunk carrying raw codepage bytes, like {@link #textBodyAnsi}. */
+    MsgFixtureBuilder subjectAnsi(byte[] rawBytes) {
+        return setBinary(TAG_SUBJECT_ANSI, rawBytes);
     }
 
     /** PidTagInternetCodepage (PR_INTERNET_CPID, 0x3FDE) — the codepage of the text/HTML body bytes. */

@@ -1386,6 +1386,39 @@ class PstToEmlConverterTest {
     }
 
     /**
+     * Round 11 parity: two embedded message siblings that resolve to the same name (the common case —
+     * embedded messages carry no filename, only PR_DISPLAY_NAME) must get distinct filename= params so
+     * a client does not silently overwrite one on extract. The MSG driver already dedups via
+     * uniqueEmbeddedName; the PST driver emitted byte-identical names before the fix.
+     */
+    @Test
+    void siblingEmbeddedMessagesGetDistinctFilenames() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var inner = new StubMessage(pstFile, "Forwarded note", List.of(), null, "");
+            var host = new StubMessage(
+                    pstFile,
+                    "Host",
+                    List.of(new EmbeddedAttachmentStub("Forwarded note"), new EmbeddedAttachmentStub("Forwarded note")),
+                    inner,
+                    "");
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(host, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertEquals(
+                    2,
+                    countOccurrences(eml, "Content-Type: message/rfc822"),
+                    () -> "expected two nested message/rfc822 parts:\n" + eml);
+            assertTrue(eml.contains("name=\"Forwarded note.eml\""), "first sibling keeps the base name: " + eml);
+            assertTrue(
+                    eml.contains("name=\"Forwarded note (2).eml\""),
+                    "second sibling must be deduplicated, not a byte-identical filename: " + eml);
+        }
+    }
+
+    /**
      * N1 regression: an embedded message that fails to resolve used to vanish silently; it must be
      * reported on the console and counted in the conversion stats.
      */
