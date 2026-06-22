@@ -1,0 +1,18 @@
+From: Alice <alice@example.com>
+To: Bob <bob@example.com>
+Subject: With attachment
+Date: Mon, 21 Jun 2026 10:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary-xyz-123"
+
+--boundary-xyz-123
+Content-Type: text/plain; charset=utf-8
+
+See attached report.
+--boundary-xyz-123
+Content-Type: text/csv; name="report.csv"
+Content-Disposition: attachment; filename="report.csv"
+Content-Transfer-Encoding: base64
+
+cmVwb3J0LDIwMjQsUTNcbg==
+--boundary-xyz-123--

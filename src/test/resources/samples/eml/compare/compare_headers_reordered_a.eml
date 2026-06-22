@@ -1,0 +1,13 @@
+From: Alice <alice@example.com>
+To: Bob <bob@example.com>
+Subject: Stable order
+Date: Mon, 21 Jun 2026 10:00:00 +0000
+Message-ID: <abc@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="aaa-111"
+
+--aaa-111
+Content-Type: text/plain; charset=utf-8
+
+Body stays the same.
+--aaa-111--
