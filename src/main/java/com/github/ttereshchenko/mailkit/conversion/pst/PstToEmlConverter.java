@@ -1254,7 +1254,10 @@ public final class PstToEmlConverter {
                     attachName,
                     mime,
                     data,
-                    attachment.getContentId(),
+                    // Strip any surrounding angle brackets so a bracketed PR_ATTACH_CONTENT_ID still
+                    // matches the bracket-less cid: reference in the HTML body and stays inline (the
+                    // MSG driver normalizes the same way — keep the two in step).
+                    EmlSerializer.normalizeContentId(attachment.getContentId()),
                     attachment.getContentLocation(),
                     attachment.isInline());
         }

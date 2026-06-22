@@ -567,20 +567,10 @@ public final class MsgToEmlConverter {
     }
 
     private static String pickContentId(AttachmentChunks chunks) {
-        var contentId = chunkValue(chunks.getAttachContentId());
-        if (contentId == null || contentId.isBlank()) {
-            return null;
-        }
-        var trimmed = contentId.trim();
         // PR_ATTACH_CONTENT_ID is stored without angle brackets ([MS-OXCMSG] §2.2.2.5), but strip any a
-        // sender wrote anyway: EmlSerializer wraps the value in <...> for the Content-ID header itself and
-        // htmlBodyReferences matches the bare cid: URL form (no brackets), so a stored "<foo@bar>" would
-        // otherwise miss the inline-image match and be demoted from a multipart/related inline part to a
-        // plain attachment (its image would stop rendering).
-        if (trimmed.length() > 1 && trimmed.charAt(0) == '<' && trimmed.charAt(trimmed.length() - 1) == '>') {
-            trimmed = trimmed.substring(1, trimmed.length() - 1).trim();
-        }
-        return trimmed.isBlank() ? null : trimmed;
+        // sender wrote anyway so a stored "<foo@bar>" still matches the bare cid: URL form in the HTML
+        // body and stays inline. Shared with the PST driver via EmlSerializer.normalizeContentId.
+        return EmlSerializer.normalizeContentId(chunkValue(chunks.getAttachContentId()));
     }
 
     /** One MAPI mailbox identity — display name and address resolved from the same property family. */

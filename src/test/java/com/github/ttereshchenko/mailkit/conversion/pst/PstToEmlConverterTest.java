@@ -972,6 +972,74 @@ class PstToEmlConverterTest {
         }
     }
 
+    /**
+     * A bracketed PR_ATTACH_CONTENT_ID must still match the bracket-less {@code cid:} reference in the
+     * HTML body and stay in the multipart/related subtree — parity with the MSG driver. Before the fix
+     * the raw {@code "<logo@x>"} missed the match in {@code htmlBodyReferences} and the image was
+     * demoted to a plain mixed attachment (its inline rendering broken).
+     */
+    @Test
+    void bracketedAttachContentIdStillResolvesInlineImage() throws Exception {
+        var inlineImage = new Attachment() {
+            @Override
+            public String getLongFilename() {
+                return "logo.png";
+            }
+
+            @Override
+            public String getFilename() {
+                return "";
+            }
+
+            @Override
+            public int getAttachMethod() {
+                return 1; // afByValue
+            }
+
+            @Override
+            public byte[] getData() {
+                return new byte[] {1, 2, 3};
+            }
+
+            @Override
+            public String getMimeTag() {
+                return "image/png";
+            }
+
+            @Override
+            public String getContentId() {
+                return "<logo@x>"; // stored WITH angle brackets, contrary to [MS-OXCMSG] §2.2.2.5
+            }
+
+            @Override
+            public String getContentLocation() {
+                return null;
+            }
+
+            @Override
+            public boolean isInline() {
+                return true;
+            }
+        };
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(pstFile, "Inline image, bracketed cid", List.of(inlineImage), null, "") {
+                @Override
+                public String getHtmlBody() {
+                    return "<img src=\"cid:logo@x\">";
+                }
+            };
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("Content-ID: <logo@x>"), eml);
+            assertTrue(
+                    eml.contains("multipart/related"),
+                    "a bracketed Content-ID must still match the cid: reference and stay inline: " + eml);
+        }
+    }
+
     /** A by-value attachment with real bytes and an optional Content-Location. */
     private static final class DataAttachmentStub extends Attachment {
         private final String contentLocation;
