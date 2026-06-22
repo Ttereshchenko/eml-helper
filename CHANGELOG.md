@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed (conversion correctness)
+
+- An inline image in a converted `.pst`/`.ost` whose stored Content-ID happened to include angle brackets now displays in the message body instead of being demoted to a separate, non-displayed attachment — the `.msg` conversion already did this, so the two now match.
+- A digitally signed or encrypted (S/MIME) message converted from `.msg`/`.pst`/`.ost` whose secure envelope carries a non-ASCII filename now encodes that filename correctly in the attachment's MIME parameters instead of placing raw non-ASCII bytes there, so strict mail clients no longer reject or mis-display the name. The usual ASCII `smime.p7m` envelope is unchanged.
+
 ## 1.3.0 - 2026-06-21
 
 ### Added

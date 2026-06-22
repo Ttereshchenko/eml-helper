@@ -74,6 +74,30 @@ class SmimeEntityHoistTest {
                 blobBytes, decoded, "base64 body must round-trip the original bytes");
     }
 
+    /**
+     * A non-ASCII opaque-blob filename (a localized name on a stored {@code .p7m}) must use RFC 2231
+     * extended notation in both the Content-Type {@code name} and the Content-Disposition
+     * {@code filename} parameter. RFC 2047 §5 forbids encoded-words inside a quoted-string parameter,
+     * so the raw non-ASCII bytes must not be dropped into a {@code name="..."} quoted form. The ASCII
+     * case keeps the plain quoted form (covered above).
+     */
+    @Test
+    void nonAsciiOpaqueBlobFilenameUsesRfc2231() {
+        var blobBytes = new byte[] {0x30, 0x45, 0x02, 0x01, 0x00};
+        // "naïve.p7m" — the i-with-diaeresis (U+00EF) encodes to UTF-8 C3 AF, i.e. %C3%AF.
+        var entity = SmimeEntityHoist.hoist(blobBytes, "naïve.p7m", "application/pkcs7-mime");
+
+        assertTrue(
+                entity.contentType().contains("name*0*=UTF-8''na%C3%AFve"),
+                "non-ASCII name must use RFC 2231 extended notation: " + entity.contentType());
+        assertTrue(
+                entity.disposition().contains("filename*0*=UTF-8''na%C3%AFve"),
+                "non-ASCII filename must use RFC 2231 extended notation: " + entity.disposition());
+        assertFalse(
+                entity.contentType().contains("name=\"naï"),
+                "raw non-ASCII must not appear in a quoted-string parameter: " + entity.contentType());
+    }
+
     // -----------------------------------------------------------------------
     // Blank fallbackFilename defaults to smime.p7m
     // -----------------------------------------------------------------------

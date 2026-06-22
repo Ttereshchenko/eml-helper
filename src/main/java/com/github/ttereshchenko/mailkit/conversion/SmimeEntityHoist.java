@@ -63,14 +63,19 @@ public final class SmimeEntityHoist {
         // No parseable entity headers: an opaque PKCS#7 blob becomes the message's own entity.
         var filename = EmlSerializer.sanitizeFilename(
                 fallbackFilename == null || fallbackFilename.isBlank() ? "smime.p7m" : fallbackFilename);
+        // Build the name/filename parameters through EmlSerializer.filenameParameter so a non-ASCII
+        // p7m filename uses RFC 2231 extended notation instead of being dropped raw into a
+        // quoted-string parameter (rfc2047 §5 forbids encoded-words in parameters; rfc2231 §4 is the
+        // mechanism for non-ASCII parameter values). For a pure-ASCII name this yields the identical
+        // quoted form (name="smime.p7m" / filename="smime.p7m"), so the common case is unchanged.
         var contentType = (fallbackMimeTag == null || fallbackMimeTag.isBlank()
                         ? "application/pkcs7-mime"
                         : fallbackMimeTag.trim())
-                + "; name=\"" + filename + "\"";
+                + "; " + EmlSerializer.filenameParameter("name", filename);
         return new HoistedEntity(
                 contentType,
                 "base64",
-                "attachment; filename=\"" + filename + "\"",
+                "attachment; " + EmlSerializer.filenameParameter("filename", filename),
                 EmlSerializer.encodeBase64Wrapped(data).getBytes(StandardCharsets.US_ASCII),
                 false);
     }

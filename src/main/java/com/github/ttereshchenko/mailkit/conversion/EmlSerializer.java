@@ -958,6 +958,26 @@ public final class EmlSerializer {
     }
 
     /**
+     * Normalizes a Content-ID sourced from {@code PR_ATTACH_CONTENT_ID(_W)} before it enters the
+     * serializer. The property is defined without angle brackets ([MS-OXCMSG] §2.2.2.5), but some
+     * senders store {@code "<foo@bar>"} anyway. {@link #htmlBodyReferences} matches the bracket-less
+     * {@code cid:} URL form (RFC 2392 §2), so a bracketed value would miss the inline-image match and
+     * the part would be demoted from a multipart/related inline member to a plain attachment (its
+     * image stops rendering). Trimming and stripping a single surrounding {@code <...>} pair keeps the
+     * MSG and PST drivers in step; {@code null}/blank passes through as {@code null}.
+     */
+    public static String normalizeContentId(String contentId) {
+        if (contentId == null || contentId.isBlank()) {
+            return null;
+        }
+        var trimmed = contentId.trim();
+        if (trimmed.length() > 1 && trimmed.charAt(0) == '<' && trimmed.charAt(trimmed.length() - 1) == '>') {
+            trimmed = trimmed.substring(1, trimmed.length() - 1).trim();
+        }
+        return trimmed.isBlank() ? null : trimmed;
+    }
+
+    /**
      * Sanitizes a Content-ID sourced from PR_ATTACH_CONTENT_ID_W. The caller wraps the result in
      * {@code <...>}, so angle brackets, whitespace, and control characters (CR/LF) are stripped to
      * keep a crafted value from breaking out of the brackets or splitting the header.
