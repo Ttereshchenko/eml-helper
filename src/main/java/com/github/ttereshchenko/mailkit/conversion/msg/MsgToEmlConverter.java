@@ -1479,6 +1479,13 @@ public final class MsgToEmlConverter {
         if (codepage == null) {
             return null;
         }
+        if (codepage == 1256) {
+            // POI 5.5.1 CodePageUtil.codepageToEncoding(1256, true) returns "Cp1255" (Hebrew) instead of
+            // the Arabic charset — an isolated transcription typo in its javaLangFormat=true branch (the
+            // false branch correctly yields "windows-1256"). Map 1256 explicitly so an Arabic ANSI MSG's
+            // 8-bit body, attachment names and one-off strings are not decoded as windows-1255.
+            return "windows-1256";
+        }
         try {
             return CodePageUtil.codepageToEncoding(codepage, true);
         } catch (UnsupportedEncodingException unsupported) {

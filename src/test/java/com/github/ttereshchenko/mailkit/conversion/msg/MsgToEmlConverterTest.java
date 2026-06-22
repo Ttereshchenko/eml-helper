@@ -1490,6 +1490,42 @@ class MsgToEmlConverterTest {
                 "the windows-1251 filename must be decoded with the message codepage: " + eml);
     }
 
+    /**
+     * Codepage regression (MSG-3): POI 5.5.1 CodePageUtil.codepageToEncoding(1256, true) returns
+     * "Cp1255" (Hebrew) instead of the Arabic charset — an isolated transcription typo in its
+     * javaLangFormat=true branch. A legacy ANSI MSG with PR_INTERNET_CPID / PR_MESSAGE_CODEPAGE =
+     * 1256 therefore had its PT_STRING8 body decoded as windows-1255, turning Arabic into Hebrew
+     * gibberish. The fix maps codepage 1256 explicitly to "windows-1256" before delegating to POI.
+     *
+     * <p>Byte sequence C7 E1 D3 E1 C7 E3 = "السلام" under windows-1256 (U+0627 U+0644 U+0633
+     * U+0644 U+0627 U+0645), but decodes to "ַב׃בַד" under the buggy Cp1255.
+     */
+    @Test
+    void arabicAnsiBodyIsDecodedWithWindows1256NotHebrew() throws Exception {
+        // windows-1256 bytes for "السلام" (al-salaam)
+        var arabicBytes = new byte[] {(byte) 0xC7, (byte) 0xE1, (byte) 0xD3, (byte) 0xE1, (byte) 0xC7, (byte) 0xE3};
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Arabic body codepage test")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .internetCpid(1256)
+                .messageCodepage(1256)
+                // ANSI body so POI's has7BitEncodingStrings() triggers the codepage path.
+                .textBodyAnsi(arabicBytes)
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        // Correct: "السلام" in UTF-8 QP is =D8=A7=D9=84=D8=B3=D9=84=D8=A7=D9=85
+        assertTrue(
+                eml.contains("=D8=A7=D9=84=D8=B3=D9=84=D8=A7=D9=85"),
+                "Arabic body bytes must be decoded with windows-1256 (not Hebrew Cp1255): " + eml);
+        // Buggy: under Cp1255 the same bytes produce Hebrew "ַב׃בַד" → =D6=B7=D7=91=D7=83=D7=91=D6=B7=D7=93
+        assertFalse(
+                eml.contains("=D6=B7=D7=91=D7=83=D7=91=D6=B7=D7=93"),
+                "Body must NOT contain Cp1255 Hebrew mojibake: " + eml);
+    }
+
     @Test
     void genuineRtfBodyPreservesWindows1252UndefinedBytes() throws Exception {
         // Audit M2: a genuine RTF body is preserved as a byte-faithful body.rtf attachment. The previous
