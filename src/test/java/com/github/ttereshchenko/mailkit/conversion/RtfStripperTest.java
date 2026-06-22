@@ -299,4 +299,27 @@ class RtfStripperTest {
         var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1\\uc2 {\\*\\htmltag84 \\u8364XX<b>}done}");
         assertEquals("€<b>done", html);
     }
+
+    /**
+     * Regression for the raw CR/LF drop in deEncapsulateHtml: Outlook's {@code \\fromhtml} writer
+     * hard-wraps long text runs by inserting bare CR/LF characters at column boundaries. These are
+     * physical line-wrapping artefacts, not content line breaks (which are encoded as {@code \\par}
+     * or {@code \\line}). Before the fix they were appended to the output HTML, splicing stray
+     * newlines into the recovered body and diverging from the PST fork and the {@code strip()}
+     * sibling loop (both of which already dropped them). After the fix the characters are silently
+     * skipped and the surrounding words are joined seamlessly.
+     */
+    @Test
+    void deEncapsulateHtmlDropsPhysicalLineWrappingCrLfFromTextRuns() {
+        // The \r\n between "Hello" and "world" is a physical wrap inserted by Outlook, not a content
+        // break.  After de-encapsulation the two words must be joined without any CR or LF.
+        var html = RtfStripper.deEncapsulateHtml(
+                "{\\rtf1\\ansi\\fromhtml1 {\\*\\htmltag64 <p>}Hello\r\nworld{\\*\\htmltag72 </p>}}");
+        assertEquals(
+                "<p>Helloworld</p>",
+                html,
+                "physical CR/LF line-wrap must be dropped, not emitted into the recovered HTML");
+        assertFalse(html.contains("\r"), "no CR must survive in de-encapsulated output");
+        assertFalse(html.contains("\n"), "no LF must survive in de-encapsulated output");
+    }
 }

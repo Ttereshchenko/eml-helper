@@ -63,6 +63,11 @@ public final class EmlSerializer {
     private final List<Attachment> attachments = new ArrayList<>();
     // Insertion-ordered so repeated conversions of the same message emit identical header order.
     private final Map<String, List<String>> customHeaders = new LinkedHashMap<>();
+    // Structured address headers (Reply-To, Disposition-Notification-To) whose values are ALREADY built
+    // by formatAddress — which RFC 2047-encodes a non-ASCII display name itself. They are emitted verbatim
+    // like From/To, never through encodeHeaderIfNeeded, which would re-encode the whole "=?...?= <addr>"
+    // string into nested encoded-words and bury the addr-spec (RFC 2047 §5, RFC 5322 §3.6.3).
+    private final Map<String, List<String>> addressHeaders = new LinkedHashMap<>();
 
     public EmlSerializer() {}
 
@@ -110,6 +115,19 @@ public final class EmlSerializer {
     public void addCustomHeader(String name, String value) {
         if (name != null && !name.isBlank() && value != null) {
             customHeaders.computeIfAbsent(name, key -> new ArrayList<>()).add(value);
+        }
+    }
+
+    /**
+     * Adds a structured address header (e.g. {@code Reply-To}, {@code Disposition-Notification-To})
+     * whose value was already formatted by {@link #formatAddress}. Unlike {@link #addCustomHeader}, the
+     * value is emitted verbatim and never re-runs {@link #encodeHeaderIfNeeded}, so an already-encoded
+     * non-ASCII display name keeps its {@code <addr>} intact instead of being re-encoded into an
+     * unparseable nest of encoded-words.
+     */
+    public void addAddressHeader(String name, String value) {
+        if (name != null && !name.isBlank() && value != null) {
+            addressHeaders.computeIfAbsent(name, key -> new ArrayList<>()).add(value);
         }
     }
 
@@ -364,6 +382,17 @@ public final class EmlSerializer {
                     } else {
                         appendHeader(out, headerName, encodeHeaderIfNeeded(value));
                     }
+                }
+            }
+        }
+
+        for (var entry : addressHeaders.entrySet()) {
+            String headerName = entry.getKey();
+            if (!present.contains(headerName.toLowerCase(Locale.ROOT))) {
+                for (String value : entry.getValue()) {
+                    // Values are already address-formatted (see addAddressHeader): emit them verbatim,
+                    // exactly as From/To/Cc above, instead of re-encoding through encodeHeaderIfNeeded.
+                    appendHeader(out, headerName, value);
                 }
             }
         }
@@ -1175,11 +1204,13 @@ public final class EmlSerializer {
                         }
                     }
                 }
-                if (breakPos <= 0) {
-                    // No foldable whitespace at all. An unbreakable token longer than the RFC 5322
-                    // §2.1.1 hard limit (e.g. a base64 Thread-Index from a very long conversation)
-                    // must still be folded — its consumers strip folding WSP, and a hard split at
-                    // the limit beats emitting a line strict parsers reject outright.
+                if (breakPos <= 0 || breakPos > MAX_HEADER_LINE_LENGTH) {
+                    // No foldable whitespace within the hard limit. Either there is none at all, or the
+                    // only break point lies past the RFC 5322 §2.1.1 998-octet limit (e.g. a Keywords or
+                    // Thread-Topic value whose first token alone exceeds 998 chars). Folding only at that
+                    // distant whitespace would still emit an over-limit first line, so hard-split at the
+                    // limit — consumers strip folding WSP, and after the split the whitespace falls within
+                    // range and normal folding resumes on the remainder.
                     if (line.length() > MAX_HEADER_LINE_LENGTH) {
                         output.append(line, 0, MAX_HEADER_LINE_LENGTH).append("\r\n");
                         line = " " + line.substring(MAX_HEADER_LINE_LENGTH);

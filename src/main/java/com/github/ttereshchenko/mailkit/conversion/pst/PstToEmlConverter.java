@@ -862,7 +862,7 @@ public final class PstToEmlConverter {
             }
         }
         if (!replyTo.isEmpty()) {
-            serializer.addCustomHeader("Reply-To", String.join(", ", replyTo));
+            serializer.addAddressHeader("Reply-To", String.join(", ", replyTo));
         }
 
         // Categories: PidNameKeywords is a string-named property in PS_PUBLIC_STRINGS (PT_MV_UNICODE).
@@ -877,7 +877,8 @@ public final class PstToEmlConverter {
         if (message.getProperty(MapiProperties.PR_READ_RECEIPT_REQUESTED) instanceof Boolean requested
                 && requested
                 && !fromEmail.isBlank()) {
-            serializer.addCustomHeader("Disposition-Notification-To", EmlSerializer.formatAddress(fromName, fromEmail));
+            serializer.addAddressHeader(
+                    "Disposition-Notification-To", EmlSerializer.formatAddress(fromName, fromEmail));
         }
 
         String msgClass = message.getMessageClass();

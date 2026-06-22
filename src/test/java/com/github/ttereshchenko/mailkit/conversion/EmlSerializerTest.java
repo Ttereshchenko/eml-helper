@@ -1038,4 +1038,111 @@ class EmlSerializerTest {
         }
         return count;
     }
+
+    /**
+     * Regression for the addAddressHeader double-encode bug: when an already-formatted address
+     * (produced by {@link EmlSerializer#formatAddress}) is passed through
+     * {@link EmlSerializer#addCustomHeader}, the value is run through
+     * {@link EmlSerializer#encodeHeaderIfNeeded} a second time, which treats the entire
+     * "=?UTF-8?B?…?= &lt;addr&gt;" string as header text and re-encodes the angle-addr into a new
+     * base64 blob, producing an unparseable nest of encoded-words with no literal addr-spec.
+     * {@link EmlSerializer#addAddressHeader} emits the value verbatim (as From/To do), so the
+     * addr-spec stays bare and the Cyrillic phrase is encoded exactly once.
+     */
+    @Test
+    void addAddressHeaderEmitsAlreadyFormattedValueVerbatimWithoutDoubleEncoding() throws Exception {
+        var cyrillicFormatted = EmlSerializer.formatAddress("Иван Петров", "ivan@example.com");
+
+        // Verify the formatAddress output has the right structure before we test the header emission.
+        assertTrue(
+                cyrillicFormatted.startsWith("=?UTF-8?"),
+                "formatAddress must encode the Cyrillic phrase: " + cyrillicFormatted);
+        assertTrue(
+                cyrillicFormatted.contains("<ivan@example.com>"),
+                "formatAddress must keep addr-spec bare: " + cyrillicFormatted);
+
+        var serializer = new EmlSerializer();
+        serializer.setSender("Sender", "sender@example.com");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        serializer.addAddressHeader("Reply-To", cyrillicFormatted);
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        // Extract the Reply-To header field body (unfold continuation lines by joining CRLF+WSP).
+        var headerMatcher = Pattern.compile("Reply-To:((?:[^\r\n]|\r\n[ \t])*)").matcher(eml);
+        assertTrue(headerMatcher.find(), "Reply-To header must be present:\n" + eml);
+        var replyToBody = headerMatcher.group(1).replaceAll("\r\n[ \t]", " ").trim();
+
+        // The addr-spec must be present as a structural token — not buried inside a base64 blob.
+        assertTrue(
+                replyToBody.contains("<ivan@example.com>"),
+                "addr-spec must appear literally in Reply-To, not re-encoded: " + replyToBody);
+
+        // The display name must still be an encoded-word (not a quoted string of Cyrillic UTF-8 bytes).
+        assertTrue(
+                replyToBody.contains("=?UTF-8?"),
+                "Cyrillic phrase must remain as an encoded-word in Reply-To: " + replyToBody);
+
+        // Contrast: count encoded-word tokens. If double-encoded, the whole formatted string becomes
+        // one giant encoded-word and "<ivan@example.com>" disappears from the raw header.
+        var encodedWordCount = 0;
+        var encodedWordMatcher =
+                Pattern.compile("=\\?UTF-8\\?[BbQq]\\?[^?]*\\?=").matcher(replyToBody);
+        while (encodedWordMatcher.find()) {
+            encodedWordCount++;
+        }
+        // There should be at least one encoded-word for the phrase, but the addr-spec must NOT be
+        // inside one — so the addr-spec literal must appear outside any encoded-word boundary.
+        assertTrue(encodedWordCount >= 1, "Cyrillic phrase must produce at least one encoded-word: " + replyToBody);
+
+        // Contrast assertion: pure ASCII display name is emitted as a quoted phrase, not encoded.
+        var serializer2 = new EmlSerializer();
+        serializer2.setSender("Sender", "sender@example.com");
+        serializer2.addBody("body", "text/plain; charset=UTF-8");
+        serializer2.addAddressHeader("Reply-To", EmlSerializer.formatAddress("Support Desk", "s@x.com"));
+        var writer2 = new StringWriter();
+        serializer2.writeTo(writer2);
+        var eml2 = writer2.toString();
+        assertTrue(
+                eml2.contains("\"Support Desk\" <s@x.com>"),
+                "ASCII display name must be emitted as a quoted phrase: " + eml2);
+    }
+
+    /**
+     * Regression for the appendHeader hard-split bug: when a header value contains no foldable
+     * whitespace within the first {@code MAX_HEADER_LINE_LENGTH} (998) characters, the old code
+     * scanned forward for a distant whitespace, found it beyond 998, and folded only at that point
+     * — emitting a first line longer than the RFC 5322 §2.1.1 hard limit. The fix hard-splits at
+     * position 998 and lets normal folding handle the remainder.
+     *
+     * <p>This test uses a {@code Keywords} value whose first token is 1 100 characters long (well
+     * over 998), so the only whitespace lies beyond position 998. Every output line must be
+     * &le; 998 characters.
+     */
+    @Test
+    void overlongHeaderTokenWithNoWhitespaceWithin998IsHardSplit() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.setSender("A", "a@example.com");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        serializer.addCustomHeader("Keywords", "K".repeat(1100) + ", second");
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        for (var line : eml.split("\r\n", -1)) {
+            assertTrue(
+                    line.length() <= 998,
+                    "line exceeds the RFC 5322 hard limit (" + line.length() + " chars): " + line);
+        }
+
+        // Verify the value round-trips modulo folding whitespace (consumers strip it).
+        var headerMatcher = Pattern.compile("Keywords:((?:[^\r\n]|\r\n[ \t])*)").matcher(eml);
+        assertTrue(headerMatcher.find(), "Keywords header must be present:\n" + eml);
+        var roundTripped = headerMatcher.group(1).replaceAll("[ \t\r\n]", "");
+        assertEquals(
+                "K".repeat(1100) + ",second", roundTripped, "Keywords value must round-trip modulo folding whitespace");
+    }
 }
