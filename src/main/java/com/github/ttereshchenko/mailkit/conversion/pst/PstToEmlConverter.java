@@ -1126,6 +1126,11 @@ public final class PstToEmlConverter {
             log.error("Message " + message.getNid() + " claims attachments (PR_HASATTACH) but none could be"
                     + " read from its attachment table; they were not exported");
         }
+        // Embedded message/rfc822 siblings frequently resolve to the same name (no filename property,
+        // so the fallback is PR_DISPLAY_NAME or the literal "message"); dedup them like the MSG driver
+        // (uniqueEmbeddedName) so two nested .eml parts do not carry byte-identical name=/filename=
+        // params, which makes clients overwrite one on extract.
+        var usedEmbeddedNames = new HashSet<String>();
         for (Attachment attachment : messageAttachments) {
             if (budget.atCountLimit()) {
                 log.error("Message has more than " + AttachmentBudget.MAX_ATTACHMENT_COUNT
@@ -1182,6 +1187,7 @@ public final class PstToEmlConverter {
                         break;
                     }
                     if (!attachName.toLowerCase(Locale.ROOT).endsWith(".eml")) attachName += ".eml";
+                    attachName = uniqueEmbeddedName(attachName, usedEmbeddedNames);
                     serializer.addEmbeddedMessage(attachName, nestedEml);
                 } catch (ProcessCanceledException canceled) {
                     // Never demote a cancellation to a failed-attachment count; let it unwind so the
@@ -1289,6 +1295,27 @@ public final class PstToEmlConverter {
                 serializer.addRecipient(recipientType, trimmed, "");
             }
         }
+    }
+
+    /**
+     * Ensures sibling embedded-message names are distinct by appending {@code " (2)"}, {@code " (3)"}…
+     * before the {@code .eml} suffix when an earlier sibling already took the name. Unlike the MSG
+     * driver's helper this does not re-sanitize or re-suffix the name — the caller has already built
+     * the final {@code .eml} name — so it only resolves collisions.
+     */
+    private static String uniqueEmbeddedName(String filename, Set<String> usedNames) {
+        if (usedNames.add(filename)) {
+            return filename;
+        }
+        var base = filename.toLowerCase(Locale.ROOT).endsWith(".eml")
+                ? filename.substring(0, filename.length() - ".eml".length())
+                : filename;
+        var counter = 2;
+        String candidate;
+        do {
+            candidate = base + " (" + counter++ + ").eml";
+        } while (!usedNames.add(candidate));
+        return candidate;
     }
 
     /** The plain-text body of an exported distribution list: one member per line. */

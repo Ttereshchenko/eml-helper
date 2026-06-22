@@ -1402,8 +1402,8 @@ public final class MsgToEmlConverter {
     }
 
     /**
-     * Re-decodes the body and attachment-name strings of a legacy ANSI MSG with the codepage the
-     * message actually declares, fixing two blind spots in POI's {@link MAPIMessage#guess7BitEncoding()}:
+     * Re-decodes the legacy ANSI strings of an MSG with the codepage the message actually declares,
+     * fixing three blind spots in POI's {@link MAPIMessage#guess7BitEncoding()}:
      *
      * <ul>
      *   <li>POI deliberately discards a UTF-8 {@code PR_INTERNET_CPID} for the plain-text body (a
@@ -1413,10 +1413,20 @@ public final class MsgToEmlConverter {
      *   <li>POI's {@code set7BitEncoding} never visits the attachment chunks, so a non-Latin
      *       {@code PR_ATTACH_LONG_FILENAME} in an ANSI MSG keeps the CP1252 default. [MS-OXCMSG] §2.2.2:
      *       attachment name strings follow the message codepage, so they are re-decoded with it too.
+     *   <li>POI decodes every other non-body PT_STRING8 chunk in the main store (Subject, display
+     *       names, and named-property values such as PidLidLocation / PidLidEmail* that feed the
+     *       iCal/vCard/DSN output) with {@code CodePageUtil.codepageToEncoding(PR_MESSAGE_CODEPAGE)} —
+     *       the very call {@link #charsetForCodepage} overrides for the divergent code pages
+     *       (1256/932/874/950). Without re-decoding them here, those fields keep POI's wrong charset
+     *       even though the body is corrected. They are re-decoded with the corrected general charset —
+     *       but only from {@code PR_MESSAGE_CODEPAGE}, exactly POI's source for these strings, never the
+     *       {@code PR_INTERNET_CPID} body fallback (which would mis-decode a Subject when no message
+     *       codepage is declared).
      * </ul>
      *
      * Must run after {@code guess7BitEncoding()}. {@link StringChunk#set7BitEncoding} re-reads only
-     * 7-bit (PT_STRING8) chunks, so Unicode properties are left untouched.
+     * 7-bit (PT_STRING8) chunks from their immutable raw bytes, so Unicode properties are left
+     * untouched and re-applying a charset is idempotent.
      */
     private static void applySourceCodepage(MAPIMessage message, ConversionLog log) {
         var mainChunks = message.getMainChunks();
@@ -1425,12 +1435,14 @@ public final class MsgToEmlConverter {
         }
         var bodyCharset =
                 charsetForCodepage(readMainLong(message, MAPIProperty.INTERNET_CPID.id), "PR_INTERNET_CPID", log);
-        var attachmentCharset =
+        // POI decodes the non-body main-store PT_STRING8 strings (Subject, named-property values) with
+        // PR_MESSAGE_CODEPAGE alone — no INTERNET_CPID fallback — so the corrected re-decode below must
+        // use the same source and run only when a message codepage is actually declared.
+        var messageCodepageCharset =
                 charsetForCodepage(readMainLong(message, MAPIProperty.MESSAGE_CODEPAGE.id), "PR_MESSAGE_CODEPAGE", log);
-        if (attachmentCharset == null) {
-            // PR_INTERNET_CPID is the documented fallback when PR_MESSAGE_CODEPAGE is absent.
-            attachmentCharset = bodyCharset;
-        }
+        // Attachment name strings follow the message codepage too; INTERNET_CPID is the documented
+        // fallback there (preserves the prior behavior of the attachment loop).
+        var attachmentCharset = messageCodepageCharset != null ? messageCodepageCharset : bodyCharset;
 
         if (bodyCharset != null) {
             var bodyChunks = mainChunks.getAll().get(MAPIProperty.BODY);
@@ -1438,6 +1450,23 @@ public final class MsgToEmlConverter {
                 for (var chunk : bodyChunks) {
                     if (chunk instanceof StringChunk bodyChunk) {
                         bodyChunk.set7BitEncoding(bodyCharset);
+                    }
+                }
+            }
+        }
+
+        if (messageCodepageCharset != null) {
+            // Re-decode the remaining non-body main-store PT_STRING8 strings with the corrected message
+            // codepage, mirroring the scope of POI's set7BitEncoding. BODY/BODY_HTML are excluded so the
+            // INTERNET_CPID body decode above stands.
+            for (var entry : mainChunks.getAll().entrySet()) {
+                int propertyId = entry.getKey().id;
+                if (propertyId == MAPIProperty.BODY.id || propertyId == MAPIProperty.BODY_HTML.id) {
+                    continue;
+                }
+                for (var chunk : entry.getValue()) {
+                    if (chunk instanceof StringChunk stringChunk) {
+                        stringChunk.set7BitEncoding(messageCodepageCharset);
                     }
                 }
             }
