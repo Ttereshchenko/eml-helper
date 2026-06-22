@@ -65,6 +65,14 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
         state.showAttachmentActions = enabled;
     }
 
+    public boolean isShowCompareEditorToolbarButton() {
+        return state.showCompareEditorToolbarButton;
+    }
+
+    public void setShowCompareEditorToolbarButton(boolean enabled) {
+        state.showCompareEditorToolbarButton = enabled;
+    }
+
     public List<String> getHighlightedHeaders() {
         return List.copyOf(state.highlightedHeaders);
     }
@@ -102,6 +110,7 @@ public final class EmlHeaderSettings implements PersistentStateComponent<EmlHead
         // while the EDT can flip it from the settings dialog.
         public volatile boolean highlightingEnabled = true;
         public boolean showAttachmentActions = true;
+        public boolean showCompareEditorToolbarButton = true;
         public List<String> highlightedHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));
         public List<String> nameOnlyHeaders = new ArrayList<>(List.of("From", "To", "Subject", "Date", "Cc", "Bcc"));
     }

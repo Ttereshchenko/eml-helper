@@ -1,0 +1,8 @@
+From: Alice <alice@example.com>
+To: Bob <bob@example.com>
+Subject: Encoding equivalence
+Date: Mon, 21 Jun 2026 10:00:00 +0000
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Hello, MailKit comparison!

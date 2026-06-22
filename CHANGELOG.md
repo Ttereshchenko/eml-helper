@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-06-21
+
+### Added
+
+- **Compare two EML files.** Select two `.eml` files in the Project view and choose *Compare EML Files*, or right-click a single `.eml` (in the Project view or the open editor) and choose *Compare EML With…* to pick the second. The messages open in the IDE's diff viewer in a decoded, normalized form — RFC 2047 header words and base64 / quoted-printable bodies are decoded, headers are sorted into a canonical order, attachments are summarized by name / type / size / SHA-256, and volatile noise (random MIME boundary tokens, transfer encoding, header order, line endings) is canonicalized — so only meaningful differences appear instead of encoding artifacts. A toolbar toggle in the diff flips between the decoded view and the raw message source. In the editor toolbar, *Send EML…* and *Compare EML With…* are grouped under one **MailKit** dropdown button (Compare stacked under Send); the *Compare EML With…* entry can be hidden under **Settings > Editor > MailKit**. Forwarded and journaled messages (embedded `message/rfc822`) are compared recursively, so the embedded email's own headers and body are decoded and diffed instead of being skipped.
+
 ### Fixed (editor highlighting)
 
 - EML header and MIME-boundary highlighting now shows its colors on every editor color scheme. On themes other than the classic Default/Darcula — including the New UI Light/Dark and Islands Dark/Light schemes — headers had been rendering in plain gray; each highlight now falls back to a sensible default color so it is visible everywhere (including on a fresh install), while the bundled Default/Darcula palettes are unchanged.

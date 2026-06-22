@@ -37,6 +37,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
 
     private JCheckBox highlightingEnabledCheckbox;
     private JCheckBox showAttachmentActionsCheckbox;
+    private JCheckBox showCompareToolbarCheckbox;
     private JBTable table;
     private HeaderTableModel tableModel;
     private JPanel tablePanel;
@@ -108,6 +109,9 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         showAttachmentActionsCheckbox =
                 new JCheckBox("Show attachment save actions", settings.isShowAttachmentActions());
 
+        showCompareToolbarCheckbox = new JCheckBox(
+                "Show \"Compare EML With…\" button in editor toolbar", settings.isShowCompareEditorToolbarButton());
+
         var infoLabel = new com.intellij.ui.components.JBLabel(
                 "Note: Reopen the Settings dialog to see newly added headers in the Color Scheme preview.",
                 com.intellij.icons.AllIcons.General.Information,
@@ -121,6 +125,8 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
                 .addComponent(infoLabel)
                 .addComponent(new TitledSeparator("Attachments"))
                 .addComponent(showAttachmentActionsCheckbox)
+                .addComponent(new TitledSeparator("Comparison"))
+                .addComponent(showCompareToolbarCheckbox)
                 .addComponentFillVertically(new JPanel(), 0)
                 .getPanel();
         rootPanel = root;
@@ -202,6 +208,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         }
         return highlightingEnabledCheckbox.isSelected() != settings.isHighlightingEnabled()
                 || showAttachmentActionsCheckbox.isSelected() != settings.isShowAttachmentActions()
+                || showCompareToolbarCheckbox.isSelected() != settings.isShowCompareEditorToolbarButton()
                 || !currentHeaders.equals(settings.getHighlightedHeaders())
                 || !currentNameOnly.equals(settings.getNameOnlyHeaders());
     }
@@ -211,6 +218,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         var settings = EmlHeaderSettings.getInstance();
         settings.setHighlightingEnabled(highlightingEnabledCheckbox.isSelected());
         settings.setShowAttachmentActions(showAttachmentActionsCheckbox.isSelected());
+        settings.setShowCompareEditorToolbarButton(showCompareToolbarCheckbox.isSelected());
         var headers = new ArrayList<String>();
         var nameOnly = new ArrayList<String>();
         for (HeaderEntry entry : tableModel.entries) {
@@ -231,6 +239,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         var settings = EmlHeaderSettings.getInstance();
         highlightingEnabledCheckbox.setSelected(settings.isHighlightingEnabled());
         showAttachmentActionsCheckbox.setSelected(settings.isShowAttachmentActions());
+        showCompareToolbarCheckbox.setSelected(settings.isShowCompareEditorToolbarButton());
         updateTableEnabled();
         tableModel.entries.clear();
         for (String header : settings.getHighlightedHeaders()) {
@@ -336,6 +345,7 @@ public final class EmlHeaderSettingsConfigurable implements Configurable {
         rootPanel = null;
         highlightingEnabledCheckbox = null;
         showAttachmentActionsCheckbox = null;
+        showCompareToolbarCheckbox = null;
     }
 
     javax.swing.table.TableModel getTableModel() {

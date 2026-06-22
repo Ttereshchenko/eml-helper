@@ -89,6 +89,19 @@ class EmlHeaderSettingsStateTest {
     }
 
     @Test
+    void testDefaultShowCompareEditorToolbarButton() {
+        assertTrue(settings.isShowCompareEditorToolbarButton());
+    }
+
+    @Test
+    void testSetShowCompareEditorToolbarButton() {
+        settings.setShowCompareEditorToolbarButton(false);
+        assertFalse(settings.isShowCompareEditorToolbarButton());
+        settings.setShowCompareEditorToolbarButton(true);
+        assertTrue(settings.isShowCompareEditorToolbarButton());
+    }
+
+    @Test
     void testLoadState() {
         EmlHeaderSettings.State newState = new EmlHeaderSettings.State();
         newState.highlightingEnabled = false;

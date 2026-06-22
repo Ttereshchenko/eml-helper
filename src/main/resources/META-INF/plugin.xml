@@ -10,6 +10,7 @@
           <li><strong>Syntax Highlighting:</strong> Colorize headers, MIME boundaries, and body content. Customize colors per-header in the color scheme settings.</li>
           <li><strong>Code Folding:</strong> Collapse and expand nested MIME parts. RFC 2047 encoded header values (e.g. <code>=?UTF-8?...?=</code>) are automatically folded into human-readable text.</li>
           <li><strong>Customization:</strong> Add custom headers to the highlight list and toggle highlighting globally via Settings.</li>
+          <li><strong>EML Comparison:</strong> Compare two <code>.eml</code> messages in the diff viewer. Headers, decoded bodies and attachments (matched by SHA-256) are normalized so encoding noise (base64 / quoted-printable, RFC 2047 encoded words, reordered headers, random MIME boundaries) no longer shows up as differences; a toolbar toggle flips between the decoded view and the raw source.</li>
         </ul>
 
         <h3>Attachments & Conversion</h3>
@@ -28,7 +29,7 @@
         <h3>SMTP & Delivery Testing</h3>
         <ul>
           <li><strong>Send EML:</strong> A powerful, <i>swaks</i>-equivalent embedded client. Send EMLs through configured profiles using STARTTLS, TLS-on-connect, and SASL (including SCRAM-SHA-256).</li>
-          <li><strong>Quick Access:</strong> A "Send EML..." button directly in the editor toolbar, which can be toggled off in settings.</li>
+          <li><strong>Quick Access:</strong> A <strong>MailKit</strong> button in the editor toolbar groups the per-file actions — <i>Send EML…</i> and <i>Compare EML With…</i> — in a dropdown; each can be toggled off in settings.</li>
           <li><strong>Batch Sending:</strong> Select several EML files and send them in one go — a shared envelope, per-file progress right in the dialog, and a choice to continue or stop when a message fails.</li>
           <li><strong>Advanced SMTP Features:</strong> ESMTP extensions, XCLIENT, HAProxy PROXY v1/v2, and per-send envelope overrides.</li>
           <li><strong>Save Overrides to Profile:</strong> Tweak the host, port, or envelope right in the Send dialog and optionally write the new values back to the selected profile — perfect for switching environments.</li>
@@ -173,7 +174,6 @@
                 icon="/icons/eml.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
-            <add-to-group group-id="EditorContextBarMenu" anchor="first"/>
         </action>
         <action id="mailkit.ShowRecentSmtpSends"
                 class="com.github.ttereshchenko.mailkit.smtp.ui.ShowRecentSmtpSendsAction"
@@ -182,5 +182,30 @@
                 icon="/icons/eml.svg">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <action id="mailkit.CompareEmlFiles"
+                class="com.github.ttereshchenko.mailkit.comparison.CompareEmlAction"
+                text="Compare EML Files"
+                description="Compare the two selected EML messages side by side"
+                icon="/icons/eml-compare.svg">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action id="mailkit.CompareEmlWith"
+                class="com.github.ttereshchenko.mailkit.comparison.CompareEmlWithAction"
+                text="Compare EML With…"
+                description="Compare this EML message against another EML file"
+                icon="/icons/eml-compare.svg">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <group id="mailkit.EmlEditorToolbarGroup"
+               class="com.github.ttereshchenko.mailkit.comparison.EmlEditorToolbarGroup"
+               text="MailKit"
+               description="MailKit actions for this EML file"
+               icon="/icons/eml.svg"
+               popup="true">
+            <add-to-group group-id="EditorContextBarMenu" anchor="first"/>
+            <reference ref="mailkit.SendViaSmtp"/>
+            <reference ref="mailkit.CompareEmlWith"/>
+        </group>
     </actions>
 </idea-plugin>
