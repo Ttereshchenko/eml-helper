@@ -1615,6 +1615,40 @@ class MsgToEmlConverterTest {
         assertFalse(eml.contains("=?UTF-8?B?44Cc?="), "Subject must not be Shift_JIS-mojibaked: " + eml);
     }
 
+    /**
+     * Codepage regression (round 12): the round-8/10/11 charsetForCodepage fixes corrected the body,
+     * attachment name and the main-store strings, but POI's guess7BitEncoding ALSO decodes the
+     * recipient-table PT_STRING8 chunks (To/Cc/Bcc PR_DISPLAY_NAME / PR_EMAIL_ADDRESS) with the same
+     * buggy general charset, and applySourceCodepage never re-decoded those. So a cp1256 ANSI MSG's
+     * recipient name kept the Hebrew Cp1255 mojibake even though its Subject and body rendered Arabic.
+     * The fix widens applySourceCodepage to the recipient chunks too.
+     *
+     * <p>Byte sequence C7 E1 D3 E1 C7 E3 = "السلام" under windows-1256; the display name is RFC 2047
+     * base64, so the correct decode yields the UTF-8 base64 "2KfZhNiz2YTYp9mF".
+     */
+    @Test
+    void arabicAnsiRecipientNameDecodedWithWindows1256NotHebrew() throws Exception {
+        var arabicBytes = new byte[] {(byte) 0xC7, (byte) 0xE1, (byte) 0xD3, (byte) 0xE1, (byte) 0xC7, (byte) 0xE3};
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Arabic recipient codepage test")
+                .sender("Alice", "alice@example.com")
+                .recipientToAnsi(arabicBytes, "bob@example.com")
+                .internetCpid(1256)
+                .messageCodepage(1256)
+                // ANSI body so POI's has7BitEncodingStrings() triggers the codepage path.
+                .textBodyAnsi(arabicBytes)
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        // Correct (windows-1256): "السلام" UTF-8 -> RFC 2047 base64 "2KfZhNiz2YTYp9mF".
+        assertTrue(
+                eml.contains("2KfZhNiz2YTYp9mF"),
+                "Recipient display name must be decoded with windows-1256 (not Hebrew Cp1255): " + eml);
+        // Buggy (Cp1255): the same bytes decode to Hebrew -> RFC 2047 base64 "1rfXkdeD15HWt9eT".
+        assertFalse(eml.contains("1rfXkdeD15HWt9eT"), "Recipient name must NOT contain Cp1255 Hebrew mojibake: " + eml);
+    }
+
     @Test
     void genuineRtfBodyPreservesWindows1252UndefinedBytes() throws Exception {
         // Audit M2: a genuine RTF body is preserved as a byte-faithful body.rtf attachment. The previous

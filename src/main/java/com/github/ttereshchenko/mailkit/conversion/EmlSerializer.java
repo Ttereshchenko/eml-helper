@@ -947,6 +947,62 @@ public final class EmlSerializer {
         return result.isEmpty() ? "application/octet-stream" : result;
     }
 
+    /**
+     * Removes any {@code name} / {@code filename} parameter (including RFC 2231 {@code name*}=…
+     * continuations) from a Content-Type value, preserving the media type and every other parameter —
+     * notably {@code charset} and {@code method}. Used before the serializer appends its own
+     * {@code name=} parameter so the emitted Content-Type cannot carry a duplicate parameter, which
+     * rfc2045 §5.1 forbids. Parameter splitting is quote-aware: a {@code ';'} inside a quoted value is
+     * not treated as a separator.
+     */
+    private static String dropNameParameters(String mimeType) {
+        var firstSemicolon = indexOfUnquoted(mimeType, ';', 0);
+        if (firstSemicolon < 0) {
+            return mimeType;
+        }
+        var result = new StringBuilder(mimeType.substring(0, firstSemicolon).trim());
+        var position = firstSemicolon + 1;
+        while (position <= mimeType.length()) {
+            var next = indexOfUnquoted(mimeType, ';', position);
+            var end = next < 0 ? mimeType.length() : next;
+            var parameter = mimeType.substring(position, end).trim();
+            if (!parameter.isEmpty() && !isNameParameter(parameter)) {
+                result.append("; ").append(parameter);
+            }
+            if (next < 0) {
+                break;
+            }
+            position = next + 1;
+        }
+        return result.toString();
+    }
+
+    /** Whether a Content-Type parameter's attribute is {@code name} or {@code filename} (RFC 2231 forms included). */
+    private static boolean isNameParameter(String parameter) {
+        var equals = parameter.indexOf('=');
+        var attribute =
+                (equals < 0 ? parameter : parameter.substring(0, equals)).trim().toLowerCase(Locale.ROOT);
+        var star = attribute.indexOf('*');
+        if (star >= 0) {
+            attribute = attribute.substring(0, star);
+        }
+        return attribute.equals("name") || attribute.equals("filename");
+    }
+
+    /** Index of the first {@code target} at or after {@code from} not inside a double-quoted run, or -1. */
+    private static int indexOfUnquoted(String value, char target, int from) {
+        var inQuotes = false;
+        for (var index = from; index < value.length(); index++) {
+            var character = value.charAt(index);
+            if (character == '"') {
+                inQuotes = !inQuotes;
+            } else if (character == target && !inQuotes) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
     /** True for the composite media types (multipart/*, message/*) that cannot carry a base64 leaf body. */
     private static boolean isCompositeMimeType(String mimeType) {
         var slash = mimeType.indexOf('/');
@@ -1303,7 +1359,11 @@ public final class EmlSerializer {
                 // messages take the nestedEml path above and keep their message/rfc822 type.)
                 safeMimeType = "application/octet-stream";
             }
-            headers.append("Content-Type: ").append(safeMimeType);
+            // When a name= parameter is appended below, drop any name/filename parameter the stored MIME
+            // tag carried so the Content-Type cannot end up with a duplicate parameter (rfc2045 §5.1);
+            // charset/method and other parameters are preserved (the only decode hint a base64 part has).
+            // With no filename the stored value is kept verbatim (including any name= it supplies).
+            headers.append("Content-Type: ").append(filename != null ? dropNameParameters(safeMimeType) : safeMimeType);
             if (filename != null) {
                 headers.append("; ").append(filenameParameter("name", filename));
             }

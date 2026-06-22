@@ -22,6 +22,45 @@ class EmlSerializerTest {
     }
 
     @Test
+    void attachmentContentTypePreservesStoredCharsetParameter() throws Exception {
+        // A text attachment's stored MIME tag carries the charset that is the only decode hint for its
+        // base64 bytes; the serializer must keep it while appending its own name= parameter. Before the
+        // fix the MSG driver truncated the tag at the first ';', dropping the charset.
+        var serializer = new EmlSerializer();
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        serializer.addAttachment(
+                "notes.txt", "text/plain; charset=koi8-r", "x".getBytes(StandardCharsets.UTF_8), null, false);
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(
+                eml.contains("Content-Type: text/plain; charset=koi8-r; name=\"notes.txt\""),
+                "stored charset must survive alongside the appended name: " + eml);
+    }
+
+    @Test
+    void attachmentContentTypeDropsDuplicateStoredNameParameter() throws Exception {
+        // Outlook sometimes stores a name= parameter on PR_ATTACH_MIME_TAG; the serializer appends its
+        // own, so the stored one must be dropped to avoid a duplicate parameter (rfc2045 §5.1). Before
+        // the fix the PST driver passed the tag through verbatim and emitted two name= parameters.
+        var serializer = new EmlSerializer();
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        serializer.addAttachment(
+                "real.png", "image/png; name=\"stored.png\"", "x".getBytes(StandardCharsets.UTF_8), null, false);
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(
+                eml.contains("Content-Type: image/png; name=\"real.png\""),
+                "the serializer's own name= must be the only one: " + eml);
+        assertFalse(eml.contains("stored.png"), "the stored duplicate name= must be dropped: " + eml);
+    }
+
+    @Test
     void testTransportHeaderLoneCarriageReturnIsNeutralized() throws Exception {
         // A bare CR (no LF) inside a passed-through transport header must not act as a line break a
         // lenient parser reads as an injected header (RFC 5322 §2.2). Before the fix it was emitted

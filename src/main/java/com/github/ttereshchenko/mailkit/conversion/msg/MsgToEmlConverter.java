@@ -553,11 +553,12 @@ public final class MsgToEmlConverter {
     private static String pickMimeType(AttachmentChunks chunks) {
         var mime = chunkValue(chunks.getAttachMimeTag());
         if (mime != null && !mime.isBlank()) {
-            // Outlook occasionally stores parameters on PR_ATTACH_MIME_TAG (e.g. `image/png; name="x"`).
-            // The serializer appends its own `name=` parameter, so keep only the type/subtype here to
-            // avoid a Content-Type with a duplicate parameter (rfc2045 §5.1 forbids a repeated parameter).
-            var separator = mime.indexOf(';');
-            return (separator >= 0 ? mime.substring(0, separator) : mime).trim();
+            // Pass the stored PR_ATTACH_MIME_TAG through verbatim, parameters included: a charset= or
+            // method= is the only decode hint a base64 attachment carries and must survive. The serializer
+            // drops any name=/filename= parameter before appending its own name= (EmlSerializer
+            // .dropNameParameters), so a stored `image/png; name="x"` no longer yields a duplicate
+            // parameter (rfc2045 §5.1) while `text/plain; charset=koi8-r` keeps its charset.
+            return mime.trim();
         }
         return "application/octet-stream";
     }
@@ -1014,7 +1015,11 @@ public final class MsgToEmlConverter {
         }
         var listing = new StringBuilder("Distribution list members:\r\n");
         for (var member : members) {
-            var formatted = EmlSerializer.formatAddressPlain(member.name(), member.email());
+            // IMCEA-encapsulate a non-SMTP member address (an Exchange X.500/EX one-off or Address-Book
+            // DN) before rendering, exactly as the PST distribution-list path does; an SMTP/addr-spec
+            // value passes through imceaEncapsulate unchanged.
+            var email = EmlSerializer.imceaEncapsulate(member.addressType(), member.email());
+            var formatted = EmlSerializer.formatAddressPlain(member.name(), email);
             if (!formatted.isBlank()) {
                 listing.append("- ").append(formatted).append("\r\n");
             }
@@ -1422,6 +1427,11 @@ public final class MsgToEmlConverter {
      *       but only from {@code PR_MESSAGE_CODEPAGE}, exactly POI's source for these strings, never the
      *       {@code PR_INTERNET_CPID} body fallback (which would mis-decode a Subject when no message
      *       codepage is declared).
+     *   <li>POI's {@code set7BitEncoding} never visits the recipient-table chunks either, so the To/Cc/Bcc
+     *       {@code PR_DISPLAY_NAME}/{@code PR_EMAIL_ADDRESS} of an ANSI MSG keep POI's general charset —
+     *       the very one {@link #charsetForCodepage} overrides for 1256/932/874/950. They are re-decoded
+     *       with the corrected message codepage too, so recipient names match the Subject and the PST
+     *       recipient-row decode instead of mojibaking.
      * </ul>
      *
      * Must run after {@code guess7BitEncoding()}. {@link StringChunk#set7BitEncoding} re-reads only
@@ -1479,6 +1489,26 @@ public final class MsgToEmlConverter {
                     for (var chunk : attachment.getAll()) {
                         if (chunk instanceof StringChunk stringChunk) {
                             stringChunk.set7BitEncoding(attachmentCharset);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (messageCodepageCharset != null) {
+            // POI's set7BitEncoding never re-decodes the recipient-table chunks, so re-decode the To/Cc/Bcc
+            // PR_DISPLAY_NAME/PR_EMAIL_ADDRESS with the corrected message codepage — the same source and
+            // scope POI used for them — keeping recipient names consistent with the Subject and with the
+            // PST recipient-row decode for the 1256/932/874/950 code pages charsetForCodepage corrects.
+            var recipients = message.getRecipientDetailsChunks();
+            if (recipients != null) {
+                for (var recipient : recipients) {
+                    if (recipient == null) {
+                        continue;
+                    }
+                    for (var chunk : recipient.getAll()) {
+                        if (chunk instanceof StringChunk stringChunk) {
+                            stringChunk.set7BitEncoding(messageCodepageCharset);
                         }
                     }
                 }

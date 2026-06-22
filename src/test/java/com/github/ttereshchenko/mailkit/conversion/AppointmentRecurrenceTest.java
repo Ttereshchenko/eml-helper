@@ -91,6 +91,31 @@ class AppointmentRecurrenceTest {
     }
 
     @Test
+    void monthEndConsumesItsPatternTypeSpecificField() {
+        // PatternType 0x0004 (MonthEnd) carries a 4-byte PatternTypeSpecific_Month (Day) field, exactly
+        // like 0x0002 (Month) ([MS-OXOCAL] §2.2.1.44.1.3). Before the fix the MonthEnd arm consumed zero
+        // bytes, so EndType/OccurrenceCount/StartDate were read 4 bytes too early: the count clause and
+        // the series start both came out wrong. With Day=31 / EndType=END_AFTER_COUNT / count=5, a correct
+        // parse keeps the count and the 2024-01-31 start; the misaligned parse loses both.
+        var monthEnd = AppointmentRecurrence.parse(blob(
+                0x200C,
+                0x0004,
+                1,
+                new int[] {31},
+                0x2022,
+                5,
+                0,
+                new long[0],
+                new long[0],
+                date(2024, 1, 31),
+                date(2024, 1, 31)));
+
+        assertEquals("FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=-1", monthEnd.coreRule());
+        assertEquals(Integer.valueOf(5), monthEnd.count());
+        assertEquals(LocalDate.of(2024, 1, 31), monthEnd.seriesStart());
+    }
+
+    @Test
     void yearlyPatternDerivesByMonthFromTheSeriesStart() {
         var pattern = AppointmentRecurrence.parse(blob(
                 0x200D,
