@@ -1040,6 +1040,79 @@ class PstToEmlConverterTest {
         }
     }
 
+    /**
+     * A cid-referenced inline image whose MAPI flags do not mark it inline (no inline disposition, not
+     * hidden, no ATT_MHTML_REF/ATT_INVISIBLE_IN_HTML) — a common shape when another MUA produced the
+     * MIME — must still get {@code Content-Disposition: inline}, matching the MSG driver (which keys the
+     * inline flag off Content-ID presence). Before the fix PstToEmlConverter passed only
+     * {@code Attachment.isInline()}, so the part landed in multipart/related but with
+     * {@code Content-Disposition: attachment} (clients both render it and list it as a download).
+     */
+    @Test
+    void cidReferencedImageWithoutInlineFlagsStillGetsInlineDisposition() throws Exception {
+        var inlineImage = new Attachment() {
+            @Override
+            public String getLongFilename() {
+                return "logo.png";
+            }
+
+            @Override
+            public String getFilename() {
+                return "";
+            }
+
+            @Override
+            public int getAttachMethod() {
+                return 1; // afByValue
+            }
+
+            @Override
+            public byte[] getData() {
+                return new byte[] {1, 2, 3};
+            }
+
+            @Override
+            public String getMimeTag() {
+                return "image/png";
+            }
+
+            @Override
+            public String getContentId() {
+                return "logo@x";
+            }
+
+            @Override
+            public String getContentLocation() {
+                return null;
+            }
+
+            @Override
+            public boolean isInline() {
+                return false; // MAPI flags do not mark it inline; only the cid reference does
+            }
+        };
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(pstFile, "Inline image, flags unset", List.of(inlineImage), null, "") {
+                @Override
+                public String getHtmlBody() {
+                    return "<img src=\"cid:logo@x\">";
+                }
+            };
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("multipart/related"), eml);
+            assertTrue(
+                    eml.contains("Content-Disposition: inline"),
+                    "a cid-referenced inline image must get Content-Disposition: inline like MSG: " + eml);
+            assertFalse(
+                    eml.contains("Content-Disposition: attachment"),
+                    "the referenced inline image must not be demoted to attachment: " + eml);
+        }
+    }
+
     /** A by-value attachment with real bytes and an optional Content-Location. */
     private static final class DataAttachmentStub extends Attachment {
         private final String contentLocation;

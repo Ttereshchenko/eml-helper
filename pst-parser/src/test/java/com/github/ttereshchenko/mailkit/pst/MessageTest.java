@@ -145,6 +145,21 @@ class MessageTest {
     }
 
     /**
+     * Outlook hard-wraps long encapsulated lines; a wrap landing inside a {@code {\*\htmltag…}}
+     * attribute leaves a physical CR/LF in the tag content. Genuine breaks arrive as {@code \par}/
+     * {@code \line}, so the stray CR/LF must be dropped — matching the MSG fork (RtfStripper) — instead
+     * of leaking into the attribute value (e.g. splitting a long href URL).
+     */
+    @Test
+    void htmlTagContentDropsPhysicalLineWrapCrLf() {
+        assertEquals(
+                "<a href=\"http://example.com/very/long/path\">",
+                Message.decodeHtmlTagContent("<a href=\"http://example.com/very/long/\r\npath\">", "windows-1252"));
+        // a lone LF (Unix-wrapped RTF) is dropped too
+        assertEquals("abcd", Message.decodeHtmlTagContent("ab\ncd", "windows-1252"));
+    }
+
+    /**
      * C3: a message that names no code page of its own picks up the store-wide default before
      * degrading to windows-1252; a message-level code page always wins over the store's.
      */

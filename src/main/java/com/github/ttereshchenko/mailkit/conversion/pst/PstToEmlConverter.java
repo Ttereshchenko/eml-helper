@@ -1250,16 +1250,19 @@ public final class PstToEmlConverter {
             if (mime.isEmpty()) mime = "application/octet-stream";
 
             log.info("Found attachment: " + attachName + " (" + mime + ")");
+            // Strip any surrounding angle brackets so a bracketed PR_ATTACH_CONTENT_ID still matches the
+            // bracket-less cid: reference in the HTML body and stays inline (the MSG driver normalizes the
+            // same way — keep the two in step).
+            String attachContentId = EmlSerializer.normalizeContentId(attachment.getContentId());
+            // A present Content-ID makes the part an inline candidate, exactly like the MSG driver
+            // (populateAttachments: isInline = contentId != null). Keying inline solely off
+            // Attachment.isInline() (PR_ATTACH_DISPOSITION/PR_ATTACHMENT_HIDDEN/PR_ATTACH_FLAGS) emitted
+            // Content-Disposition: attachment for a cid-referenced inline image whose source flags were
+            // unset, while MSG emitted inline — a parity divergence. EmlSerializer.writeTo demotes an
+            // unreferenced cid part back to a plain attachment, so OR-ing cid presence never strays a member.
+            boolean inlineCandidate = attachContentId != null || attachment.isInline();
             serializer.addAttachment(
-                    attachName,
-                    mime,
-                    data,
-                    // Strip any surrounding angle brackets so a bracketed PR_ATTACH_CONTENT_ID still
-                    // matches the bracket-less cid: reference in the HTML body and stays inline (the
-                    // MSG driver normalizes the same way — keep the two in step).
-                    EmlSerializer.normalizeContentId(attachment.getContentId()),
-                    attachment.getContentLocation(),
-                    attachment.isInline());
+                    attachName, mime, data, attachContentId, attachment.getContentLocation(), inlineCandidate);
         }
 
         return serializer;

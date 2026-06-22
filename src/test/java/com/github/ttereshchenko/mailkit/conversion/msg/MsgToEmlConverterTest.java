@@ -1526,6 +1526,66 @@ class MsgToEmlConverterTest {
                 "Body must NOT contain Cp1255 Hebrew mojibake: " + eml);
     }
 
+    /**
+     * Codepage regression (round 10): POI's CodePageUtil.codepageToEncoding returns IBM-derived Java
+     * charsets for the Microsoft DBCS code pages (932 -> "SJIS" = Shift_JIS, not windows-31j), which
+     * differ in thousands of double-byte cells. A Japanese ANSI MSG therefore rendered the wrong glyph
+     * versus the same message exported from a PST (which uses CodePages -> windows-31j). The fix pins
+     * 932 to windows-31j.
+     *
+     * <p>CP932/windows-31j byte pair {@code 0x81 0x60} = U+FF5E FULLWIDTH TILDE ("～"); plain Shift_JIS
+     * decodes the identical bytes to U+301C WAVE DASH.
+     */
+    @Test
+    void japaneseAnsiBodyDecodedWithWindows31jNotShiftJis() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Japanese body codepage test")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .internetCpid(932)
+                .messageCodepage(932)
+                .textBodyAnsi(new byte[] {(byte) 0x81, (byte) 0x60})
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        // Correct (windows-31j): U+FF5E in UTF-8 QP
+        assertTrue(
+                eml.contains("=EF=BD=9E"),
+                "CP932 0x81 0x60 must decode to U+FF5E via windows-31j, not Shift_JIS U+301C: " + eml);
+        // Buggy (Shift_JIS): U+301C in UTF-8 QP
+        assertFalse(eml.contains("=E3=80=9C"), "Body must NOT contain Shift_JIS wave-dash mojibake: " + eml);
+    }
+
+    /**
+     * Codepage regression (round 10): codepage 874 went through POI as "cp874" = x-IBM874, which leaves
+     * the Microsoft CP874 punctuation bytes (ellipsis, smart quotes, NBSP) undefined and decodes them
+     * to U+FFFD — silent data loss, and a divergence from the PST side (x-windows-874). The fix pins
+     * 874 to x-windows-874.
+     *
+     * <p>CP874/x-windows-874 byte {@code 0x85} = U+2026 HORIZONTAL ELLIPSIS; x-IBM874 has no mapping.
+     */
+    @Test
+    void thaiAnsiBodyDecodedWithWindows874NotIbm874() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Thai body codepage test")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .internetCpid(874)
+                .messageCodepage(874)
+                .textBodyAnsi(new byte[] {(byte) 0x85})
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        // Correct (x-windows-874): U+2026 in UTF-8 QP
+        assertTrue(
+                eml.contains("=E2=80=A6"),
+                "CP874 0x85 must decode to U+2026 via x-windows-874, not IBM874 U+FFFD: " + eml);
+        // Buggy (x-IBM874): the undefined byte becomes a U+FFFD replacement char
+        assertFalse(eml.contains("=EF=BF=BD"), "Body must NOT contain a U+FFFD replacement char: " + eml);
+    }
+
     @Test
     void genuineRtfBodyPreservesWindows1252UndefinedBytes() throws Exception {
         // Audit M2: a genuine RTF body is preserved as a byte-faithful body.rtf attachment. The previous
