@@ -581,7 +581,13 @@ public class Message {
         while (index < content.length()) {
             char current = content.charAt(index);
             if (current != '\\') {
-                html.append(current);
+                // Drop physical RTF line-wrap CR/LF: Outlook hard-wraps long encapsulated lines and a
+                // wrap can fall inside a {\*\htmltag…} attribute, where genuine breaks would instead
+                // arrive as \par/\line. Mirrors RtfStripper.appendHtmlTag so the MSG and PST
+                // de-encapsulation forks recover byte-identical HTML.
+                if (current != '\r' && current != '\n') {
+                    html.append(current);
+                }
                 index++;
                 continue;
             }

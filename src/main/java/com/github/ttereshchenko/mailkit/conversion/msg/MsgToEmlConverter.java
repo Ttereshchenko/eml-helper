@@ -1476,6 +1476,20 @@ public final class MsgToEmlConverter {
             // 8-bit body, attachment names and one-off strings are not decoded as windows-1255.
             return "windows-1256";
         }
+        if (codepage == 932 || codepage == 874 || codepage == 950) {
+            // POI's codepageToEncoding maps these Microsoft DBCS code pages to IBM-derived Java charsets
+            // (932 -> "SJIS" = Shift_JIS, 874 -> "cp874" = x-IBM874, 950 -> "cp950" = x-IBM950), which
+            // differ from the windows-* variants Outlook actually wrote in thousands of double-byte cells
+            // (e.g. CP932 0x81 0x60 is U+FF5E FULLWIDTH TILDE but Shift_JIS yields U+301C WAVE DASH;
+            // CP874 0x85 is U+2026 but x-IBM874 leaves it undefined). Pin them to the same Microsoft
+            // charsets the pst-parser CodePages table uses so MSG and PST decode byte-identical ANSI
+            // messages the same way instead of drifting; the IANA names are fallbacks for a stripped JRE.
+            return switch (codepage) {
+                case 932 -> firstSupportedCharsetName("windows-31j", "Shift_JIS");
+                case 874 -> firstSupportedCharsetName("x-windows-874", "TIS-620");
+                default -> firstSupportedCharsetName("x-windows-950", "Big5"); // 950
+            };
+        }
         try {
             return CodePageUtil.codepageToEncoding(codepage, true);
         } catch (UnsupportedEncodingException unsupported) {
@@ -1483,6 +1497,20 @@ public final class MsgToEmlConverter {
                     + "its 8-bit strings were decoded with the default Windows-1252 codepage");
             return null;
         }
+    }
+
+    /**
+     * First of the candidate charset names the running JRE supports, or {@code null} so the caller
+     * falls back to the default windows-1252 decode. Mirrors pst-parser {@code CodePages.firstSupported}
+     * so a stripped JRE missing a Microsoft charset degrades to the IANA variant rather than throwing.
+     */
+    private static String firstSupportedCharsetName(String... names) {
+        for (var name : names) {
+            if (Charset.isSupported(name)) {
+                return name;
+            }
+        }
+        return null;
     }
 
     /**
