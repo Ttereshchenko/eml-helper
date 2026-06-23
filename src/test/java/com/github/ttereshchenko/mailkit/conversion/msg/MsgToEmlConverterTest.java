@@ -1527,6 +1527,76 @@ class MsgToEmlConverterTest {
     }
 
     /**
+     * Codepage regression (round 13): the HTML body shares the same POI 1256/932/874/950 typo as the
+     * plain-text body, but along two paths the text-body fix never reached. The modern binary
+     * {@code PR_HTML} chunk (PidTagHtml, PT_BINARY) is decoded by POI's {@code getHtmlBody()} with
+     * {@code codepageToEncoding(PR_INTERNET_CPID, true)} directly, and because it is a {@code ByteChunk}
+     * {@code applySourceCodepage} cannot re-decode it; that path also runs with no ANSI string chunks at
+     * all (no {@code has7BitEncodingStrings()} gate). An Arabic (cp1256) binary HTML body therefore
+     * surfaced as Hebrew, drifting from the PST driver (which decodes PR_HTML via windows-1256). The fix
+     * decodes the binary chunk with the corrected charset in {@code readHtmlBody}.
+     */
+    @Test
+    void arabicBinaryHtmlBodyIsDecodedWithWindows1256NotHebrew() throws Exception {
+        // windows-1256 bytes for "السلام" (al-salaam), wrapped in an otherwise all-ASCII HTML document.
+        var arabicBytes = new byte[] {(byte) 0xC7, (byte) 0xE1, (byte) 0xD3, (byte) 0xE1, (byte) 0xC7, (byte) 0xE3};
+        var win1256 = Charset.forName("windows-1256");
+        var htmlBytes = ("<html><body>" + new String(arabicBytes, win1256) + "</body></html>").getBytes(win1256);
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Arabic binary HTML codepage test")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                // No ANSI string chunks: the binary PR_HTML decode must be corrected even when
+                // has7BitEncodingStrings() is false (so applySourceCodepage never runs).
+                .internetCpid(1256)
+                .htmlBodyBinary(htmlBytes)
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        assertTrue(eml.contains("Content-Type: text/html; charset=UTF-8"), eml);
+        // Correct: "السلام" in UTF-8 QP is =D8=A7=D9=84=D8=B3=D9=84=D8=A7=D9=85
+        assertTrue(
+                eml.contains("=D8=A7=D9=84=D8=B3=D9=84=D8=A7=D9=85"),
+                "Binary HTML body bytes must be decoded with windows-1256 (not Hebrew Cp1255): " + eml);
+        assertFalse(
+                eml.contains("=D6=B7=D7=91=D7=83=D7=91=D6=B7=D7=93"),
+                "Binary HTML body must NOT contain Cp1255 Hebrew mojibake: " + eml);
+    }
+
+    /**
+     * Codepage regression (round 13), legacy-string variant: a string {@code PR_BODY_HTML} (PT_STRING8)
+     * chunk is decoded by POI's {@code guess7BitEncoding} with the same buggy {@code codepageToEncoding}
+     * htmlbody charset, and {@code applySourceCodepage} used to exclude BODY_HTML entirely, leaving the
+     * Hebrew mis-decode in place. The fix re-decodes the BODY_HTML StringChunk with the corrected
+     * PR_INTERNET_CPID charset alongside PR_BODY.
+     */
+    @Test
+    void arabicAnsiStringHtmlBodyIsDecodedWithWindows1256NotHebrew() throws Exception {
+        var arabicBytes = new byte[] {(byte) 0xC7, (byte) 0xE1, (byte) 0xD3, (byte) 0xE1, (byte) 0xC7, (byte) 0xE3};
+        var win1256 = Charset.forName("windows-1256");
+        var htmlBytes = ("<html><body>" + new String(arabicBytes, win1256) + "</body></html>").getBytes(win1256);
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Arabic string HTML codepage test")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .internetCpid(1256)
+                // ANSI string PR_BODY_HTML so POI's has7BitEncodingStrings() triggers the codepage path.
+                .htmlBodyAnsi(htmlBytes)
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        assertTrue(eml.contains("Content-Type: text/html; charset=UTF-8"), eml);
+        assertTrue(
+                eml.contains("=D8=A7=D9=84=D8=B3=D9=84=D8=A7=D9=85"),
+                "ANSI string HTML body must be decoded with windows-1256 (not Hebrew Cp1255): " + eml);
+        assertFalse(
+                eml.contains("=D6=B7=D7=91=D7=83=D7=91=D6=B7=D7=93"),
+                "ANSI string HTML body must NOT contain Cp1255 Hebrew mojibake: " + eml);
+    }
+
+    /**
      * Codepage regression (round 10): POI's CodePageUtil.codepageToEncoding returns IBM-derived Java
      * charsets for the Microsoft DBCS code pages (932 -> "SJIS" = Shift_JIS, not windows-31j), which
      * differ in thousands of double-byte cells. A Japanese ANSI MSG therefore rendered the wrong glyph

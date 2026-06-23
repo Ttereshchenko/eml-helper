@@ -49,6 +49,8 @@ final class MsgFixtureBuilder {
     private static final int TAG_MESSAGE_CODEPAGE = (0x3FFD << 16) | TYPE_LONG;
     private static final int TAG_ATTACH_LONG_FILENAME_ANSI = (0x3707 << 16) | TYPE_ANSI;
     private static final int TAG_BODY_HTML_UNICODE = (0x1013 << 16) | TYPE_UNICODE;
+    private static final int TAG_BODY_HTML_BINARY = (0x1013 << 16) | TYPE_BINARY; // PidTagHtml, PT_BINARY
+    private static final int TAG_BODY_HTML_ANSI = (0x1013 << 16) | TYPE_ANSI; // legacy PR_BODY_HTML PT_STRING8
     private static final int TAG_SENDER_NAME = (0x0C1A << 16) | TYPE_UNICODE;
     private static final int TAG_SENDER_EMAIL_ADDRESS = (0x0C1F << 16) | TYPE_UNICODE;
     private static final int TAG_INTERNET_MESSAGE_ID = (0x1035 << 16) | TYPE_UNICODE;
@@ -123,6 +125,23 @@ final class MsgFixtureBuilder {
 
     MsgFixtureBuilder htmlBody(String value) {
         return setUnicode(TAG_BODY_HTML_UNICODE, value);
+    }
+
+    /**
+     * The modern binary PidTagHtml chunk (PR_HTML, 0x1013 PT_BINARY) carrying raw codepage bytes
+     * verbatim — the standard HTML storage. POI decodes it via {@code getHtmlBody()} using
+     * PR_INTERNET_CPID. Pairs with {@link #internetCpid} to model an ANSI HTML body.
+     */
+    MsgFixtureBuilder htmlBodyBinary(byte[] rawBytes) {
+        return setBinary(TAG_BODY_HTML_BINARY, rawBytes);
+    }
+
+    /**
+     * The legacy string PR_BODY_HTML chunk (0x1013 PT_STRING8) carrying raw codepage bytes verbatim.
+     * Pairs with {@link #internetCpid} to model an ANSI HTML body stored as an 8-bit string.
+     */
+    MsgFixtureBuilder htmlBodyAnsi(byte[] rawBytes) {
+        return setBinary(TAG_BODY_HTML_ANSI, rawBytes);
     }
 
     /**

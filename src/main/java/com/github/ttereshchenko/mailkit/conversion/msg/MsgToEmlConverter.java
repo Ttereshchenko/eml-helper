@@ -307,7 +307,7 @@ public final class MsgToEmlConverter {
             hasPlain = true;
         }
         var hasHtml = false;
-        var html = readBody(message::getHtmlBody, "HTML", log);
+        var html = readHtmlBody(message, log);
         if (html != null && !html.isEmpty()) {
             // The HTML was decoded from its original codepage and is re-emitted as UTF-8; rewrite any
             // surviving in-document <meta charset=...> so it cannot contradict the MIME charset.
@@ -344,6 +344,44 @@ public final class MsgToEmlConverter {
             }
         }
         serializer.addAttachment("body.rtf", "application/rtf", rawRtfBytes(message, rtfText), null, false);
+    }
+
+    /**
+     * The HTML body text, decoded with the corrected source charset for the code pages POI mis-maps.
+     *
+     * <p>POI's {@link MAPIMessage#getHtmlBody()} decodes the modern binary {@code PR_HTML} chunk
+     * (PidTagHtml, PT_BINARY — the standard HTML storage per [MS-OXCMSG] §2.2.1.58.1) with
+     * {@code CodePageUtil.codepageToEncoding(PR_INTERNET_CPID, true)} — the same call whose typo turns
+     * code page 1256 into windows-1255 (Hebrew) and the Microsoft DBCS pages 932/874/950 into
+     * IBM-derived charsets (see {@link #charsetForCodepage}). Because that chunk is a {@code ByteChunk}
+     * POI decodes internally, {@link #applySourceCodepage} cannot re-decode it, and the binary path runs
+     * even for an otherwise all-Unicode message (no {@code has7BitEncodingStrings()} gate). Decode it
+     * here with the corrected charset so an Arabic/CJK/Thai HTML body matches the plain-text body and the
+     * PST driver instead of drifting. For every other code page {@code charsetForCodepage} returns POI's
+     * own charset, so the bytes are identical. The legacy string {@code PR_BODY_HTML} chunk is a
+     * {@code StringChunk} that {@link #applySourceCodepage} already re-decodes, so it falls through to
+     * POI's accessor here.
+     */
+    private static String readHtmlBody(MAPIMessage message, ConversionLog log) {
+        var mainChunks = message.getMainChunks();
+        if (mainChunks != null) {
+            var binaryChunk = mainChunks.getHtmlBodyChunkBinary();
+            if (binaryChunk != null && binaryChunk.getValue() != null) {
+                var charsetName = charsetForCodepage(
+                        readMainLong(message, MAPIProperty.INTERNET_CPID.id), "PR_INTERNET_CPID", log);
+                if (charsetName != null) {
+                    try {
+                        return new String(binaryChunk.getValue(), Charset.forName(charsetName));
+                    } catch (RuntimeException unsupported) {
+                        // An unsupported/illegal charset name from the codepage table: fall back to POI's
+                        // own decode below rather than failing the whole conversion.
+                        log.info("MSG binary HTML body codepage charset " + charsetName
+                                + " is unsupported; decoded with POI's default");
+                    }
+                }
+            }
+        }
+        return readBody(message::getHtmlBody, "HTML", log);
     }
 
     /**
@@ -1455,11 +1493,19 @@ public final class MsgToEmlConverter {
         var attachmentCharset = messageCodepageCharset != null ? messageCodepageCharset : bodyCharset;
 
         if (bodyCharset != null) {
-            var bodyChunks = mainChunks.getAll().get(MAPIProperty.BODY);
-            if (bodyChunks != null) {
-                for (var chunk : bodyChunks) {
-                    if (chunk instanceof StringChunk bodyChunk) {
-                        bodyChunk.set7BitEncoding(bodyCharset);
+            // PR_BODY and the legacy string PR_BODY_HTML are both governed by PR_INTERNET_CPID in POI's
+            // guess7BitEncoding (its bodycodepage and htmlbodycodepage), and POI decodes both with the
+            // buggy codepageToEncoding charset. Re-decode each StringChunk with the corrected bodyCharset
+            // so an ANSI 1256/932/874/950 body — plain or HTML — matches charsetForCodepage and the PST
+            // driver. (The modern binary PR_HTML chunk is a ByteChunk POI decodes internally; readHtmlBody
+            // handles that one directly.)
+            for (var bodyProperty : new MAPIProperty[] {MAPIProperty.BODY, MAPIProperty.BODY_HTML}) {
+                var bodyChunks = mainChunks.getAll().get(bodyProperty);
+                if (bodyChunks != null) {
+                    for (var chunk : bodyChunks) {
+                        if (chunk instanceof StringChunk bodyChunk) {
+                            bodyChunk.set7BitEncoding(bodyCharset);
+                        }
                     }
                 }
             }
@@ -1468,7 +1514,8 @@ public final class MsgToEmlConverter {
         if (messageCodepageCharset != null) {
             // Re-decode the remaining non-body main-store PT_STRING8 strings with the corrected message
             // codepage, mirroring the scope of POI's set7BitEncoding. BODY/BODY_HTML are excluded so the
-            // INTERNET_CPID body decode above stands.
+            // INTERNET_CPID-governed body decodes above stand (both bodies follow PR_INTERNET_CPID, not
+            // PR_MESSAGE_CODEPAGE).
             for (var entry : mainChunks.getAll().entrySet()) {
                 int propertyId = entry.getKey().id;
                 if (propertyId == MAPIProperty.BODY.id || propertyId == MAPIProperty.BODY_HTML.id) {
