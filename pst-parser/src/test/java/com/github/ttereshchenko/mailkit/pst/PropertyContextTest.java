@@ -11,6 +11,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class PropertyContextTest {
@@ -92,6 +93,68 @@ class PropertyContextTest {
                 "—”",
                 propertyContext.getProperty(0x0037),
                 "String8 bytes should be decoded using the provided charset");
+    }
+
+    /**
+     * The HTML body (String8-typed PR_HTML / legacy PidTagBodyHtml) is governed by PR_INTERNET_CPID,
+     * not the message-store code page that the other String8 properties follow ([MS-OXCMAIL]
+     * §2.1.3.5.2). The per-tag {@code overrides} map must decode PR_HTML with the internet charset
+     * while every other String8 property keeps the default store charset; the same raw bytes
+     * (0xC3 0xA9) are "é" as UTF-8 but "Ã©" as windows-1252, so a single store-charset decode of both
+     * would mojibake the body.
+     */
+    @Test
+    void decodeString8OverrideUsesInternetCharsetForHtmlBodyOnly() throws Exception {
+        var data = new byte[58];
+        var buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        buf.putShort(0, (short) 44); // ibHnpm -> page map at offset 44
+        buf.put(2, (byte) 0xEC); // bSig
+        buf.putInt(4, 0x20); // hidUserRoot -> item 1 (BTH header)
+
+        // Item 1 [16, 24): BTH header — cbKey=2, cbEnt=6, leaf, root at item 2.
+        buf.put(16, (byte) 0xB5);
+        buf.put(17, (byte) 2);
+        buf.put(18, (byte) 6);
+        buf.put(19, (byte) 0);
+        buf.putInt(20, 0x40); // hidRoot -> item 2
+
+        // Item 2 [24, 40): two records.
+        // Record A: tag 0x1013 (PR_HTML), type 0x001E (String8), HNID -> item 3.
+        buf.putShort(24, (short) 0x1013);
+        buf.putShort(26, (short) 0x001E);
+        buf.putInt(28, 0x60);
+        // Record B: tag 0x0037 (PR_SUBJECT), type 0x001E (String8), HNID -> item 4.
+        buf.putShort(32, (short) 0x0037);
+        buf.putShort(34, (short) 0x001E);
+        buf.putInt(36, 0x80);
+
+        // Item 3 [40, 42): PR_HTML bytes; Item 4 [42, 44): PR_SUBJECT bytes — both 0xC3 0xA9.
+        buf.put(40, (byte) 0xC3);
+        buf.put(41, (byte) 0xA9);
+        buf.put(42, (byte) 0xC3);
+        buf.put(43, (byte) 0xA9);
+
+        // Page map at 44: cAlloc=4, cFree=0, rgibAlloc = {16, 24, 40, 42, 44}.
+        buf.putShort(44, (short) 4);
+        buf.putShort(46, (short) 0);
+        buf.putShort(48, (short) 16);
+        buf.putShort(50, (short) 24);
+        buf.putShort(52, (short) 40);
+        buf.putShort(54, (short) 42);
+        buf.putShort(56, (short) 44);
+
+        var propertyContext = new PropertyContext(data, null, null);
+        propertyContext.decodeString8(
+                Charset.forName("windows-1252"), Map.of(MapiProperties.PR_HTML, StandardCharsets.UTF_8));
+
+        assertEquals(
+                "é",
+                propertyContext.getProperty(MapiProperties.PR_HTML),
+                "PR_HTML String8 must decode with the override (internet) charset");
+        assertEquals(
+                "Ã©",
+                propertyContext.getProperty(0x0037),
+                "other String8 properties must keep the default store charset");
     }
 
     /**

@@ -128,10 +128,13 @@ class NameToIdMap {
             if (isStringName) {
                 // The value is a signed offset into the string stream ([MS-PST] §2.4.7). A negative
                 // value would throw at position(...) and a value within 4 bytes of the end would
-                // underflow getInt(); validate before reading, and bound the payload with a long so a
-                // huge length cannot overflow the comparison. Node 0x61 is the store-wide NPID map, so a
-                // single malformed entry must not abort the whole map.
-                if (stringStream != null && propertyIdOrOffset >= 0 && propertyIdOrOffset + 4 <= stringStream.length) {
+                // underflow getInt(); validate before reading, and widen both the offset and the length
+                // bounds checks to long so a value near Integer.MAX_VALUE cannot overflow the comparison
+                // (offset + 4 wrapping negative) and slip a huge position(...) through. Node 0x61 is the
+                // store-wide NPID map, so a single malformed entry must not abort the whole map.
+                if (stringStream != null
+                        && propertyIdOrOffset >= 0
+                        && (long) propertyIdOrOffset + 4 <= stringStream.length) {
                     var stringBuffer = ByteBuffer.wrap(stringStream).order(ByteOrder.LITTLE_ENDIAN);
                     stringBuffer.position(propertyIdOrOffset);
                     int length = stringBuffer.getInt();

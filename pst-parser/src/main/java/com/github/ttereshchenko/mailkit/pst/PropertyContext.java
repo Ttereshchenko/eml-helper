@@ -286,17 +286,30 @@ class PropertyContext {
     }
 
     public void decodeString8(Charset charset) {
-        if (charset == null || charset.equals(StandardCharsets.ISO_8859_1)) {
-            return;
-        }
+        decodeString8(charset, Map.of());
+    }
+
+    /**
+     * Re-decodes the PT_STRING8 properties (parsed as raw ISO-8859-1) with their true charset. Most
+     * follow the message-store code page passed as {@code charset}; {@code overrides} supplies a
+     * different charset for specific tags. The HTML body (PR_HTML) needs this: its bytes are governed
+     * by PR_INTERNET_CPID, not the store code page ([MS-OXCMAIL] §2.1.3.5.2), so the two can
+     * legitimately differ (e.g. a GBK store with a UTF-8 HTML body) and decoding it with the store
+     * charset like the other String8 properties would mojibake the whole body.
+     */
+    public void decodeString8(Charset charset, Map<Integer, Charset> overrides) {
         for (Integer tag : string8Tags) {
+            var tagCharset = overrides.getOrDefault(tag, charset);
+            if (tagCharset == null || tagCharset.equals(StandardCharsets.ISO_8859_1)) {
+                continue;
+            }
             Object value = properties.get(tag);
             if (value instanceof String text) {
-                properties.put(tag, redecode(text, charset));
+                properties.put(tag, redecode(text, tagCharset));
             } else if (value instanceof List<?> list) {
                 var redecoded = new ArrayList<>(list.size());
                 for (Object element : list) {
-                    redecoded.add(element instanceof String text ? redecode(text, charset) : element);
+                    redecoded.add(element instanceof String text ? redecode(text, tagCharset) : element);
                 }
                 properties.put(tag, Collections.unmodifiableList(redecoded));
             }

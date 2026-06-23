@@ -50,6 +50,27 @@ class MessageTest {
         assertTrue(html.contains("<p>Hello World"), "renderable text must survive: " + html);
     }
 
+    // \binN carries N raw bytes that are not RTF: the generic control-word scan ate only "\bin3" and
+    // leaked the payload, and a raw '}' byte in it popped the group stack and desynced later output.
+    // The count must be consumed wholesale so "}X}" vanishes and "B" survives. Mirrors the sibling
+    // RtfStripper.deEncapsulateHtml fork.
+    @Test
+    void binPayloadInBodyIsConsumedNotLeaked() {
+        String rtf = "{\\rtf1\\fromhtml1 {\\*\\htmltag64 <p>}A\\bin3 }X}B{\\*\\htmltag72 </p>}}";
+        assertEquals("<p>AB</p>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    // A {\pict ...} picture group is RTF infrastructure, not de-encapsulated HTML. Before the fix its
+    // literal payload ("DEADBEEF") leaked into the body; skipping it also requires consuming the \bin
+    // payload, whose single unbalanced '{' byte would otherwise be miscounted as a nested group and
+    // swallow the trailing "Bye". Mirrors the sibling RtfStripper.deEncapsulateHtml fork.
+    @Test
+    void pictureGroupWithBinaryPayloadIsSkipped() {
+        String rtf = "{\\rtf1\\fromhtml1 {\\*\\htmltag64 <p>}Hi{\\pict\\wmetafile8\\bin1 {DEADBEEF}Bye"
+                + "{\\*\\htmltag72 </p>}}";
+        assertEquals("<p>HiBye</p>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
     // The "uc" control word declares how many fallback characters follow each unicode escape; they
     // are alternate representations of the same character and must be skipped, not emitted.
     @Test
