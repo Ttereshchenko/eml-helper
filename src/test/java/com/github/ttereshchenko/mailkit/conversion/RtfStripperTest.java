@@ -64,6 +64,28 @@ class RtfStripperTest {
     }
 
     @Test
+    void deEncapsulateHtmlConsumesBinPayloadInBody() {
+        // \binN in a non-htmlrtf run carries N raw bytes that are not RTF. Before the fix the generic
+        // control-word scan ate only "\bin3" and then leaked the payload into the body — and the raw
+        // '}' bytes in it popped the group stack, desyncing all later output. The count must be
+        // consumed wholesale so the payload "}X}" vanishes and "B" survives.
+        var rtf = "{\\rtf1\\fromhtml1 {\\*\\htmltag64 <p>}A\\bin3 }X}B{\\*\\htmltag72 </p>}}";
+        assertEquals("<p>AB</p>", RtfStripper.deEncapsulateHtml(rtf));
+    }
+
+    @Test
+    void deEncapsulateHtmlSkipsPictureGroupWithBinaryPayload() {
+        // A {\pict ...} picture group is RTF infrastructure, not de-encapsulated HTML. Before the fix
+        // {\pict was unrecognized, so its literal payload ("DEADBEEF") leaked into the body. Skipping
+        // it also requires the group-skip to consume the \bin payload: the single payload byte is an
+        // unbalanced '{' that a brace-counting skip would otherwise treat as a nested group, swallowing
+        // the trailing "Bye" and the closing htmltag.
+        var rtf = "{\\rtf1\\fromhtml1 {\\*\\htmltag64 <p>}Hi{\\pict\\wmetafile8\\bin1 {DEADBEEF}Bye"
+                + "{\\*\\htmltag72 </p>}}";
+        assertEquals("<p>HiBye</p>", RtfStripper.deEncapsulateHtml(rtf));
+    }
+
+    @Test
     void treatsParAsNewline() {
         var rtf = "{\\rtf1 Line1\\par Line2}";
         var output = RtfStripper.strip(rtf);

@@ -216,6 +216,17 @@ public final class RtfStripper {
                 continue;
             }
 
+            // \binN is followed by N bytes of raw binary data (RTF spec / [MS-OXRTFCP] §2.1.3.1.5):
+            // the payload is not RTF and must be consumed wholesale, or it leaks into the recovered
+            // HTML and any stray brace byte in it pops the group stack and desyncs all later output.
+            // Handled before the brace/suppression branches below so it also applies inside \htmlrtf
+            // runs. Mirrors strip() and the PST fork Message.extractHtmlFromRtf.
+            var afterBin = skipBin(rtfText, index);
+            if (afterBin != index) {
+                index = afterBin;
+                continue;
+            }
+
             if (rtfText.startsWith("{\\*\\htmltag", index)) {
                 index = appendHtmlTag(rtfText, index, charset, html, unicodeSkip);
                 continue;
@@ -230,17 +241,20 @@ public final class RtfStripper {
                 index = skipIgnorableGroup(rtfText, index);
                 continue;
             }
-            // The fonttbl/colortbl/stylesheet/info header tables are RTF infrastructure, not
-            // de-encapsulated HTML ([MS-OXRTFEX] section 2.1.3.1: only htmltag destinations and the
-            // non-htmlrtf character runs carry HTML). They are not the ignorable destinations the
-            // skip above handles, so without dropping them whole the generic control-word skip below
-            // eats only the keyword and then leaks the group's literal text (font face names, the
-            // colortbl ';' separators, style names) into the body. The PST fork
-            // (Message.extractHtmlFromRtf via isNonRenderableGroupStart) skips the same set.
+            // The fonttbl/colortbl/stylesheet/info header tables and the {\pict}/{\object} picture and
+            // embedded-object groups are RTF infrastructure, not de-encapsulated HTML ([MS-OXRTFEX]
+            // section 2.1.3.1: only htmltag destinations and the non-htmlrtf character runs carry HTML).
+            // They are not the {\*\…} ignorable destinations the skip above handles, so without dropping
+            // them whole the generic control-word skip below eats only the keyword and then leaks the
+            // group's literal text (font face names, the colortbl ';' separators, style names, the
+            // picture's hex/\bin payload) into the body. The PST fork (Message.extractHtmlFromRtf via
+            // isNonRenderableGroupStart) skips the same set.
             if (rtfText.startsWith("{\\fonttbl", index)
                     || rtfText.startsWith("{\\colortbl", index)
                     || rtfText.startsWith("{\\stylesheet", index)
-                    || rtfText.startsWith("{\\info", index)) {
+                    || rtfText.startsWith("{\\info", index)
+                    || rtfText.startsWith("{\\pict", index)
+                    || rtfText.startsWith("{\\object", index)) {
                 index = skipIgnorableGroup(rtfText, index);
                 continue;
             }
@@ -472,10 +486,19 @@ public final class RtfStripper {
         var index = startIndex;
         while (index < rtfText.length()) {
             var character = rtfText.charAt(index);
-            if (character == '\\' && index + 1 < rtfText.length()) {
-                // An escaped \{ \} \\ — or the leading char of any control word — is not a group brace.
-                index += 2;
-                continue;
+            if (character == '\\') {
+                // Consume a \binN binary payload before the escape skip so raw brace bytes inside it
+                // (common in {\pict}/{\object} groups) cannot unbalance the depth count.
+                var afterBin = skipBin(rtfText, index);
+                if (afterBin != index) {
+                    index = afterBin;
+                    continue;
+                }
+                if (index + 1 < rtfText.length()) {
+                    // An escaped \{ \} \\ — or the leading char of any control word — is not a group brace.
+                    index += 2;
+                    continue;
+                }
             }
             if (character == '{') {
                 depth++;
@@ -488,6 +511,43 @@ public final class RtfStripper {
             index++;
         }
         return index;
+    }
+
+    /**
+     * If a {@code \binN} control word starts at {@code index}, returns the index just past its N raw
+     * binary bytes (RTF spec / [MS-OXRTFCP] §2.1.3.1.5) — the payload is not RTF and must be consumed
+     * wholesale so its bytes (which can include stray braces) neither leak into the body nor desync the
+     * group stack. Returns {@code index} unchanged when no {@code \bin} starts here; a missing or
+     * unparsable count consumes no payload.
+     */
+    private static int skipBin(String rtfText, int index) {
+        if (!rtfText.startsWith("\\bin", index)) {
+            return index;
+        }
+        var cursor = index + 4;
+        // \bin is this control word only when its letter run ends here; otherwise it is a longer word.
+        if (cursor < rtfText.length() && Character.isLetter(rtfText.charAt(cursor))) {
+            return index;
+        }
+        var digitsStart = cursor;
+        while (cursor < rtfText.length() && Character.isDigit(rtfText.charAt(cursor))) {
+            cursor++;
+        }
+        var next = cursor;
+        if (next < rtfText.length() && rtfText.charAt(next) == ' ') {
+            next++; // a control word's numeric argument may be followed by one delimiting space
+        }
+        if (cursor > digitsStart) {
+            try {
+                var binaryLength = Integer.parseInt(rtfText.substring(digitsStart, cursor));
+                if (binaryLength > 0) {
+                    next = Math.min(rtfText.length(), next + binaryLength);
+                }
+            } catch (NumberFormatException ignored) {
+                // unparsable count — consume no payload
+            }
+        }
+        return next;
     }
 
     private static Charset resolveCharset(String rtf) {

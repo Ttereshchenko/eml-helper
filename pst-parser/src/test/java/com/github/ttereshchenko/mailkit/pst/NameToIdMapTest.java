@@ -88,6 +88,31 @@ class NameToIdMapTest {
     }
 
     @Test
+    void stringOffsetNearIntMaxDoesNotOverflowGuardAndAbortMap() {
+        var entryStream = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
+        // Entry 0: a healthy numeric property.
+        entryStream.putInt(0, 0x820F);
+        entryStream.putShort(4, (short) (3 << 1));
+        entryStream.putShort(6, (short) 0);
+        // Entry 1: string entry whose offset is within four bytes of Integer.MAX_VALUE. The bounds
+        // check `offset + 4 <= length` evaluated in 32-bit int arithmetic wrapped to a negative value
+        // (<= length), so the guard passed and position(offset) threw out of the unguarded
+        // parseStreams — dropping the entire store-wide named-property map. The long-widened guard
+        // must reject it like any other out-of-range offset and keep the healthy neighbour.
+        entryStream.putInt(8, 0x7FFFFFFD);
+        entryStream.putShort(12, (short) ((2 << 1) | 1));
+        entryStream.putShort(14, (short) 1);
+
+        var map = new NameToIdMap(pstGuidBytes(), entryStream.array(), new byte[8]);
+
+        assertEquals(
+                0x8000,
+                map.getId(PSETID_APPOINTMENT, 0x820F),
+                "A near-MAX_INT string offset must not abort the whole map");
+        assertNull(map.getId(NameToIdMap.PS_PUBLIC_STRINGS, "anything"));
+    }
+
+    @Test
     void missingEntryStreamYieldsEmptyMap() {
         var map = new NameToIdMap(pstGuidBytes(), null, null);
         assertNull(map.getId(PSETID_APPOINTMENT, 0x820D));

@@ -168,7 +168,12 @@ public class Message {
 
             byte[] data = nodeDatabase.readNodeData(node.dataBid());
             this.propertyContext = new PropertyContext(data, nodeDatabase, node);
-            this.propertyContext.decodeString8(getString8Charset());
+            // Most String8 properties follow the message-store code page, but a String8-typed PR_HTML
+            // (the legacy PidTagBodyHtml variant) carries the HTML body, whose bytes are governed by
+            // PR_INTERNET_CPID ([MS-OXCMAIL] §2.1.3.5.2) — getHtmlBody() requires the internet charset
+            // for it, exactly like the byte[]-typed variant, so override its decode here.
+            this.propertyContext.decodeString8(
+                    getString8Charset(), Map.of(MapiProperties.PR_HTML, getInternetCharset()));
         } catch (Exception exception) {
             // Degrades gracefully (all getters return their empty defaults), but record and log so
             // genuine corruption is not hidden.
@@ -355,6 +360,17 @@ public class Message {
                 continue;
             }
 
+            // \binN is followed by N bytes of raw binary data (RTF spec / [MS-OXRTFCP] §2.1.3.1.5):
+            // the payload is not RTF and must be consumed wholesale, or it leaks into the recovered
+            // HTML and any stray brace byte in it desyncs the group-state stack. Handled before the
+            // brace/suppression branches below so it also applies inside \htmlrtf runs. Mirrors the
+            // sibling RtfStripper.deEncapsulateHtml fork.
+            int afterBin = skipBin(rtf, index);
+            if (afterBin != index) {
+                index = afterBin;
+                continue;
+            }
+
             if (rtf.startsWith("{\\*\\htmltag", index)) {
                 // The group end must honor RTF escapes: an escaped \} inside the tag content would
                 // otherwise truncate the tag at the wrong brace.
@@ -509,8 +525,10 @@ public class Message {
 
     /**
      * Whether {@code index} starts an RTF group whose contents are metadata rather than renderable
-     * text: the font/color/stylesheet/info header tables and every {@code {\*\…}} destination other
-     * than {@code {\*\htmltag…}} (which the caller handles as HTML content).
+     * text: the font/color/stylesheet/info header tables, the {@code {\pict}}/{@code {\object}}
+     * picture and embedded-object groups (whose hex/{@code \bin} payload is not body text), and every
+     * {@code {\*\…}} destination other than {@code {\*\htmltag…}} (which the caller handles as HTML
+     * content).
      */
     private static boolean isNonRenderableGroupStart(String rtf, int index) {
         if (rtf.charAt(index) != '{') {
@@ -523,6 +541,8 @@ public class Message {
                 || rtf.startsWith("{\\colortbl", index)
                 || rtf.startsWith("{\\stylesheet", index)
                 || rtf.startsWith("{\\info", index)
+                || rtf.startsWith("{\\pict", index)
+                || rtf.startsWith("{\\object", index)
                 || rtf.startsWith("{\\*\\", index);
     }
 
@@ -534,9 +554,18 @@ public class Message {
         int depth = 0;
         while (index < rtf.length()) {
             char current = rtf.charAt(index);
-            if (current == '\\' && index + 1 < rtf.length()) {
-                index += 2;
-                continue;
+            if (current == '\\') {
+                // Consume a \binN binary payload before the escape skip so raw brace bytes inside it
+                // (common in {\pict}/{\object} groups) cannot unbalance the depth count.
+                int afterBin = skipBin(rtf, index);
+                if (afterBin != index) {
+                    index = afterBin;
+                    continue;
+                }
+                if (index + 1 < rtf.length()) {
+                    index += 2;
+                    continue;
+                }
             }
             if (current == '{') {
                 depth++;
@@ -549,6 +578,43 @@ public class Message {
             index++;
         }
         return index;
+    }
+
+    /**
+     * If a {@code \binN} control word starts at {@code index}, returns the index just past its N raw
+     * binary bytes (RTF spec / [MS-OXRTFCP] §2.1.3.1.5) — the payload is not RTF and must be consumed
+     * wholesale so its bytes (which can include stray braces) neither leak into the body nor desync the
+     * group stack. Returns {@code index} unchanged when no {@code \bin} starts here; a missing or
+     * unparsable count consumes no payload. Mirrors RtfStripper#skipBin.
+     */
+    private static int skipBin(String rtf, int index) {
+        if (!rtf.startsWith("\\bin", index)) {
+            return index;
+        }
+        int cursor = index + 4;
+        // \bin is this control word only when its letter run ends here; otherwise it is a longer word.
+        if (cursor < rtf.length() && Character.isLetter(rtf.charAt(cursor))) {
+            return index;
+        }
+        int digitsStart = cursor;
+        while (cursor < rtf.length() && Character.isDigit(rtf.charAt(cursor))) {
+            cursor++;
+        }
+        int next = cursor;
+        if (next < rtf.length() && rtf.charAt(next) == ' ') {
+            next++; // a control word's numeric argument may be followed by one delimiting space
+        }
+        if (cursor > digitsStart) {
+            try {
+                int binaryLength = Integer.parseInt(rtf.substring(digitsStart, cursor));
+                if (binaryLength > 0) {
+                    next = Math.min(rtf.length(), next + binaryLength);
+                }
+            } catch (NumberFormatException ignored) {
+                // unparsable count — consume no payload
+            }
+        }
+        return next;
     }
 
     /**
