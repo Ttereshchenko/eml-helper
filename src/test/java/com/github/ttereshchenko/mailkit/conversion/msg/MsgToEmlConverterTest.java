@@ -1296,6 +1296,39 @@ class MsgToEmlConverterTest {
                 "Final-Recipient must not be the bounce's own PR_DISPLAY_TO: " + eml);
     }
 
+    // --- round-15 fix: PidTagDisplayTo is a semicolon-delimited display-NAME list, not an addr-spec.
+    //     When reportFailedRecipient returns null (no resolvable recipient table) the old last-resort
+    //     code adopted PidTagDisplayTo verbatim, emitting "Final-Recipient: rfc822; John Doe; Jane Roe"
+    //     — structurally invalid per rfc3464 §2.3.2. The fix gates adoption on
+    //     EmlSerializer.looksLikeSmtpAddress(), which rejects values with spaces or multiple '@'.
+    //     When the guard blocks the value, ReportGenerator emits the conformant "rfc822; unknown". ---
+    @Test
+    void ndrDisplayToNameListProducesConformantUnknownFinalRecipient() throws Exception {
+        // No .recipientTo(...) call — the recipient table stays empty so reportFailedRecipient returns
+        // null, triggering the PidTagDisplayTo last-resort path.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Undeliverable: Hello")
+                .sender("Postmaster", "postmaster@example.com")
+                // PidTagDisplayTo is a bare display-NAME list (no '@' separator), never an addr-spec.
+                .displayTo("John Doe; Jane Roe")
+                .messageClass("REPORT.IPM.Note.NDR")
+                .reportText("Delivery has failed to all recipients.")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // New behavior: looksLikeSmtpAddress("John Doe; Jane Roe") is false (contains space, no '@'),
+        // so finalRecipient stays null and ReportGenerator emits the conformant placeholder.
+        assertTrue(
+                eml.contains("Final-Recipient: rfc822; unknown"),
+                "A display-name list must not be adopted as Final-Recipient; expected rfc822; unknown: " + eml);
+        // Old (buggy) behavior: displayTo was used verbatim, producing a semicolon-split name list
+        // that MIME parsers cannot interpret as a single addr-spec (rfc3464 §2.3.2).
+        assertFalse(
+                eml.contains("Final-Recipient: rfc822; John Doe"),
+                "A bare display name must never appear in the Final-Recipient field: " + eml);
+    }
+
     // --- finding 3: BCC-class recipients must be excluded from iCal ATTENDEE lines (RFC 5546 —
     //     attendees are the visible participants). Drives the calendar path with a synthesized
     //     __nameid appointment-start so the meeting REQUEST emits ATTENDEE lines. ---

@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Date;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
@@ -619,6 +620,45 @@ class ICalendarGeneratorTest {
                 cleanGoid));
 
         assertTrue(ical.contains("UID:01ABCDEF10203040\r\n"), "UID must be uppercase hex of the GOID: " + ical);
+    }
+
+    // [MS-OXOCAL] §2.2.1.27.1 / [MS-OXCICAL] §2.1.3.1.1.20.26: a meeting received from an external
+    // RFC 5545 client carries that client's original UID inside the GlobalObjectId Data field, tagged
+    // by ASCII "vCal-Uid" + 0x01000000. That embedded UID — not the hex of the whole blob — must be
+    // exported, so a later REPLY/CANCEL still correlates with the originating event.
+    @Test
+    void uidUsesEmbeddedVCalUidWhenGlobalObjectIdWrapsExternalUid() {
+        var embeddedUid = "external-client-uid-123";
+        var tag = "vCal-Uid".getBytes(StandardCharsets.US_ASCII);
+        var uidBytes = embeddedUid.getBytes(StandardCharsets.US_ASCII);
+        // 40-byte fixed header (content irrelevant to the lookup) + tag + 0x01000000 + UID + NUL.
+        var goid = new byte[40 + tag.length + 4 + uidBytes.length + 1];
+        System.arraycopy(tag, 0, goid, 40, tag.length);
+        goid[40 + tag.length] = 0x01;
+        System.arraycopy(uidBytes, 0, goid, 40 + tag.length + 4, uidBytes.length);
+
+        var ical = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
+                "REQUEST",
+                START,
+                END,
+                null,
+                "Subject",
+                "Org",
+                "org@example.com",
+                null,
+                List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")),
+                false,
+                null,
+                null,
+                0,
+                goid));
+
+        assertTrue(
+                ical.contains("UID:" + embeddedUid + "\r\n"),
+                "UID must reuse the embedded vCal-Uid, not hex-encode the blob: " + ical);
+        assertFalse(
+                ical.contains(HexFormat.of().withUpperCase().formatHex(goid)),
+                "the whole-blob hex form must not be emitted when a vCal-Uid is embedded: " + ical);
     }
 
     // The fallback: with no stored GlobalObjectId the UID is a fresh value, but a non-empty UID line

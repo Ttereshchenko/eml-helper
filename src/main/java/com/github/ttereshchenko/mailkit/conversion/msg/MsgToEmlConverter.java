@@ -1112,7 +1112,12 @@ public final class MsgToEmlConverter {
         }
         if (finalRecipient == null || finalRecipient.isBlank()) {
             // Last resort only: no per-recipient (DSN) or reader (MDN) address was available.
-            finalRecipient = readMainStringById(message, 0x0E04); // PidTagDisplayTo
+            // PidTagDisplayTo is a semicolon-delimited display-NAME list, not an addr-spec; adopt it
+            // only when it actually is a single SMTP address, so a name list is never mislabeled as
+            // "Final-Recipient: rfc822; John Doe; Jane Roe" (rfc3464 §2.3.2). Otherwise leave it unset
+            // and let ReportGenerator emit the conformant "rfc822; unknown" placeholder.
+            var displayTo = readMainStringById(message, 0x0E04); // PidTagDisplayTo
+            finalRecipient = displayTo != null && EmlSerializer.looksLikeSmtpAddress(displayTo) ? displayTo : null;
         }
         var info = new ReportGenerator.ReportInfo(
                 deliveryReport,
