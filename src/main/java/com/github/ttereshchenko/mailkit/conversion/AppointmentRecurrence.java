@@ -88,6 +88,13 @@ public final class AppointmentRecurrence {
             }
             case PATTERN_MONTH -> {
                 var dayOfMonth = buffer.getInt();
+                if (dayOfMonth < 1) {
+                    // A day-of-month below 1 has no valid monthdaynum (rfc5545 §3.3.10: 1..31, never 0);
+                    // emitting "BYMONTHDAY=0" would make the whole RRULE unparseable. Treat the corrupt
+                    // blob as carrying no usable recurrence, exactly like the empty-mask arms above. The
+                    // existing >=31 last-day mapping already normalizes the legal upper end.
+                    return null;
+                }
                 // Outlook stores 31 for "the last day of the month" — RRULE expresses that as -1
                 // (a literal 31 would silently skip every short month).
                 byParts = ";BYMONTHDAY=" + (dayOfMonth >= 31 ? -1 : dayOfMonth);
@@ -98,6 +105,12 @@ public final class AppointmentRecurrence {
                 var byDay = byDayList(dayOfWeekMask);
                 if (byDay.isEmpty()) {
                     // As above: an empty BYDAY is invalid, so drop the unusable recurrence.
+                    return null;
+                }
+                if (occurrence < 1 || occurrence > 5) {
+                    // [MS-OXOCAL] §2.2.1.44.1.1 permits N only in 0x1..0x5 (5 = last). A corrupt N would
+                    // emit an out-of-range BYSETPOS — rfc5545 §3.3.10 setposday is 1..366 and never 0 —
+                    // making the whole RRULE unparseable; drop it like the empty-mask case above.
                     return null;
                 }
                 byParts = ";BYDAY=" + byDay + ";BYSETPOS=" + (occurrence == 5 ? -1 : occurrence);

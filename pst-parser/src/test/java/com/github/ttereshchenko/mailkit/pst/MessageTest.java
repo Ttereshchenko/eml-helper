@@ -453,6 +453,20 @@ class MessageTest {
         assertEquals("<p>before</p><p>after</p>", Message.extractHtmlFromRtf(rtf, "windows-1252"));
     }
 
+    // Round-14: an RTF control symbol (\~ \_ \- …) in a non-htmlrtf text run is two chars with no
+    // delimiter. The generic control-word scan used to run forward to the next space/brace/backslash,
+    // over-running the symbol and deleting the literal body text after it; and the \\ \{ \} escapes must
+    // be emitted as literal backslash/brace characters. Kept in lockstep with RtfStripper.deEncapsulateHtml.
+    @Test
+    void controlSymbolDoesNotSwallowFollowingText() {
+        assertEquals("ab c", Message.extractHtmlFromRtf("{\\rtf1\\fromhtml1 a\\~b c}", "windows-1252"));
+    }
+
+    @Test
+    void escapedBackslashAndBraceAreEmittedAsLiterals() {
+        assertEquals("a\\b{c}d", Message.extractHtmlFromRtf("{\\rtf1\\fromhtml1 a\\\\b\\{c\\}d}", "windows-1252"));
+    }
+
     // C1 regression: a FILETIME-0 origination date (value 0, decoding to 1601-01-01T00:00:00Z) must
     // be treated as "no date" so the converter falls through to the delivery time and does not emit
     // a bogus "Date: 1 Jan 1601" header. nonSentinelDate returns null for the sentinel instant, the

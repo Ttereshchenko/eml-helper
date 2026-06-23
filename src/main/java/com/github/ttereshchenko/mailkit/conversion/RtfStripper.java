@@ -316,6 +316,21 @@ public final class RtfStripper {
                     index = skipUnicodeFallback(rtfText, index, unicodeSkip);
                     continue;
                 }
+                if (index + 1 < rtfText.length() && !Character.isLetter(rtfText.charAt(index + 1))) {
+                    // A backslash followed by a non-letter is an RTF control symbol (\~ \_ \- \| …) or an
+                    // escaped literal (\\ \{ \}). Per the RTF grammar it is exactly two characters wide and
+                    // carries NO delimiter, so it must not fall into the generic control-word scan below —
+                    // that scan runs forward to the next space/brace/backslash and would over-run into the
+                    // following literal text, deleting it. Emit the escaped literal for \\ \{ \} (they carry
+                    // real HTML body characters, exactly like strip()); drop the other symbols. The \'hh
+                    // run is already handled above, so it never reaches here.
+                    var symbol = rtfText.charAt(index + 1);
+                    if (symbol == '\\' || symbol == '{' || symbol == '}') {
+                        html.append(symbol);
+                    }
+                    index += 2;
+                    continue;
+                }
                 var nextSpace = rtfText.indexOf(' ', index);
                 var nextSlash = rtfText.indexOf('\\', index + 1);
                 var nextBrace = rtfText.indexOf('{', index + 1);

@@ -198,6 +198,23 @@ class RtfStripperTest {
         assertFalse(RtfStripper.strip(rtf).contains("<body>"), "strip() loses HTML structure");
     }
 
+    // Round-14: an RTF control symbol (\~ \_ \- \| …) in a non-htmlrtf text run is exactly two chars with
+    // no delimiter. The generic control-word scan used to run forward to the next space/brace/backslash,
+    // over-running the symbol and deleting the literal body text that followed it.
+    @Test
+    void deEncapsulationKeepsTextAfterAControlSymbol() {
+        var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1 a\\~b c}");
+        assertEquals("ab c", html, "text after a control symbol must survive, not be swallowed by the scan");
+    }
+
+    // Round-14: the \\ \{ \} escapes carry real backslash/brace characters of the HTML body and must be
+    // emitted as literals (like strip() does), not consumed by the generic control-word scan.
+    @Test
+    void deEncapsulationEmitsEscapedBackslashAndBraceLiterals() {
+        var html = RtfStripper.deEncapsulateHtml("{\\rtf1\\fromhtml1 a\\\\b\\{c\\}d}");
+        assertEquals("a\\b{c}d", html);
+    }
+
     // R12: \pard resets paragraph formatting and produces no break — it used to be mapped to "\n",
     // adding a spurious blank line after every real \par in Outlook-generated RTF.
     @Test
