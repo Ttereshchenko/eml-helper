@@ -249,8 +249,12 @@ class TableContext {
         for (var column : columns) {
             int byteIndex = column.existenceBit() / 8;
             int bitIndex = column.existenceBit() % 8;
-            if (byteIndex < existenceBitmap.length && (existenceBitmap[byteIndex] & (1 << (7 - bitIndex))) == 0) {
-                continue; // CEB bit is 0, column does not exist for this row
+            if (byteIndex >= existenceBitmap.length || (existenceBitmap[byteIndex] & (1 << (7 - bitIndex))) == 0) {
+                // CEB bit is 0 — or its byte lies beyond the bitmap (a corrupt TCOLDESC.iBit), which
+                // [MS-PST] §2.3.4.4.1 treats the same as not-set: the column is absent for this row.
+                // The old `byteIndex < length &&` short-circuited an out-of-range bit to "present" and
+                // extracted a phantom cell from the malformed row.
+                continue;
             }
 
             if (column.offset() + column.size() > rowData.length) {

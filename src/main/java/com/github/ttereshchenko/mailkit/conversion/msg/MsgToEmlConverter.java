@@ -41,6 +41,8 @@ import org.apache.poi.hsmf.datatypes.PropertyValue;
 import org.apache.poi.hsmf.datatypes.RecipientChunks;
 import org.apache.poi.hsmf.datatypes.StringChunk;
 import org.apache.poi.hsmf.exceptions.ChunkNotFoundException;
+import org.apache.poi.poifs.filesystem.DirectoryEntry;
+import org.apache.poi.poifs.filesystem.DocumentEntry;
 import org.apache.poi.poifs.filesystem.EntryUtils;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 import org.apache.poi.util.CodePageUtil;
@@ -448,9 +450,14 @@ public final class MsgToEmlConverter {
             }
             budget.recordAttachment();
             if (isEmbeddedMessageAttachment(chunks)) {
-                var embedded = chunks.getEmbeddedMessage();
+                MAPIMessage embedded = null;
                 byte[] nestedEml;
                 try {
+                    // getEmbeddedMessage() eagerly parses the nested storage (it builds a new MAPIMessage),
+                    // so it can throw IOException/RuntimeException on a corrupt child. Keep it INSIDE the try
+                    // so one broken nested message degrades to the stub below instead of aborting the entire
+                    // parent conversion — the per-item catch cannot help a call placed before it.
+                    embedded = chunks.getEmbeddedMessage();
                     // Serialize the child to BYTES (not a char sink): a nested clear-signed S/MIME entity
                     // must reach the parent EML byte-for-byte or its signature breaks. EmlSerializer emits
                     // these bytes through its byte-exact raw-body path.
@@ -470,7 +477,7 @@ public final class MsgToEmlConverter {
                             + " MB in aggregate (including nested messages); remaining attachments were skipped");
                     break;
                 }
-                var subject = safeString(safeSubject(embedded));
+                var subject = embedded != null ? safeString(safeSubject(embedded)) : "";
                 var filename = uniqueEmbeddedName(subject.isBlank() ? "embedded" : subject, usedEmbeddedNames);
                 log.info("Found embedded message attachment: " + filename);
                 serializer.addEmbeddedMessage(filename, nestedEml);
@@ -558,8 +565,20 @@ public final class MsgToEmlConverter {
         }
         var dirChunk = chunks.getAttachmentDirectory();
         if (dirChunk != null && dirChunk.getDirectory() != null) {
+            var directory = dirChunk.getDirectory();
+            // Rewrapping an OLE object buffers the whole compound file into the heap (writeFilesystem into a
+            // ByteArrayOutputStream, peaking at several times its size). The aggregate AttachmentBudget is
+            // only consulted on the bytes this method returns, so without a pre-flight a single multi-gigabyte
+            // OLE object could OutOfMemoryError before the cap can reject it. Size the contained entries first
+            // (no copy) and skip the materialization when one object alone already exceeds the whole-tree cap.
+            long oleSize = oleDirectorySize(directory);
+            if (oleSize > AttachmentBudget.MAX_TOTAL_ATTACHMENT_BYTES) {
+                log.error("OLE attachment is about " + (oleSize / (1024 * 1024)) + " MB, exceeding the "
+                        + AttachmentBudget.maxTotalMegabytes() + " MB limit; emitting it empty");
+                return new byte[0];
+            }
             try (var fs = new POIFSFileSystem()) {
-                EntryUtils.copyNodeRecursively(dirChunk.getDirectory(), fs.getRoot());
+                EntryUtils.copyNodeRecursively(directory, fs.getRoot());
                 var out = new ByteArrayOutputStream();
                 fs.writeFilesystem(out);
                 return out.toByteArray();
@@ -570,6 +589,26 @@ public final class MsgToEmlConverter {
         }
         log.error("Attachment carries no data, emitting it empty");
         return new byte[0];
+    }
+
+    /**
+     * Recursively sums the byte size of every document entry under {@code directory}, used to bound the
+     * OLE rewrap before it buffers the compound file into the heap. Summing stops early once the running
+     * total passes the cap, so a hostile deeply-nested directory cannot make the size pass itself costly.
+     */
+    private static long oleDirectorySize(DirectoryEntry directory) {
+        long total = 0;
+        for (var entry : directory) {
+            if (entry instanceof DocumentEntry document) {
+                total += document.getSize();
+            } else if (entry instanceof DirectoryEntry subDirectory) {
+                total += oleDirectorySize(subDirectory);
+            }
+            if (total > AttachmentBudget.MAX_TOTAL_ATTACHMENT_BYTES) {
+                return total;
+            }
+        }
+        return total;
     }
 
     private static String pickFilename(AttachmentChunks chunks) {

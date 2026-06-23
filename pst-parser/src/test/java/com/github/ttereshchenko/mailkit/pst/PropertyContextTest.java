@@ -279,4 +279,47 @@ class PropertyContextTest {
 
         assertEquals("あ", propertyContext.getProperty(0x0037), "the escape sequence must survive re-decoding");
     }
+
+    /**
+     * A variable-length property whose HNID is a subnode NID (low 5 bits set) but whose host node carries
+     * no subnode tree must be dropped, never reinterpreted as a Heap ID. An NID is structurally never an
+     * HID ([MS-PST] §2.3.3.2); the old code fell back to {@code heap.getItem(value)}, which shifts off the
+     * NID's type bits and surfaces an unrelated heap item as the property value. Here HNID {@code 0x41} has
+     * hidType 1 (NID-shaped) and hidIndex 2, so the regression would return the bytes of heap item 2 (the
+     * record area itself) instead of nothing.
+     */
+    @Test
+    void subnodeNidWithoutSubnodeTreeDropsBinaryPropertyInsteadOfReadingHeap() throws Exception {
+        var data = new byte[42];
+        var buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        buf.putShort(0, (short) 32); // ibHnpm -> page map at offset 32
+        buf.put(2, (byte) 0xEC); // bSig
+        buf.putInt(4, 0x20); // hidUserRoot -> item 1 (BTH header)
+
+        // Item 1 [16, 24): BTH header — cbKey=2, cbEnt=6, leaf, root at item 2.
+        buf.put(16, (byte) 0xB5);
+        buf.put(17, (byte) 2);
+        buf.put(18, (byte) 6);
+        buf.put(19, (byte) 0);
+        buf.putInt(20, 0x40); // hidRoot -> item 2
+
+        // Item 2 [24, 32): one record — tag 0x3701 (PR_ATTACH_DATA_BIN), type 0x0102 (PT_BINARY),
+        // HNID 0x41 (hidType 1 -> a subnode NID; hidIndex 2 -> heap item 2 if wrongly read as an HID).
+        buf.putShort(24, (short) 0x3701);
+        buf.putShort(26, (short) 0x0102);
+        buf.putInt(28, 0x41);
+
+        // Page map at 32: cAlloc=2, cFree=0, rgibAlloc = {16, 24, 32}.
+        buf.putShort(32, (short) 2);
+        buf.putShort(34, (short) 0);
+        buf.putShort(36, (short) 16);
+        buf.putShort(38, (short) 24);
+        buf.putShort(40, (short) 32);
+
+        // No NodeDatabase/node -> no subnode tree exists. The NID must not be reinterpreted as a heap id.
+        var propertyContext = new PropertyContext(data, null, null);
+        assertNull(
+                propertyContext.getProperty(0x3701),
+                "a subnode-NID binary property with no subnode tree must be dropped, not read from the heap");
+    }
 }
