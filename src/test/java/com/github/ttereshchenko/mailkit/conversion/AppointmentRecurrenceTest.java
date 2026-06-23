@@ -232,6 +232,56 @@ class AppointmentRecurrenceTest {
                 date(2024, 1, 19))));
     }
 
+    @Test
+    void monthlyDayBelowOneYieldsNoPatternInsteadOfBymonthdayZero() {
+        // A PATTERN_MONTH with a day-of-month below 1 (corrupt blob) would otherwise emit "BYMONTHDAY=0",
+        // which is invalid (rfc5545 §3.3.10: monthdaynum is 1..31, never 0) and makes the whole RRULE
+        // unparseable; treat it as no recurrence so the event exports as a single clean occurrence.
+        assertNull(AppointmentRecurrence.parse(blob(
+                0x200C,
+                2,
+                1,
+                new int[] {0},
+                0x2023,
+                0,
+                0,
+                new long[0],
+                new long[0],
+                date(2024, 1, 19),
+                date(2024, 1, 19))));
+    }
+
+    @Test
+    void monthlyNthOccurrenceOutOfRangeYieldsNoPatternInsteadOfBysetposZero() {
+        // [MS-OXOCAL] §2.2.1.44.1.1 permits N only in 1..5. A corrupt N=0 would emit "BYSETPOS=0"
+        // (invalid rfc5545 §3.3.10 setposday) and N=6 an out-of-range BYSETPOS; both make the RRULE
+        // unparseable, so a non-conforming N drops the recurrence like the empty-mask arms do.
+        assertNull(AppointmentRecurrence.parse(blob(
+                0x200C,
+                3,
+                1,
+                new int[] {0x20, 0},
+                0x2023,
+                0,
+                0,
+                new long[0],
+                new long[0],
+                date(2024, 1, 19),
+                date(2024, 1, 19))));
+        assertNull(AppointmentRecurrence.parse(blob(
+                0x200C,
+                3,
+                1,
+                new int[] {0x20, 6},
+                0x2023,
+                0,
+                0,
+                new long[0],
+                new long[0],
+                date(2024, 1, 19),
+                date(2024, 1, 19))));
+    }
+
     /** Minutes since 1601-01-01 (local) for midnight of the given date. */
     private static long date(int year, int month, int day) {
         return java.time.Duration.between(

@@ -390,6 +390,55 @@ class EmlSerializerTest {
     }
 
     @Test
+    void longAsciiFilenameStaysWithinTheHardLineLimit() throws Exception {
+        EmlSerializer serializer = new EmlSerializer();
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        // Attachment filenames are attacker-controlled and uncapped (e.g. an uncapped <subject>.eml from
+        // uniqueEmbeddedName, or PR_ATTACH_LONG_FILENAME). The pure-ASCII quoted form is emitted unfolded,
+        // so before the fix a name this long produced a single Content-Disposition line well past the
+        // rfc5322 §2.1.1 998-octet hard limit. The fix routes an over-long ASCII name through the same
+        // self-wrapping RFC 2231 continuation path the non-ASCII branch already uses.
+        String longFilename = "a".repeat(1000) + ".txt";
+        serializer.addAttachment(
+                longFilename, "application/octet-stream", "x".getBytes(StandardCharsets.UTF_8), null, false);
+
+        StringWriter writer = new StringWriter();
+        serializer.writeTo(writer);
+        String eml = writer.toString();
+
+        assertTrue(eml.contains("filename*0*="), "Long ASCII filename must use RFC 2231 continuation: " + eml);
+        assertFalse(
+                eml.contains("filename=\"" + longFilename + "\""),
+                "Long ASCII filename must not be emitted as a single unfolded quoted parameter");
+        for (String line : eml.split("\r\n")) {
+            assertTrue(
+                    line.length() <= 998,
+                    "Output line exceeds the rfc5322 §2.1.1 998-octet hard limit: length " + line.length());
+        }
+    }
+
+    @Test
+    void shortAsciiFilenameStaysQuoted() throws Exception {
+        // The length gate must not disturb the common case: a normal short ASCII name keeps the compact
+        // quoted form byte-for-byte (no RFC 2231 continuation), preserving wide client compatibility.
+        EmlSerializer serializer = new EmlSerializer();
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        serializer.addAttachment(
+                "quarterly-results-2024-final.pdf",
+                "application/pdf",
+                "x".getBytes(StandardCharsets.UTF_8),
+                null,
+                false);
+
+        StringWriter writer = new StringWriter();
+        serializer.writeTo(writer);
+        String eml = writer.toString();
+
+        assertTrue(eml.contains("filename=\"quarterly-results-2024-final.pdf\""), eml);
+        assertFalse(eml.contains("filename*0*="), "A short ASCII filename must not be chunked: " + eml);
+    }
+
+    @Test
     void transportBlockBackfillsMissingEssentialHeaders() throws Exception {
         // A stored transport block that lacks From/To/Date. Before the fix the serializer took the
         // transport branch and dropped every resolved header, so From/To/Date never appeared (#11).

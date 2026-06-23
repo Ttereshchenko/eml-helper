@@ -472,6 +472,20 @@ public class Message {
                     }
                     continue;
                 }
+                if (index + 1 < rtf.length() && !Character.isLetter(rtf.charAt(index + 1))) {
+                    // A backslash followed by a non-letter is an RTF control symbol (\~ \_ \- \| …) or an
+                    // escaped literal (\\ \{ \}), exactly two characters wide with no trailing delimiter.
+                    // The generic control-word scan below runs forward to the next space/brace/backslash
+                    // and would over-run a control symbol into the following literal text, deleting it.
+                    // Emit the escaped literal for \\ \{ \} (real HTML body characters); drop the others.
+                    // Keeps this PST fork in lockstep with RtfStripper.deEncapsulateHtml.
+                    char symbol = rtf.charAt(index + 1);
+                    if (symbol == '\\' || symbol == '{' || symbol == '}') {
+                        html.append(symbol);
+                    }
+                    index += 2;
+                    continue;
+                }
                 int nextSpace = rtf.indexOf(' ', index);
                 int nextSlash = rtf.indexOf('\\', index + 1);
                 int nextBrace = rtf.indexOf('{', index + 1);

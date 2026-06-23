@@ -847,7 +847,16 @@ public final class EmlSerializer {
         filename = filename.replaceAll("[\\u0000-\\u001F\\u007F]", "_");
         if (isPureAscii(filename)) {
             var escaped = filename.replace("\\", "\\\\").replace("\"", "\\\"");
-            return key + "=\"" + escaped + "\"";
+            // The quoted form is appended verbatim by Attachment.headers() and never passes through
+            // appendHeader's fold/hard-split, so a single unbounded line would result. Filenames are
+            // attacker-controlled and uncapped (an uncapped <subject>.eml from uniqueEmbeddedName, a
+            // PR_ATTACH_LONG_FILENAME), so an over-long one would emit a line past the RFC 5322 §2.1.1
+            // 998-octet hard limit. Keep the compact quoted form for every realistic name (a filesystem
+            // component caps near 255) and fall through to the self-wrapping RFC 2231 continuation path
+            // below only for a pathological name, where each emitted chunk line stays well within 998.
+            if (key.length() + escaped.length() + 3 <= 600) {
+                return key + "=\"" + escaped + "\"";
+            }
         }
         var encodedBytes = filename.getBytes(StandardCharsets.UTF_8);
         var builder = new StringBuilder();
