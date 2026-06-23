@@ -1,10 +1,12 @@
 package com.github.ttereshchenko.mailkit.conversion;
 
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HexFormat;
 import java.util.List;
@@ -263,7 +265,7 @@ public final class ICalendarGenerator {
         // we fall back to a fresh random UID (a one-off PUBLISH needs no cross-message correlation).
         var cleanGlobalObjectId = event.cleanGlobalObjectId();
         String uid = cleanGlobalObjectId != null && cleanGlobalObjectId.length > 0
-                ? HexFormat.of().withUpperCase().formatHex(cleanGlobalObjectId)
+                ? uidFromGlobalObjectId(cleanGlobalObjectId)
                 : UUID.randomUUID().toString();
 
         // The zone only matters for timed events; all-day events are pure dates. (Real Outlook all-day
@@ -316,6 +318,39 @@ public final class ICalendarGenerator {
         builder.append("END:VCALENDAR\r\n");
 
         return foldLines(builder.toString());
+    }
+
+    /**
+     * Maps a (Clean)GlobalObjectId blob to an iCalendar UID ([MS-OXCICAL] §2.1.3.1.1.20.26).
+     *
+     * <p>Outlook normally mints its own identifier, exported verbatim as the uppercase-hex of the whole
+     * blob. But when the meeting was received from an external RFC 5545 client, Outlook preserves that
+     * client's original UID inside the GlobalObjectId Data field: after the 40-byte fixed header (16-byte
+     * class id, 4 exception-date bytes, 8-byte creation time, 8 reserved, 4-byte Data size) the Data
+     * begins with the ASCII tag {@code "vCal-Uid"} followed by {@code 0x01 0x00 0x00 0x00} and the
+     * original NUL-terminated ASCII UID ([MS-OXOCAL] §2.2.1.27.1). Re-using that embedded UID is what
+     * lets a later REPLY/CANCEL correlate with the originating event; hex-encoding the whole blob would
+     * invent a UID no other participant shares. A blob without the tag (the common Outlook-origin case)
+     * falls back to the uppercase-hex form.
+     */
+    private static String uidFromGlobalObjectId(byte[] objectId) {
+        var tag = "vCal-Uid".getBytes(StandardCharsets.US_ASCII);
+        var dataStart = 40 + tag.length + 4; // fixed header + "vCal-Uid" + 0x01 0x00 0x00 0x00
+        if (objectId.length > dataStart
+                && Arrays.equals(objectId, 40, 40 + tag.length, tag, 0, tag.length)
+                && objectId[40 + tag.length] == 0x01
+                && objectId[41 + tag.length] == 0x00
+                && objectId[42 + tag.length] == 0x00
+                && objectId[43 + tag.length] == 0x00) {
+            var end = dataStart;
+            while (end < objectId.length && objectId[end] != 0x00) {
+                end++;
+            }
+            if (end > dataStart) {
+                return new String(objectId, dataStart, end - dataStart, StandardCharsets.US_ASCII);
+            }
+        }
+        return HexFormat.of().withUpperCase().formatHex(objectId);
     }
 
     /**

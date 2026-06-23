@@ -973,7 +973,9 @@ public final class PstToEmlConverter {
                                     && !recipient.email.isBlank())
                             .findFirst()
                             .orElseGet(() -> recipients.stream()
-                                    .filter(recipient -> recipient.email != null && !recipient.email.isBlank())
+                                    .filter(recipient -> recipient.email != null
+                                            && !recipient.email.isBlank()
+                                            && (recipient.type & 0x0FFFFFFF) != EmlSerializer.RECIPIENT_TYPE_BCC)
                                     .findFirst()
                                     .orElse(null));
                     if (assigner != null) {
@@ -1038,7 +1040,9 @@ public final class PstToEmlConverter {
                                     && !recipient.email.isBlank())
                             .findFirst()
                             .orElseGet(() -> recipients.stream()
-                                    .filter(recipient -> recipient.email != null && !recipient.email.isBlank())
+                                    .filter(recipient -> recipient.email != null
+                                            && !recipient.email.isBlank()
+                                            && (recipient.type & 0x0FFFFFFF) != EmlSerializer.RECIPIENT_TYPE_BCC)
                                     .findFirst()
                                     .orElse(null));
                     if (meetingOrganizer != null) {
@@ -1458,7 +1462,12 @@ public final class PstToEmlConverter {
         }
         if (finalRecipient == null || finalRecipient.isBlank()) {
             // Last resort only: no per-recipient (DSN) or reader (MDN) address was available.
-            finalRecipient = message.getStringProperty(MapiProperties.PR_DISPLAY_TO_W);
+            // PR_DISPLAY_TO is a semicolon-delimited display-NAME list, not an addr-spec; adopt it only
+            // when it actually is a single SMTP address, so a name list is never mislabeled as
+            // "Final-Recipient: rfc822; John Doe; Jane Roe" (rfc3464 §2.3.2). Otherwise leave it unset
+            // and let ReportGenerator emit the conformant "rfc822; unknown" placeholder.
+            var displayTo = message.getStringProperty(MapiProperties.PR_DISPLAY_TO_W);
+            finalRecipient = displayTo != null && EmlSerializer.looksLikeSmtpAddress(displayTo) ? displayTo : null;
         }
         var info = new ReportGenerator.ReportInfo(
                 deliveryReport,

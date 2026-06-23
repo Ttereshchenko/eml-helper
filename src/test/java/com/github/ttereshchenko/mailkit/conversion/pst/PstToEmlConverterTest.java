@@ -2,10 +2,12 @@ package com.github.ttereshchenko.mailkit.conversion.pst;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
+import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
 import com.github.ttereshchenko.mailkit.conversion.ICalendarGenerator;
 import com.github.ttereshchenko.mailkit.pst.Attachment;
 import com.github.ttereshchenko.mailkit.pst.MapiProperties;
@@ -2620,7 +2622,7 @@ class PstToEmlConverterTest {
         var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
         try (var pstFile = new PstFile(distListPst)) {
             var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
-            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+            assertNotNull(startId);
 
             var message = new Message(pstFile, 0x122) {
                 @Override
@@ -2694,7 +2696,7 @@ class PstToEmlConverterTest {
         var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
         try (var pstFile = new PstFile(distListPst)) {
             var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
-            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+            assertNotNull(startId);
 
             var message = new Message(pstFile, 0x122) {
                 @Override
@@ -2792,7 +2794,7 @@ class PstToEmlConverterTest {
         var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
         try (var pstFile = new PstFile(distListPst)) {
             var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
-            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+            assertNotNull(startId);
 
             var message = new Message(pstFile, 0x122) {
                 @Override
@@ -3396,7 +3398,7 @@ class PstToEmlConverterTest {
         var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
         try (var pstFile = new PstFile(distListPst)) {
             var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
-            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+            assertNotNull(startId);
 
             var message = new Message(pstFile, 0x122) {
                 @Override
@@ -3469,6 +3471,102 @@ class PstToEmlConverterTest {
         }
     }
 
+    // Round-15 fix: the meeting-REPLY organizer fallback streamed ALL recipients with no BCC mask, so a
+    // BCC-class recipient could be promoted to iCal ORGANIZER. [MS-OXOMSG] §2.2.3.1 defines the class
+    // bits; RFC 5546 §3.2.3 requires the ORGANIZER to be the original meeting organizer. MSG excludes
+    // BCC via visibleAttendees; PST's secondary filter must match with the same guard.
+    //
+    // Scenario: BCC recipient (bcc@example.com) appears FIRST in the table, CC recipient
+    // (cc@example.com) appears second, no To-class recipient carries an address. The primary
+    // To-filter finds nothing, so the fallback runs. Old behavior promotes bcc@example.com; new
+    // behavior skips the BCC row (type & 0x0FFFFFFF == RECIPIENT_TYPE_BCC) and selects cc@example.com.
+    @Test
+    void meetingResponseReplyOrganizerSkipsBccAndFallsBackToCC() throws Exception {
+        var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
+        try (var pstFile = new PstFile(distListPst)) {
+            var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
+            assertNotNull(startId);
+
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Schedule.Meeting.Resp.Pos";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Accepted: Team Sync";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Attendee";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "attendee@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    // BCC recipient appears first; CC recipient appears second; no To recipient has
+                    // an address. The primary To-filter finds nothing, the fallback fires. Old code
+                    // would pick the first address-bearing row (BCC); new code must skip
+                    // RECIPIENT_TYPE_BCC (3) and select the CC row (2) instead.
+                    return List.of(
+                            new Recipient(EmlSerializer.RECIPIENT_TYPE_BCC, "Blind Copy", "bcc@example.com"),
+                            new Recipient(EmlSerializer.RECIPIENT_TYPE_CC, "Meeting Chair", "cc@example.com"));
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    if (propertyId == startId) {
+                        return Instant.parse("2026-08-01T10:00:00Z");
+                    }
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var ics = new String(
+                    Base64.getMimeDecoder()
+                            .decode(Pattern.compile("(?s)name=\"invite\\.ics\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                                    .matcher(writer.toString())
+                                    .results()
+                                    .findFirst()
+                                    .orElseThrow()
+                                    .group(1)),
+                    StandardCharsets.UTF_8);
+
+            assertTrue(ics.contains("METHOD:REPLY"), "method must be REPLY: " + ics);
+            var organizerLine = ics.lines()
+                    .filter(line -> line.startsWith("ORGANIZER"))
+                    .findFirst()
+                    .orElse("");
+            // New behavior: BCC is skipped, CC is selected as the fallback organizer.
+            assertTrue(
+                    organizerLine.contains("cc@example.com"),
+                    "ORGANIZER fallback must skip BCC and select the CC recipient: " + ics);
+            // Old (buggy) behavior: BCC was promoted to ORGANIZER because the filter had no BCC mask.
+            assertFalse(
+                    organizerLine.contains("bcc@example.com"),
+                    "A BCC-class recipient must never be promoted to ORGANIZER: " + ics);
+        }
+    }
+
     // F5 (audit follow-up): a meeting REQUEST must not list a Bcc-class recipient as an iCal ATTENDEE
     // (RFC 5546) — a blind copy would otherwise leak into a property every invitee can read.
     @Test
@@ -3476,7 +3574,7 @@ class PstToEmlConverterTest {
         var distListPst = Paths.get("src/test/resources/samples/pst/dist-list.pst");
         try (var pstFile = new PstFile(distListPst)) {
             var startId = pstFile.namedPropertyId(UUID.fromString("00062002-0000-0000-C000-000000000046"), 0x820D);
-            org.junit.jupiter.api.Assertions.assertNotNull(startId);
+            assertNotNull(startId);
 
             var message = new Message(pstFile, 0x122) {
                 @Override
