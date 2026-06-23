@@ -2,6 +2,7 @@ package com.github.ttereshchenko.mailkit.pst;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
@@ -126,6 +127,90 @@ class TableContextTest {
             clsid[i] = (byte) i;
         }
         assertArrayEquals(clsid, (byte[]) row.get(0x4321), "PT_CLSID cells must be surfaced raw");
+    }
+
+    /**
+     * A column whose existence bit lies beyond the Cell Existence Bitmap (a corrupt {@code TCOLDESC.iBit})
+     * must be treated as absent, not present: [MS-PST] §2.3.4.4.1 requires a cell with no readable CEB bit
+     * to be "not found". The old guard {@code byteIndex < length && ...} short-circuited an out-of-range
+     * byte index to false and fell through to extract the cell, surfacing a phantom property.
+     */
+    @Test
+    void columnWithOutOfRangeExistenceBitIsTreatedAsAbsent() throws Exception {
+        var tableContext = new TableContext(buildOutOfRangeExistenceBitHeap(), null, null);
+        var rows = tableContext.getRows();
+
+        assertEquals(1, rows.size());
+        Map<Integer, Object> row = rows.get(0);
+        assertEquals(7, row.get(MapiProperties.PidTagLtpRowId), "the in-range column must still be present");
+        assertNull(row.get(0x6666), "a column whose existence bit is out of range must be dropped");
+    }
+
+    /**
+     * A single-block TC heap with one row and two columns: PidTagLtpRowId (PT_LONG, offset 0, iBit 0) and
+     * a PT_LONG at offset 4 with iBit 8 — out of range for the one-byte CEB of a two-column table. The CEB
+     * byte has only bit 0 set, so PidTagLtpRowId is present and the second column is governed by the
+     * out-of-range bit.
+     */
+    private static byte[] buildOutOfRangeExistenceBitHeap() {
+        int tcInfoStart = 16;
+        int tcInfoLength = 22 + 2 * 8; // 38
+        int bthHeaderStart = tcInfoStart + tcInfoLength; // 54
+        int bthLeafStart = bthHeaderStart + 8; // 62
+        int rowMatrixStart = bthLeafStart + 8; // 70
+        int rowWidth = 12;
+        int pageMapStart = rowMatrixStart + rowWidth; // 82
+        var heap = ByteBuffer.allocate(pageMapStart + 4 + 5 * 2).order(ByteOrder.LITTLE_ENDIAN);
+
+        heap.putShort(0, (short) pageMapStart); // ibHnpm
+        heap.put(2, (byte) 0xEC); // bSig
+        heap.putInt(4, 0x20); // hidUserRoot -> item 1 (TCINFO)
+
+        // TCINFO: 2 columns, CEB at row offset 8, row width 12, row index item 2, rows item 4 (in-heap).
+        heap.put(tcInfoStart, (byte) 0x7C);
+        heap.put(tcInfoStart + 1, (byte) 2);
+        heap.putShort(tcInfoStart + 6, (short) 8); // rgib[TCI_1b]: CEB offset within a row
+        heap.putShort(tcInfoStart + 8, (short) rowWidth); // rgib[TCI_bm]: row width
+        heap.putInt(tcInfoStart + 10, 0x40); // hidRowIndex -> item 2
+        heap.putInt(tcInfoStart + 14, 0x80); // hnidRows -> item 4 (in-heap HID)
+        // TCOLDESC: PidTagLtpRowId (PT_LONG, offset 0, size 4, iBit 0)
+        heap.putShort(tcInfoStart + 22, (short) 0x0003);
+        heap.putShort(tcInfoStart + 24, (short) MapiProperties.PidTagLtpRowId);
+        heap.putShort(tcInfoStart + 26, (short) 0);
+        heap.put(tcInfoStart + 28, (byte) 4);
+        heap.put(tcInfoStart + 29, (byte) 0);
+        // TCOLDESC: tag 0x6666 (PT_LONG, offset 4, size 4, iBit 8 -> byte index 1, past the one-byte CEB)
+        heap.putShort(tcInfoStart + 30, (short) 0x0003);
+        heap.putShort(tcInfoStart + 32, (short) 0x6666);
+        heap.putShort(tcInfoStart + 34, (short) 4);
+        heap.put(tcInfoStart + 36, (byte) 4);
+        heap.put(tcInfoStart + 37, (byte) 8);
+
+        // Row-index BTH header: 4-byte keys, 4-byte entries, leaf root at item 3.
+        heap.put(bthHeaderStart, (byte) 0xB5);
+        heap.put(bthHeaderStart + 1, (byte) 4);
+        heap.put(bthHeaderStart + 2, (byte) 4);
+        heap.put(bthHeaderStart + 3, (byte) 0);
+        heap.putInt(bthHeaderStart + 4, 0x60); // hidRoot -> item 3
+
+        // One row-index entry: rowId 7 at rowIndex 0.
+        heap.putInt(bthLeafStart, 7);
+        heap.putInt(bthLeafStart + 4, 0);
+
+        // The row: rowId 7 (offset 0), 0x55555555 (offset 4), CEB 0x80 (only bit 0 -> PidTagLtpRowId).
+        heap.putInt(rowMatrixStart, 7);
+        heap.putInt(rowMatrixStart + 4, 0x55555555);
+        heap.put(rowMatrixStart + 8, (byte) 0x80);
+
+        // HN page map: 4 allocations -> rgibAlloc has 5 offsets.
+        heap.putShort(pageMapStart, (short) 4);
+        heap.putShort(pageMapStart + 2, (short) 0);
+        heap.putShort(pageMapStart + 4, (short) tcInfoStart);
+        heap.putShort(pageMapStart + 6, (short) bthHeaderStart);
+        heap.putShort(pageMapStart + 8, (short) bthLeafStart);
+        heap.putShort(pageMapStart + 10, (short) rowMatrixStart);
+        heap.putShort(pageMapStart + 12, (short) pageMapStart);
+        return heap.array();
     }
 
     /**

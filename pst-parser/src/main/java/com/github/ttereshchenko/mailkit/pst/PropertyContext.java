@@ -142,9 +142,20 @@ class PropertyContext {
                 }
             }
             case 0x0102 -> { // PT_BINARY
-                if ((value & 0x1F) != 0 && nodeDatabase != null && node != null && node.subBid() != 0) {
-                    // Subnode-resident binary (attachment payloads live here); defer until accessed.
-                    pendingSubnodeBinaries.put(tag, value);
+                if ((value & 0x1F) != 0) {
+                    // The HNID is a subnode NID, never an in-heap HID ([MS-PST] §2.3.3.2). Defer it when a
+                    // subnode tree exists (attachment payloads live here); otherwise drop it. Falling through
+                    // to heap.getItem(value) would shift off the NID's type bits and surface an unrelated heap
+                    // item as the property value (mirrors TableContext.resolveData, which never heap-reads an NID).
+                    if (nodeDatabase != null && node != null && node.subBid() != 0) {
+                        pendingSubnodeBinaries.put(tag, value);
+                    } else {
+                        LOG.log(
+                                System.Logger.Level.WARNING,
+                                () -> "PT_BINARY HNID 0x" + Integer.toHexString(value)
+                                        + " is a subnode id but no subnode tree is present; dropping property 0x"
+                                        + Integer.toHexString(tag));
+                    }
                     return;
                 }
                 byte[] data = heap.getItem(value);
@@ -208,18 +219,25 @@ class PropertyContext {
 
     /** Variable-length data addressed by an HNID: a subnode NID (low 5 bits set) or an in-heap HID. */
     private byte[] resolveVariableData(HeapOnNode heap, int hnid) {
-        if ((hnid & 0x1F) != 0 && nodeDatabase != null && node != null && node.subBid() != 0) {
-            try {
-                byte[] data = nodeDatabase.readSubnodeData(node.subBid(), hnid);
-                if (data != null) {
-                    return data;
+        if ((hnid & 0x1F) != 0) {
+            // Subnode NID ([MS-PST] §2.3.3.2): resolve against the node's subnode tree. An NID is never an
+            // in-heap HID, so on failure return null rather than falling back to heap.getItem(hnid) — that
+            // reinterprets the NID's bits as a heap id and surfaces an unrelated heap item (this mirrors
+            // TableContext.resolveData).
+            if (nodeDatabase != null && node != null && node.subBid() != 0) {
+                try {
+                    byte[] data = nodeDatabase.readSubnodeData(node.subBid(), hnid);
+                    if (data != null) {
+                        return data;
+                    }
+                } catch (IOException exception) {
+                    LOG.log(
+                            System.Logger.Level.WARNING,
+                            () -> "Failed to read subnode property data for HNID 0x" + Integer.toHexString(hnid),
+                            exception);
                 }
-            } catch (IOException exception) {
-                LOG.log(
-                        System.Logger.Level.WARNING,
-                        () -> "Failed to read subnode property data for HNID 0x" + Integer.toHexString(hnid),
-                        exception);
             }
+            return null;
         }
         return heap.getItem(hnid);
     }
