@@ -308,6 +308,29 @@ class MessageTest {
         assertTrue(normalized.contains("Привет"), "bytes must decode with the internet charset: " + normalized);
     }
 
+    // Round-18 regression: the bounded META_CHARSET value class stops at ';' (the rfc2045 §5.1 MIME
+    // parameter separator), so a legacy multi-parameter content="text/html; charset=windows-1251;
+    // format=flowed" keeps its trailing parameters. The previous [^"'>]+ value class swallowed
+    // everything up to the closing quote, dropping "; format=flowed".
+    @Test
+    void normalizeStoredHtmlPreservesTrailingMetaParametersAfterCharset() {
+        var html = "<html><head><meta http-equiv=\"Content-Type\" "
+                + "content=\"text/html; charset=windows-1251; format=flowed\"></head><body>x</body></html>";
+        var normalized = Message.normalizeStoredHtml(html, StandardCharsets.UTF_8);
+        assertTrue(normalized.contains("charset=utf-8"), "charset value must be rewritten: " + normalized);
+        assertTrue(normalized.contains("; format=flowed"), "trailing MIME parameter must survive: " + normalized);
+        assertFalse(normalized.contains("windows-1251"), "stale charset must be gone: " + normalized);
+    }
+
+    // Round-18 regression: a short-form <meta charset=... attr="..."> keeps its later attributes — the
+    // value class stops at whitespace, so a following attribute is not consumed into the charset token.
+    @Test
+    void normalizeStoredHtmlPreservesLaterAttributesAfterShortFormCharset() {
+        var normalized = Message.normalizeStoredHtml("<meta charset=windows-1251 id=\"enc\">", StandardCharsets.UTF_8);
+        assertTrue(normalized.contains("charset=utf-8"), "short-form charset must be rewritten: " + normalized);
+        assertTrue(normalized.contains("id=\"enc\""), "later attribute must survive: " + normalized);
+    }
+
     @Test
     void normalizeStoredHtmlReturnsNullForNonHtmlValues() {
         assertNull(Message.normalizeStoredHtml(null, StandardCharsets.UTF_8));
@@ -540,5 +563,26 @@ class MessageTest {
     void htmlTagContentDecodesUnicodeEscape() {
         var rtf = "{\\*\\htmltag84 <a title=\"\\u233 ?x\">}";
         assertEquals("<a title=\"" + (char) 233 + "x\">", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    // Round-18 regression: when a \\uN escape's \\uc-counted ANSI fallback is itself a \\-escaped literal
+    // (\\\\, \\{, \\}) — not the usual '?' or \\'hh — the body fork used to exit the skip loop without
+    // consuming the backslash, so the outer control-symbol branch re-emitted a spurious '\\'/'{'/'}'.
+    // A Unicode-aware reader must discard the whole fallback (it is the ANSI degradation of the char
+    // already emitted by \\uN). Mirrors the MSG fork's RtfStripper.skipUnicodeFallback.
+    @Test
+    void unicodeFallbackThatIsAnEscapedBackslashIsNotLeaked() {
+        var rtf = "{\\rtf1\\fromhtml1 \\uc1 \\u945 \\\\X}";
+        assertEquals((char) 945 + "X", Message.extractHtmlFromRtf(rtf, "windows-1252"));
+    }
+
+    // Round-18 regression: the htmltag-attribute fork had the identical \\uN fallback-skip bug — an
+    // escaped-brace fallback (\\}) leaked a stray '}' into the attribute value. Both forks now share
+    // Message.skipUnicodeFallback so the brace is consumed, not emitted.
+    @Test
+    void htmlTagContentUnicodeFallbackThatIsAnEscapedBraceIsNotLeaked() {
+        assertEquals(
+                "<a title=\"" + (char) 233 + "x\">",
+                Message.decodeHtmlTagContent("<a title=\"\\u233 \\}x\">", "windows-1252"));
     }
 }

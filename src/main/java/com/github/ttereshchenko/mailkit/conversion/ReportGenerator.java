@@ -192,7 +192,7 @@ public final class ReportGenerator {
         // unlike the optional original-recipient/original-message-id fields), so default it the same
         // way the DSN path defaults its mandatory per-recipient fields rather than dropping it.
         appendField(body, "Final-Recipient", defaulted(prefixed("rfc822", info.finalRecipient()), "rfc822; unknown"));
-        appendField(body, "Original-Message-ID", clean(info.originalMessageId()));
+        appendField(body, "Original-Message-ID", angleBracketed(clean(info.originalMessageId())));
         appendField(body, "Disposition", disposition(info.dispositionType()));
         body.append(CRLF);
     }
@@ -245,6 +245,27 @@ public final class ReportGenerator {
             return null;
         }
         return value.replace("\r", " ").replace("\n", " ").strip();
+    }
+
+    /**
+     * Wraps a {@code msg-id} in the angle brackets rfc8098 §3.2.5 / rfc5322 §3.6.4 mandate, when the
+     * stored value lacks them. Outlook stores PidTagOriginalMessageId both with and without brackets;
+     * emitting it bare yields a grammatically invalid Original-Message-ID that strict MDN parsers reject
+     * and that disagrees with the bracket-normalized Message-ID/References elsewhere in the same EML.
+     * Idempotent — mirrors {@code EmlSerializer.angleBracketed} on the top-level header path.
+     */
+    private static String angleBracketed(String value) {
+        if (value == null || value.isBlank()) {
+            return value;
+        }
+        var bracketed = value.strip();
+        if (!bracketed.startsWith("<")) {
+            bracketed = "<" + bracketed;
+        }
+        if (!bracketed.endsWith(">")) {
+            bracketed = bracketed + ">";
+        }
+        return bracketed;
     }
 
     /**
