@@ -207,6 +207,18 @@ class ReportGeneratorTest {
     }
 
     @Test
+    void readReceiptWrapsUnbracketedOriginalMessageIdInAngleBrackets() {
+        // rfc8098 §3.2.5 / rfc5322 §3.6.4 require msg-id angle brackets; Outlook stores
+        // PidTagOriginalMessageId both with and without them, so a bare value must be wrapped to
+        // emit a grammatically valid (and self-consistent) Original-Message-ID.
+        var report = generate(receiptInfo("displayed", "orig-bare@example.com"));
+
+        assertTrue(
+                report.body().contains("Original-Message-ID: <orig-bare@example.com>"),
+                "unbracketed Original-Message-ID must be wrapped in angle brackets: " + report.body());
+    }
+
+    @Test
     void readReceiptDeletedDispositionTypeIsNormalized() {
         var report = generate(receiptInfo("deleted", null));
 

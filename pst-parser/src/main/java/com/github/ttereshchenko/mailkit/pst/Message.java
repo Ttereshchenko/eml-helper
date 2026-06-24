@@ -42,6 +42,15 @@ public class Message {
     private static final Pattern HTMLTAG_LEADING_INDEX = Pattern.compile("^\\d+\\s*");
     private static final Pattern HTMLTAG_DIGITS_ONLY = Pattern.compile("\\d+");
 
+    // Keys on the charset= attribute/parameter of a <meta> tag. Group 1 is everything up to it, group 2
+    // is "charset=" plus the optional opening quote, group 3 (replaced with utf-8) is the charset token
+    // itself. The lookbehind requires charset to follow a real separator so an attribute merely ending in
+    // "charset" (e.g. data-charset=) is not matched, and the value class stops at ';' / '/' / whitespace /
+    // quote / '>' so trailing MIME parameters and later tag attributes are preserved. Mirrors the plugin
+    // module's HtmlMetaCharset.META_CHARSET (which this standalone library cannot reference).
+    private static final Pattern META_CHARSET =
+            Pattern.compile("(?i)(<meta\\s[^>]*?)(?<=[\\s;\"'])(charset\\s*=\\s*[\"']?)([^\"'\\s;/>]+)");
+
     private static final int NID_ATTACHMENT_TABLE = 0x0671;
     private static final int NID_RECIPIENT_TABLE = 0x0692;
 
@@ -270,7 +279,14 @@ public class Message {
     }
 
     private static String rewriteMetaCharsetToUtf8(String html) {
-        return html.replaceAll("(?i)(<meta[^>]*charset=[\"']?)[^\"'>]+([\"']?[^>]*>)", "$1utf-8$2");
+        // Replace only the charset *value* and leave the rest of the <meta> tag intact. The value class
+        // stops at whitespace, ';' (the rfc2045 §5.1 MIME parameter separator), '/', a quote or '>', so a
+        // legacy <meta http-equiv="Content-Type" content="text/html; charset=windows-1251; format=flowed">
+        // keeps its trailing "; format=flowed" and a short-form <meta charset=windows-1251 id="x"> keeps
+        // its later attributes — the previous [^"'>]+ value class swallowed everything up to the closing
+        // quote, dropping those tokens. Kept in lockstep with the plugin module's HtmlMetaCharset (which
+        // this standalone library cannot reference); change both together.
+        return META_CHARSET.matcher(html).replaceAll("$1$2utf-8");
     }
 
     /**
@@ -471,21 +487,10 @@ public class Message {
                     }
                     index = endNum;
                     if (index < rtf.length() && rtf.charAt(index) == ' ') index++; // control-word delimiter
-                    // Skip the "uc"-counted fallback characters that follow: each is one plain
-                    // character or one \'hh escape; a group boundary or control word ends the run.
-                    for (int skipped = 0; skipped < unicodeFallbackCount && index < rtf.length(); skipped++) {
-                        char fallback = rtf.charAt(index);
-                        if (fallback == '{' || fallback == '}') {
-                            break;
-                        }
-                        if (fallback == '\\' && index + 3 < rtf.length() && rtf.charAt(index + 1) == '\'') {
-                            index += 4;
-                        } else if (fallback == '\\') {
-                            break;
-                        } else {
-                            index++;
-                        }
-                    }
+                    // Skip the "uc"-counted ANSI fallback characters that trail the \\uN escape; the
+                    // shared helper consumes a \\-escaped literal or control-symbol fallback (\\ \{ \})
+                    // rather than leaving it for the outer loop to re-emit as duplicate body text.
+                    index = skipUnicodeFallback(rtf, index, unicodeFallbackCount);
                     continue;
                 }
                 if (index + 1 < rtf.length() && !Character.isLetter(rtf.charAt(index + 1))) {
@@ -521,6 +526,54 @@ public class Message {
             index++;
         }
         return html.toString().trim();
+    }
+
+    /**
+     * Skips the {@code count} ANSI fallback "characters" that trail a {@code \\uN} escape, honouring the
+     * current {@code \\uc} value. Each fallback may be a literal char, a {@code \\'hh} hex byte, or a
+     * control word/symbol; a group brace ends the skip. A {@code \\}-escaped literal or control symbol is
+     * consumed (it is the ANSI degradation of the Unicode char already emitted by {@code \\uN}) rather
+     * than left for the outer loop to re-emit, mirroring the plugin module's
+     * {@code RtfStripper.skipUnicodeFallback} (which this standalone library cannot reference — keep both
+     * in lockstep). Shared by {@code extractHtmlFromRtf} and {@code decodeHtmlTagContent}.
+     */
+    private static int skipUnicodeFallback(String source, int index, int count) {
+        int skipped = 0;
+        while (skipped < count && index < source.length()) {
+            char character = source.charAt(index);
+            if (character == '{' || character == '}') {
+                break;
+            }
+            if (character == '\\' && index + 1 < source.length()) {
+                char next = source.charAt(index + 1);
+                if (next == '\'') {
+                    index = Math.min(source.length(), index + 4);
+                } else if (Character.isLetter(next)) {
+                    index += 2;
+                    while (index < source.length() && Character.isLetter(source.charAt(index))) {
+                        index++;
+                    }
+                    if (index < source.length()
+                            && (source.charAt(index) == '-' || Character.isDigit(source.charAt(index)))) {
+                        if (source.charAt(index) == '-') {
+                            index++;
+                        }
+                        while (index < source.length() && Character.isDigit(source.charAt(index))) {
+                            index++;
+                        }
+                    }
+                    if (index < source.length() && source.charAt(index) == ' ') {
+                        index++;
+                    }
+                } else {
+                    index += 2;
+                }
+            } else {
+                index++;
+            }
+            skipped++;
+        }
+        return index;
     }
 
     /**
@@ -741,20 +794,8 @@ public class Message {
                         // malformed \\uN escape — skip this code point
                     }
                     // Skip the \\uc-counted ANSI fallback characters that trail the escape so they do
-                    // not leak into the attribute value as duplicate text.
-                    for (int skipped = 0; skipped < unicodeFallbackCount && index < content.length(); skipped++) {
-                        char fallback = content.charAt(index);
-                        if (fallback == '{' || fallback == '}') {
-                            break;
-                        }
-                        if (fallback == '\\' && index + 3 < content.length() && content.charAt(index + 1) == '\'') {
-                            index += 4;
-                        } else if (fallback == '\\') {
-                            break;
-                        } else {
-                            index++;
-                        }
-                    }
+                    // not leak into the attribute value as duplicate text (shared with extractHtmlFromRtf).
+                    index = skipUnicodeFallback(content, index, unicodeFallbackCount);
                 }
                 default -> {
                     // other control words (formatting noise) are dropped
