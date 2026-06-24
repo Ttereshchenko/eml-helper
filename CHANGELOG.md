@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.3.1 - 2026-06-23
+
 ### Fixed (conversion correctness)
 
 - An inline image in a converted `.pst`/`.ost` whose stored Content-ID happened to include angle brackets now displays in the message body instead of being demoted to a separate, non-displayed attachment — the `.msg` conversion already did this, so the two now match.
