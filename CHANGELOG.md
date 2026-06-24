@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed (conversion correctness)
+
+- A message attached *inside* a converted `.msg` (a forwarded or embedded email) now keeps its own stored attachment filename in the generated `.eml` instead of being named only from the embedded message's subject — so a sender-chosen name such as `Q3 Report` is preserved rather than discarded. The `.pst`/`.ost` conversion already did this, so the two now match.
+
 ## 1.3.1 - 2026-06-23
 
 ### Fixed (conversion correctness)

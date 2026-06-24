@@ -463,6 +463,12 @@ final class MsgFixtureBuilder {
         return this;
     }
 
+    /** An embedded message with NO stored filename property, so its part name falls back to the inner subject. */
+    MsgFixtureBuilder embeddedAttachment(MsgFixtureBuilder embedded) {
+        attachments.add(new AttachmentSpec(null, null, null, embedded, null, null, null, null));
+        return this;
+    }
+
     /**
      * An ATTACH_OLE (PR_ATTACH_METHOD 6) attachment: a sub-storage holding an OLE object's CONTENTS
      * stream — the storage shape POI's {@code isEmbeddedMessage()} cannot tell apart from a real
