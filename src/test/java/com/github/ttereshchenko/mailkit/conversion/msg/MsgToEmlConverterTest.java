@@ -649,21 +649,45 @@ class MsgToEmlConverterTest {
 
     @Test
     void embeddedMessagesWithEqualSubjectsGetDistinctFilenames() throws Exception {
-        // R12: two embedded messages with the same subject used to produce identically named
-        // message/rfc822 attachments.
+        // R12: two embedded messages that resolve to the same name (here: no stored filename, so both
+        // fall back to the identical inner subject "Dup") used to produce identically named
+        // message/rfc822 attachments; they must be deduped.
         var bytes = MsgFixtureBuilder.topLevel()
                 .subject("outer")
                 .textBody("body")
-                .embeddedAttachment(
-                        "a", MsgFixtureBuilder.topLevel().subject("Dup").textBody("one"))
-                .embeddedAttachment(
-                        "b", MsgFixtureBuilder.topLevel().subject("Dup").textBody("two"))
+                .embeddedAttachment(MsgFixtureBuilder.topLevel().subject("Dup").textBody("one"))
+                .embeddedAttachment(MsgFixtureBuilder.topLevel().subject("Dup").textBody("two"))
                 .toBytes();
 
         var eml = convertString(bytes);
 
         assertTrue(eml.contains("filename=\"Dup.eml\""), eml);
         assertTrue(eml.contains("filename=\"Dup (2).eml\""), eml);
+    }
+
+    @Test
+    void embeddedMessagePartNamedFromStoredFilenameThenInnerSubject() throws Exception {
+        // R19: the message/rfc822 part name comes from the attachment's own stored
+        // PR_ATTACH_LONG_FILENAME first (parity with the non-embedded branch and the PST driver),
+        // falling back to the inner subject only when no name is stored. Previously the inner subject
+        // was the sole source, discarding the sender-chosen attachment name.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("outer")
+                .textBody("body")
+                .embeddedAttachment(
+                        "Q3 Report",
+                        MsgFixtureBuilder.topLevel().subject("FW: numbers").textBody("x"))
+                .embeddedAttachment(
+                        MsgFixtureBuilder.topLevel().subject("Fallback Subject").textBody("y"))
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // Stored long-filename wins over the inner subject (which would have yielded "FW numbers.eml").
+        assertTrue(eml.contains("filename=\"Q3 Report.eml\""), eml);
+        assertFalse(eml.contains("filename=\"FW"), eml);
+        // No stored name -> inner subject is used.
+        assertTrue(eml.contains("filename=\"Fallback Subject.eml\""), eml);
     }
 
     @Test

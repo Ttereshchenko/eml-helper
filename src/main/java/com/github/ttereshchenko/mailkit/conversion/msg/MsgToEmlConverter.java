@@ -477,8 +477,28 @@ public final class MsgToEmlConverter {
                             + " MB in aggregate (including nested messages); remaining attachments were skipped");
                     break;
                 }
-                var subject = embedded != null ? safeString(safeSubject(embedded)) : "";
-                var filename = uniqueEmbeddedName(subject.isBlank() ? "embedded" : subject, usedEmbeddedNames);
+                // Name the message/rfc822 part from the attachment's OWN stored name first
+                // (PR_ATTACH_LONG_FILENAME -> PR_ATTACH_FILENAME -> PR_DISPLAY_NAME), exactly like the
+                // non-embedded branch below and the PST driver (PstToEmlConverter#processMessage). The
+                // inner subject is only a fallback: previously it was the sole source, so a sender-chosen
+                // attachment name (PidTagAttachLongFilename, [MS-OXCMSG] §2.2.2.5) was silently discarded.
+                var storedName = pickFilename(chunks);
+                if (storedName == null || storedName.isBlank()) {
+                    storedName = chunkValue(chunks.getAttachDisplayName());
+                }
+                if (storedName == null || storedName.isBlank()) {
+                    storedName = embedded != null ? safeString(safeSubject(embedded)) : "";
+                }
+                if (storedName.isBlank()) {
+                    storedName = "embedded";
+                }
+                // uniqueEmbeddedName appends ".eml"; drop a stored ".eml" suffix so a name that already
+                // ends in .eml does not become "x.eml.eml" (mirrors the PST driver's endsWith(".eml") guard).
+                if (storedName.length() >= 4
+                        && storedName.substring(storedName.length() - 4).equalsIgnoreCase(".eml")) {
+                    storedName = storedName.substring(0, storedName.length() - 4);
+                }
+                var filename = uniqueEmbeddedName(storedName, usedEmbeddedNames);
                 log.info("Found embedded message attachment: " + filename);
                 serializer.addEmbeddedMessage(filename, nestedEml);
             } else {
