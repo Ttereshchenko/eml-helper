@@ -5,6 +5,11 @@
 ### Fixed (conversion correctness)
 
 - A message attached *inside* a converted `.msg` (a forwarded or embedded email) now keeps its own stored attachment filename in the generated `.eml` instead of being named only from the embedded message's subject — so a sender-chosen name such as `Q3 Report` is preserved rather than discarded. The `.pst`/`.ost` conversion already did this, so the two now match.
+- A message converted from a `.msg` that declared its language only as a Windows locale, with no explicit code page — for example a Japanese, Arabic, or Thai message — now decodes its subject, recipient names, and other non-body text with the correct code page instead of a near-miss that garbled certain characters (such as turning a Japanese full-width tilde into a wave dash). The message body was already handled correctly.
+- A delivery-status (bounce / non-delivery) report or read receipt converted from `.msg`/`.pst`/`.ost` that stored its human-readable explanation only in the message body now shows that real explanation (for example "Delivery has failed to these recipients…") in the report instead of replacing it with a generic one-line placeholder.
+- A plain-text message converted from a `.msg` that also carried an automatically generated rich-text copy of the same text no longer attaches a redundant `body.rtf` file duplicating the body; the `.pst`/`.ost` conversion already suppressed this, so the two now match.
+- A message attached *inside* a converted `.pst`/`.ost` that has no stored attachment name now takes its name from the embedded message's own subject instead of a generic `message.eml`; the `.msg` conversion already did this, so the two now match.
+- An attachment converted from `.msg`/`.pst`/`.ost` whose stored web address (`Content-Location`) contained non-ASCII characters now writes that address using standard percent-encoding instead of placing raw non-ASCII bytes in the header, so strict mail clients accept it and can still resolve the linked content. Plain-ASCII addresses are unchanged.
 
 ## 1.3.1 - 2026-06-23
 

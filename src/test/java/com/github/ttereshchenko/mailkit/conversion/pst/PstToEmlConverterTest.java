@@ -3695,4 +3695,101 @@ class PstToEmlConverterTest {
                     "the address must not be placed in the display-name slot: " + eml);
         }
     }
+
+    /**
+     * Round-20 fix 2 (PST) — REPORT human-readable body fallback.
+     *
+     * <p>When PidTagReportText (0x1001) is absent or blank, {@code PstToEmlConverter.emitReport}
+     * must use PR_BODY (via {@code message.getBody()}) as the human-readable first part of the
+     * multipart/report. Pre-fix, a blank PidTagReportText left part 1 as ReportGenerator's terse
+     * stub "This is a delivery status notification…". With the fix the actual body text is used.
+     */
+    @Test
+    void pstNdrReportUsesPlainBodyWhenReportTextAbsent() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var failureText = "Delivery has failed to these recipients:\n  carol@example.com";
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "REPORT.IPM.Note.NDR";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Undeliverable: Hello";
+                }
+
+                @Override
+                public String getBody() {
+                    return failureText;
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getStringProperty(int propertyId) {
+                    // PidTagReportText (0x1001) is absent — returns null so the body fallback fires.
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("multipart/report"), "NDR must produce multipart/report: " + eml);
+            // PR_BODY must feed part 1 when PidTagReportText is absent.
+            assertTrue(
+                    eml.contains("Delivery has failed to these recipients"),
+                    "PR_BODY must appear as the human-readable part when reportText is absent: " + eml);
+            // Pre-fix: the stub sentence appeared when 0x1001 returned null.
+            assertFalse(
+                    eml.contains("This is a delivery status notification"),
+                    "The ReportGenerator stub must not appear when a real body text is available: " + eml);
+        }
+    }
+
+    /**
+     * Round-20 fix 4 — PST embedded-message part named from inner subject when display name is blank.
+     *
+     * <p>When the attached embedded message's {@link EmbeddedAttachmentStub#getDisplayName()} is
+     * blank (resolves to the literal "message"), the fix falls back to
+     * {@code embedMessage.getSubject()} so a meaningful filename is emitted — parity with the MSG
+     * round-19 fix. Pre-fix, the part was always named "message.eml" when the display name was
+     * blank or missing.
+     */
+    @Test
+    void pstEmbeddedMessagePartNamedFromInnerSubjectWhenDisplayNameBlank() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var innerSubject = "Quarterly Report";
+            var inner = new StubMessage(pstFile, innerSubject, List.of(), null, "");
+            // EmbeddedAttachmentStub returns "" for both getLongFilename() and getFilename();
+            // getDisplayName() also returns "" so attachName resolves to the literal "message"
+            // before the fix's inner-subject fallback.
+            var blankNameAttach = new EmbeddedAttachmentStub("");
+            var host = new StubMessage(pstFile, "Host message", List.of(blankNameAttach), inner, "");
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(host, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            // With the fix the inner subject is used; pre-fix it would be "message.eml".
+            assertTrue(
+                    eml.contains("name=\"Quarterly Report.eml\""),
+                    "embedded message with blank display name must be named from inner subject: " + eml);
+            assertFalse(
+                    eml.contains("name=\"message.eml\""),
+                    "the generic 'message' fallback must not appear when the inner subject is non-blank: " + eml);
+        }
+    }
 }
