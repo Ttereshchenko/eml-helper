@@ -1174,6 +1174,14 @@ public final class PstToEmlConverter {
                                 + message.getNid() + "; the attachment was skipped");
                         continue;
                     }
+                    if (attachName.equals("message")
+                            && !embedMessage.getSubject().isBlank()) {
+                        // Mirror the MSG driver (round-19, 276d3b5): when the attachment row carries no
+                        // filename and no PR_DISPLAY_NAME, name the message/rfc822 part from the embedded
+                        // message's own subject before the generic "message" literal, so an unnamed forwarded
+                        // item keeps a descriptive name= instead of "message.eml".
+                        attachName = embedMessage.getSubject();
+                    }
                     log.info("Found embedded message attachment: " + attachName);
                     var embedSerializer =
                             createSerializer(embedMessage, options, pstFile, depth + 1, log, stats, budget);
@@ -1469,9 +1477,19 @@ public final class PstToEmlConverter {
             var displayTo = message.getStringProperty(MapiProperties.PR_DISPLAY_TO_W);
             finalRecipient = displayTo != null && EmlSerializer.looksLikeSmtpAddress(displayTo) ? displayTo : null;
         }
+        // PidTagReportText (0x1001) is OPTIONAL; Exchange NDRs/receipts often leave it blank and store the
+        // visible explanation in PR_BODY. Fall back to the plain-text body so part 1 (rfc6522 §3) carries the
+        // real report text rather than ReportGenerator's terse stub (parity with the MSG driver).
+        var reportText = message.getStringProperty(0x1001); // PidTagReportText
+        if (reportText == null || reportText.isBlank()) {
+            var reportBody = message.getBody();
+            if (reportBody != null && !reportBody.isBlank()) {
+                reportText = reportBody;
+            }
+        }
         var info = new ReportGenerator.ReportInfo(
                 deliveryReport,
-                message.getStringProperty(0x1001), // PidTagReportText
+                reportText, // PidTagReportText, else the plain-text body (PR_BODY)
                 message.getStringProperty(0x6820), // PidTagReportingMessageTransferAgent
                 finalRecipient,
                 action,

@@ -169,6 +169,18 @@ final class MsgFixtureBuilder {
         return this;
     }
 
+    /**
+     * PidTagMessageLocaleId (PR_MESSAGE_LOCALE_ID, 0x3FF1, PT_LONG) — the Windows LCID of the
+     * message locale. When PR_MESSAGE_CODEPAGE is absent, {@code MsgToEmlConverter.applySourceCodepage}
+     * derives the general re-decode charset from this value via
+     * {@code LocaleUtil.getDefaultCodePageFromLCID}. Write it exactly like {@link #messageCodepage},
+     * mirroring the same PropertiesChunk mechanism with the locale-id property tag.
+     */
+    MsgFixtureBuilder localeId(int lcid) {
+        fixedProperties.add(new FixedProperty((0x3FF1 << 16) | TYPE_LONG, longBytes(lcid)));
+        return this;
+    }
+
     /** An attachment whose PR_ATTACH_LONG_FILENAME is a PT_STRING8 (ANSI) chunk of raw codepage bytes. */
     MsgFixtureBuilder ansiFilenameAttachment(byte[] rawFilename, String mime, byte[] data) {
         attachments.add(new AttachmentSpec(null, mime, data, null, null, null, null, rawFilename));

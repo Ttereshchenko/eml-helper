@@ -46,6 +46,7 @@ import org.apache.poi.poifs.filesystem.DocumentEntry;
 import org.apache.poi.poifs.filesystem.EntryUtils;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 import org.apache.poi.util.CodePageUtil;
+import org.apache.poi.util.LocaleUtil;
 
 /**
  * Converts an Outlook {@code .msg} file (an OLE2/CFB container, parsed by Apache POI's HSMF module)
@@ -333,6 +334,20 @@ public final class MsgToEmlConverter {
                 serializer.addBody(HtmlMetaCharset.rewriteToUtf8(recovered), "text/html; charset=UTF-8");
             } else {
                 serializer.addAttachment("body.rtf", "application/rtf", rawRtfBytes(message, rtfText), null, false);
+            }
+            return;
+        }
+        if (RtfStripper.isTextEncapsulated(rtfText)) {
+            // \fromtext-encapsulated RTF (MS-OXRTFEX) is just the plain-text body re-wrapped as RTF — the
+            // same text already stored in PR_BODY — so it must never be kept as a redundant body.rtf
+            // attachment. Mirror the PST converter (Message.isEncapsulationRtf treats \fromtext like
+            // \fromhtml and getRtfBody() returns ""): drop it when a plain body exists, and only when none
+            // does strip it to a plain-text fallback so the text is not lost.
+            if (!hasPlain) {
+                var stripped = RtfStripper.strip(rtfText);
+                if (!stripped.isEmpty()) {
+                    serializer.addBody(stripped, "text/plain; charset=UTF-8");
+                }
             }
             return;
         }
@@ -1178,9 +1193,20 @@ public final class MsgToEmlConverter {
             var displayTo = readMainStringById(message, 0x0E04); // PidTagDisplayTo
             finalRecipient = displayTo != null && EmlSerializer.looksLikeSmtpAddress(displayTo) ? displayTo : null;
         }
+        // PidTagReportText (0x1001) is OPTIONAL ([MS-OXOMSG] §2.2.2.30); Exchange-generated NDRs and read
+        // receipts routinely leave it blank and carry the visible explanation in PR_BODY instead. Fall back
+        // to the plain-text body so the human-readable part 1 (rfc6522 §3) is the real report text rather
+        // than ReportGenerator's terse stub. Only PR_BODY feeds the text/plain part — never raw PR_HTML.
+        var reportText = readMainStringById(message, 0x1001); // PidTagReportText
+        if (reportText == null || reportText.isBlank()) {
+            var reportBody = readBody(message::getTextBody, "plain text", ConversionLog.NOOP);
+            if (reportBody != null && !reportBody.isBlank()) {
+                reportText = reportBody;
+            }
+        }
         var info = new ReportGenerator.ReportInfo(
                 deliveryReport,
-                readMainStringById(message, 0x1001), // PidTagReportText
+                reportText, // PidTagReportText, else the plain-text body (PR_BODY)
                 readMainStringById(message, 0x6820), // PidTagReportingMessageTransferAgent
                 finalRecipient,
                 action,
@@ -1525,8 +1551,9 @@ public final class MsgToEmlConverter {
      *       iCal/vCard/DSN output) with {@code CodePageUtil.codepageToEncoding(PR_MESSAGE_CODEPAGE)} —
      *       the very call {@link #charsetForCodepage} overrides for the divergent code pages
      *       (1256/932/874/950). Without re-decoding them here, those fields keep POI's wrong charset
-     *       even though the body is corrected. They are re-decoded with the corrected general charset —
-     *       but only from {@code PR_MESSAGE_CODEPAGE}, exactly POI's source for these strings, never the
+     *       even though the body is corrected. They are re-decoded with the corrected general charset,
+     *       resolved from the same chain POI's {@code guess7BitEncoding} uses for them —
+     *       {@code PR_MESSAGE_CODEPAGE} then the {@code PR_MESSAGE_LOCALE_ID} fallback — never the
      *       {@code PR_INTERNET_CPID} body fallback (which would mis-decode a Subject when no message
      *       codepage is declared).
      *   <li>POI's {@code set7BitEncoding} never visits the recipient-table chunks either, so the To/Cc/Bcc
@@ -1547,11 +1574,26 @@ public final class MsgToEmlConverter {
         }
         var bodyCharset =
                 charsetForCodepage(readMainLong(message, MAPIProperty.INTERNET_CPID.id), "PR_INTERNET_CPID", log);
-        // POI decodes the non-body main-store PT_STRING8 strings (Subject, named-property values) with
-        // PR_MESSAGE_CODEPAGE alone — no INTERNET_CPID fallback — so the corrected re-decode below must
-        // use the same source and run only when a message codepage is actually declared.
-        var messageCodepageCharset =
-                charsetForCodepage(readMainLong(message, MAPIProperty.MESSAGE_CODEPAGE.id), "PR_MESSAGE_CODEPAGE", log);
+        // POI decodes the non-body main-store PT_STRING8 strings (Subject, named-property values) with its
+        // "generalcodepage", which guess7BitEncoding resolves from PR_MESSAGE_CODEPAGE first and, when that
+        // is absent, from PR_MESSAGE_LOCALE_ID via LocaleUtil.getDefaultCodePageFromLCID (the second of its
+        // three sources). Mirror that same chain — never the INTERNET_CPID body fallback, which would
+        // mis-decode a Subject (see round 11) — so an ANSI MSG that declares only a locale id still gets the
+        // corrected charset for the divergent code pages 1256/932/874/950; otherwise POI would have decoded
+        // Subject/named-props/recipients with that divergent charset and the re-decode below would be skipped
+        // (messageCodepageCharset == null), leaving them mojibaked. For every non-divergent code page
+        // charsetForCodepage returns POI's identical charset, so the re-decode stays a byte-identical no-op.
+        var messageCodepage = readMainLong(message, MAPIProperty.MESSAGE_CODEPAGE.id);
+        if (messageCodepage == null) {
+            var localeId = readMainLong(message, MAPIProperty.MESSAGE_LOCALE_ID.id);
+            if (localeId != null) {
+                var localeCodepage = LocaleUtil.getDefaultCodePageFromLCID(localeId);
+                if (localeCodepage != 0) {
+                    messageCodepage = localeCodepage;
+                }
+            }
+        }
+        var messageCodepageCharset = charsetForCodepage(messageCodepage, "PR_MESSAGE_CODEPAGE", log);
         // Attachment name strings follow the message codepage too; INTERNET_CPID is the documented
         // fallback there (preserves the prior behavior of the attachment loop).
         var attachmentCharset = messageCodepageCharset != null ? messageCodepageCharset : bodyCharset;

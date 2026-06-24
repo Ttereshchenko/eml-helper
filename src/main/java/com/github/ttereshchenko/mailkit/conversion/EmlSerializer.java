@@ -1336,6 +1336,39 @@ public final class EmlSerializer {
         return builder.toString();
     }
 
+    /**
+     * Percent-encodes the non-ASCII octets of a URI ({@code %XX}, UTF-8 per rfc3986 §2.1) so a stored
+     * Content-Location with non-ASCII characters stays within the US-ASCII header-field-body requirement
+     * (rfc5322 §2.2). ASCII characters — including already-percent-encoded triplets and URI reserved
+     * characters — are emitted unchanged, so a conforming ASCII URL is a byte-identical no-op. An RFC 2047
+     * encoded-word is deliberately not used: it is forbidden in a structured/URI field body (rfc2047 §5),
+     * and a reader would otherwise treat the literal {@code =?...?=} as the URI.
+     */
+    private static String percentEncodeNonAscii(String uri) {
+        var hasNonAscii = false;
+        for (var index = 0; index < uri.length(); index++) {
+            if (uri.charAt(index) > 0x7F) {
+                hasNonAscii = true;
+                break;
+            }
+        }
+        if (!hasNonAscii) {
+            return uri;
+        }
+        var encoded = new StringBuilder(uri.length() + 16);
+        for (var octet : uri.getBytes(StandardCharsets.UTF_8)) {
+            var value = octet & 0xFF;
+            if (value > 0x7F) {
+                encoded.append('%')
+                        .append(Character.toUpperCase(Character.forDigit(value >>> 4, 16)))
+                        .append(Character.toUpperCase(Character.forDigit(value & 0xF, 16)));
+            } else {
+                encoded.append((char) value);
+            }
+        }
+        return encoded.toString();
+    }
+
     private record Recipient(int type, String name, String email) {}
 
     private record Body(String text, String contentType) {}
@@ -1405,15 +1438,17 @@ public final class EmlSerializer {
                 }
             }
             if (contentLocation != null && !contentLocation.isBlank()) {
-                // Routed through appendHeader (unlike the short sibling headers above) because a
-                // stored Content-Location can be arbitrarily long and must fold within the RFC 5322
-                // §2.1.1 line limit.
+                // Routed through appendHeader (unlike the short sibling headers above) because a stored
+                // Content-Location can be arbitrarily long and must fold within the RFC 5322 §2.1.1 line
+                // limit. Non-ASCII octets are percent-encoded (rfc3986 §2.1) first so the field body stays
+                // US-ASCII (rfc5322 §2.2); an RFC 2047 encoded-word is not valid in a URI field (rfc2047 §5).
                 var locationWriter = new StringWriter();
                 try {
                     appendHeader(
                             locationWriter,
                             "Content-Location",
-                            stripLineBreaks(contentLocation).trim());
+                            percentEncodeNonAscii(
+                                    stripLineBreaks(contentLocation).trim()));
                 } catch (IOException impossible) {
                     throw new UncheckedIOException(impossible);
                 }

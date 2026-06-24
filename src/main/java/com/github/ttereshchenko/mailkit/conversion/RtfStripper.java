@@ -193,6 +193,15 @@ public final class RtfStripper {
         return rtfText != null && rtfText.contains("\\fromhtml");
     }
 
+    /**
+     * True if the RTF is {@code \fromtext}-encapsulated plain text ([MS-OXRTFEX] §2.1.3.1): a copy of the
+     * message's plain-text body re-wrapped as RTF, carrying no rich formatting of its own. Mirrors the PST
+     * parser's {@code Message.isEncapsulationRtf}, which treats {@code \fromtext} the same as {@code \fromhtml}.
+     */
+    public static boolean isTextEncapsulated(String rtfText) {
+        return rtfText != null && rtfText.contains("\\fromtext");
+    }
+
     public static String deEncapsulateHtml(String rtfText) {
         Objects.requireNonNull(rtfText, "rtfText");
         var charset = resolveCharset(rtfText);

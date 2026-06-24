@@ -1819,6 +1819,135 @@ class MsgToEmlConverterTest {
         assertNull(MsgToEmlConverter.nonSentinelDate(null), "null Date input must yield null");
     }
 
+    /**
+     * Round-20 fix 1 — PR_MESSAGE_LOCALE_ID fallback when PR_MESSAGE_CODEPAGE is absent.
+     *
+     * <p>An ANSI .msg that stores only a Windows LCID (0x3FF1) and no explicit codepage (0x3FFD)
+     * must derive the general re-decode charset from the locale id via
+     * {@code LocaleUtil.getDefaultCodePageFromLCID}. LCID 0x0411 (ja-JP) maps to CP932/windows-31j.
+     * The CP932 byte pair {@code 0x81 0x60} encodes U+FF5E FULLWIDTH TILDE under windows-31j but
+     * U+301C WAVE DASH under plain Shift_JIS — the only difference between the two charsets for that
+     * pair. The test therefore confirms the Subject reaches the right codepoint.
+     *
+     * <p>Pre-fix: no locale-id fallback existed, so the Subject stayed in POI's divergent Shift_JIS
+     * (U+301C), and the base64 encoded-word contained "44Cc" (E3 80 9C UTF-8). With the fix the
+     * charset is windows-31j, decoding to U+FF5E ("772e" in UTF-8 base64).
+     */
+    @Test
+    void localeIdFallbackUsedForCodepageWhenMessageCodepageAbsent() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                // No .messageCodepage(932): only the locale-id is present.
+                .localeId(0x0411) // ja-JP => CP932 / windows-31j
+                .subjectAnsi(new byte[] {(byte) 0x81, (byte) 0x60}) // CP932 0x81 0x60 = U+FF5E FULLWIDTH TILDE
+                .textBody("locale id fallback test")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // Correct (windows-31j): U+FF5E -> UTF-8 EF BD 9E -> base64 "772e"
+        assertTrue(
+                eml.contains("=?UTF-8?B?772e?="),
+                "locale-id 0x0411 must resolve to windows-31j, decoding 0x81 0x60 as U+FF5E: " + eml);
+        // Buggy (Shift_JIS): U+301C -> UTF-8 E3 80 9C -> base64 "44Cc"
+        assertFalse(
+                eml.contains("=?UTF-8?B?44Cc?="),
+                "Without the locale-id fallback, POI would mis-decode with Shift_JIS (U+301C): " + eml);
+    }
+
+    /**
+     * Round-20 fix 2 (MSG) — REPORT human-readable body fallback.
+     *
+     * <p>When PidTagReportText (0x1001) is absent or blank, {@code MsgToEmlConverter.emitReport}
+     * must use the plain-text body (PR_BODY) as the human-readable first part of the
+     * multipart/report instead of ReportGenerator's terse stub sentence. Pre-fix, the stub
+     * "This is a delivery status notification for a message you sent." appeared in part 1 when
+     * reportText was blank; with the fix the PR_BODY text is used instead.
+     */
+    @Test
+    void ndrReportUsesPlainBodyWhenReportTextAbsent() throws Exception {
+        var failureText = "Delivery has failed to these recipients:\n  bob@example.com";
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Undeliverable: Hello")
+                .sender("Postmaster", "postmaster@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("REPORT.IPM.Note.NDR")
+                // No .reportText(...) call — PidTagReportText is absent.
+                .textBody(failureText)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // The multipart/report structure must still be emitted.
+        assertTrue(eml.contains("multipart/report"), "NDR must still produce multipart/report: " + eml);
+        // The plain-text body must feed part 1 (rfc6522 §3), not the terse stub.
+        assertTrue(
+                eml.contains("Delivery has failed to these recipients"),
+                "PR_BODY must fill part-1 of multipart/report when reportText is absent: " + eml);
+        // Pre-fix: the stub sentence appeared when reportText was blank.
+        assertFalse(
+                eml.contains("This is a delivery status notification"),
+                "The ReportGenerator stub must NOT appear when a real plain-text body is available: " + eml);
+    }
+
+    /**
+     * Round-20 fix 3 — {@code \\fromtext}-encapsulated RTF must NOT become body.rtf.
+     *
+     * <p>{@code \\fromtext} RTF (MS-OXRTFEX) is a re-wrapping of the plain-text body into RTF
+     * transport encoding. Attaching it as body.rtf would double the plain-text content and add a
+     * spurious binary attachment. {@code MsgToEmlConverter.populateBodies} now calls
+     * {@code RtfStripper.isTextEncapsulated} and drops the RTF when true, matching the PST
+     * converter's behaviour. Pre-fix the RTF passed through to the genuine-RTF branch and was
+     * attached as body.rtf.
+     *
+     * <p>Contrast: a genuine (non-encapsulated) RTF body without \\fromtext DOES produce body.rtf
+     * (covered by {@link #genuineRtfBodyShipsAsBodyRtfAttachmentWithPlainFallback}).
+     */
+    @Test
+    void fromtextEncapsulatedRtfIsNotAttachedAsBodyRtf() throws Exception {
+        // \\fromtext signals that the RTF is just a transport encoding of the plain-text body.
+        var fromtextRtf = "{\\rtf1\\ansi\\fromtext\\par plain body text}";
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("FromText RTF test")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("plain body text")
+                .rtfBody(fromtextRtf)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        // Pre-fix: \\fromtext RTF reached the genuine-RTF branch and became body.rtf.
+        assertFalse(
+                eml.contains("body.rtf"), "\\fromtext-encapsulated RTF must not produce a body.rtf attachment: " + eml);
+        assertFalse(eml.contains("application/rtf"), "\\fromtext RTF must not appear as application/rtf: " + eml);
+        // The plain-text body must still be present.
+        assertTrue(eml.contains("plain body text"), "plain-text body must survive: " + eml);
+    }
+
+    /**
+     * Round-20 fix 3 variant — {@code \\fromtext} RTF with no accompanying plain-text body still
+     * must not produce body.rtf; the stripped text extracted from the RTF becomes the body.
+     */
+    @Test
+    void fromtextEncapsulatedRtfWithNoTextBodyStillDoesNotProduceBodyRtf() throws Exception {
+        var fromtextRtf = "{\\rtf1\\ansi\\fromtext \\uc1 recovered text}";
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("FromText only")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                // No .textBody(...): only the \\fromtext RTF is present.
+                .rtfBody(fromtextRtf)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(
+                eml.contains("body.rtf"), "\\fromtext RTF with no textBody must not produce body.rtf either: " + eml);
+        assertFalse(eml.contains("application/rtf"), eml);
+    }
+
     private String convertString(byte[] input) throws Exception {
         var out = new java.io.ByteArrayOutputStream();
         MsgToEmlConverter.convert(new ByteArrayInputStream(input), out, ConversionLog.NOOP);

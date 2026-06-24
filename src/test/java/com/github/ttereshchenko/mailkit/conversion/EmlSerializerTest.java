@@ -1233,4 +1233,56 @@ class EmlSerializerTest {
         assertEquals(
                 "K".repeat(1100) + ",second", roundTripped, "Keywords value must round-trip modulo folding whitespace");
     }
+
+    /**
+     * Round-20 fix 5 — non-ASCII Content-Location octets are percent-encoded.
+     *
+     * <p>RFC 2557 §4 requires Content-Location to be a URI, and RFC 3986 §2 requires non-ASCII
+     * characters to be percent-encoded. Pre-fix, a non-ASCII URI was emitted byte-for-byte into the
+     * US-ASCII header field body, making the message technically invalid. The fix routes the value
+     * through {@code EmlSerializer.percentEncodeNonAscii} before writing the header.
+     *
+     * <p>The test also asserts that a purely-ASCII Content-Location is emitted unchanged (the
+     * percent-encoder must be a no-op for ASCII-only input).
+     */
+    @Test
+    void nonAsciiContentLocationIsPercentEncoded() throws Exception {
+        // "é" (U+00E9) encodes to UTF-8 bytes 0xC3 0xA9, percent-encoded as %C3%A9.
+        var nonAsciiLocation = "http://host/é.png";
+        var asciiLocation = "http://example.com/logo.png";
+
+        var serializer = new EmlSerializer();
+        serializer.setSender("A", "a@example.com");
+        serializer.addBody("body", "text/plain; charset=UTF-8");
+        serializer.addAttachment("image.png", "image/png", new byte[] {1}, null, nonAsciiLocation, false);
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        // Unfold the Content-Location header (it may be folded for length).
+        var unfolded = eml.replace("\r\n ", " ").replace("\r\n\t", " ");
+        var locationLine = unfolded.lines()
+                .filter(line -> line.startsWith("Content-Location:"))
+                .findFirst()
+                .orElse("");
+        assertTrue(
+                locationLine.chars().allMatch(chr -> chr <= 0x7F),
+                "Content-Location header must be pure US-ASCII after percent-encoding: " + locationLine);
+        // The specific percent-encoded form of é (UTF-8 0xC3 0xA9) must be present.
+        assertTrue(eml.contains("%C3%A9"), "U+00E9 (é) must be percent-encoded as %C3%A9 in Content-Location: " + eml);
+
+        // A purely ASCII Content-Location must be emitted verbatim (no spurious percent-encoding).
+        var asciiSerializer = new EmlSerializer();
+        asciiSerializer.setSender("A", "a@example.com");
+        asciiSerializer.addBody("body", "text/plain; charset=UTF-8");
+        asciiSerializer.addAttachment("logo.png", "image/png", new byte[] {1}, null, asciiLocation, false);
+        var asciiWriter = new StringWriter();
+        asciiSerializer.writeTo(asciiWriter);
+        var asciiEml = asciiWriter.toString();
+
+        assertTrue(
+                asciiEml.contains("Content-Location: " + asciiLocation),
+                "A pure-ASCII Content-Location must be emitted unchanged: " + asciiEml);
+    }
 }
