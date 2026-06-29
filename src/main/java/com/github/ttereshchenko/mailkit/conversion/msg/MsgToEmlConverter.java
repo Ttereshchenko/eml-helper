@@ -955,6 +955,13 @@ public final class MsgToEmlConverter {
             var reminderDelta = readNamedLong(message, PSETID_COMMON, 0x8501);
             reminderMinutes = reminderDelta == null || reminderDelta == 0x5AE980FF ? 15 : reminderDelta;
         }
+        // PR_SENSITIVITY (0x0036) -> VEVENT CLASS, PR_IMPORTANCE (0x0017) -> VEVENT PRIORITY and
+        // PidNameKeywords -> VEVENT CATEGORIES, so the appointment's privacy/priority/category metadata
+        // survives on the calendar object (it is also kept on the .eml headers). Each is gated inside
+        // ICalendarGenerator, so a Normal/absent value emits nothing and existing fixtures stay byte-identical.
+        var sensitivity = readMainLong(message, 0x0036);
+        var importance = readMainLong(message, 0x0017);
+        var categories = readNamedStrings(message, PS_PUBLIC_STRINGS, "Keywords", 0);
         var eventDetails = new ICalendarGenerator.EventDetails(
                 method,
                 start,
@@ -971,7 +978,10 @@ public final class MsgToEmlConverter {
                 sequence != null ? sequence : 0,
                 cleanGlobalObjectId,
                 reminderMinutes,
-                busyStatus);
+                busyStatus,
+                sensitivity,
+                importance,
+                categories);
         var ical = ICalendarGenerator.generate(eventDetails);
         serializer.addAttachment(
                 "invite.ics",
@@ -999,7 +1009,13 @@ public final class MsgToEmlConverter {
                 .jobTitle(readMainStringById(message, 0x3A17))
                 .phone("work", readMainStringById(message, 0x3A08))
                 .phone("home", readMainStringById(message, 0x3A09))
-                .phone("cell", readMainStringById(message, 0x3A1C));
+                .phone("cell", readMainStringById(message, 0x3A1C))
+                .phone("work,fax", readMainStringById(message, 0x3A24)) // PR_BUSINESS_FAX_NUMBER
+                .phone("home,fax", readMainStringById(message, 0x3A25)) // PR_HOME_FAX_NUMBER
+                .phone("fax", readMainStringById(message, 0x3A23)) // PR_PRIMARY_FAX_NUMBER
+                .phone("pager", readMainStringById(message, 0x3A21)) // PR_PAGER_TELEPHONE_NUMBER
+                .department(readMainStringById(message, 0x3A18)) // PR_DEPARTMENT_NAME
+                .imAddress(readNamedString(message, PSETID_ADDRESS, 0x8062)); // PidLidInstantMessagingAddress
         // PidLidEmail1EmailAddress / Email2 / Email3 ([MS-OXOCNTC] §2.2.1.2.3).
         for (var namedId : new int[] {0x8083, 0x8093, 0x80A3}) {
             contact.email(readNamedString(message, PSETID_ADDRESS, namedId));
@@ -1060,6 +1076,9 @@ public final class MsgToEmlConverter {
             }
             // else: no recipient identifies the assigner — leave participants empty to downgrade to PUBLISH.
         }
+        // PR_IMPORTANCE (0x0017) -> VTODO PRIORITY so the task's High/Low flag survives on the task.ics
+        // calendar object (gated in generateTodo: Normal/absent emits no PRIORITY -> existing tasks unchanged).
+        var importance = readMainLong(message, 0x0017);
         var todo = ICalendarGenerator.generateTodo(
                 safeString(safeSubject(message)),
                 readBody(message::getTextBody, "plain text", log),
@@ -1071,7 +1090,8 @@ public final class MsgToEmlConverter {
                 method,
                 organizerName,
                 organizerEmail,
-                attendees);
+                attendees,
+                importance);
         serializer.addAttachment(
                 "task.ics",
                 "text/calendar; charset=UTF-8; method="
@@ -1165,11 +1185,15 @@ public final class MsgToEmlConverter {
      */
     private static boolean populateDistributionList(
             MAPIMessage message, EmlSerializer serializer, Charset ansiCharset) {
-        var blobs = readNamedMultiBytes(message, PSETID_ADDRESS, 0x8054); // PidLidDistributionListOneOffMembers
-        if (blobs.length == 0) {
-            blobs = readNamedMultiBytes(message, PSETID_ADDRESS, 0x8055); // PidLidDistributionListMembers
+        // PidLidDistributionListOneOffMembers (0x8054) carries inline one-off addresses; fall back to
+        // PidLidDistributionListMembers (0x8055) keyed on the PARSED member count, not the raw blob count.
+        // A 0x8054 that is present but holds only unparseable EntryIDs (e.g. store EntryIDs) would otherwise
+        // never consult 0x8055 — which often holds resolvable one-off/address-book members — and the whole
+        // member listing would be lost. Mirrors the PST driver (Message.getDistributionListMembers).
+        var members = DistributionListMembers.parse(readNamedMultiBytes(message, PSETID_ADDRESS, 0x8054), ansiCharset);
+        if (members.isEmpty()) {
+            members = DistributionListMembers.parse(readNamedMultiBytes(message, PSETID_ADDRESS, 0x8055), ansiCharset);
         }
-        var members = DistributionListMembers.parse(blobs, ansiCharset);
         if (members.isEmpty()) {
             return false;
         }
@@ -1484,7 +1508,15 @@ public final class MsgToEmlConverter {
                     // otherwise leave the header blank while skipping the display-string fallback that
                     // could still populate it.
                     if ((name != null && !name.isBlank()) || (address != null && !address.isBlank())) {
-                        serializer.addRecipient(wantedType, name, address);
+                        if ((address == null || address.isBlank()) && EmlSerializer.looksLikeSmtpAddress(name)) {
+                            // The row stores no PR_EMAIL_ADDRESS/PR_SMTP_ADDRESS but its display name is
+                            // itself an addr-spec: promote it into the address slot so the recipient stays
+                            // repliable instead of being demoted behind the undisclosed@invalid placeholder,
+                            // matching the PR_DISPLAY_* fallback path and the PST driver.
+                            serializer.addRecipient(wantedType, null, name);
+                        } else {
+                            serializer.addRecipient(wantedType, name, address);
+                        }
                         found = true;
                     }
                 }
@@ -1540,12 +1572,20 @@ public final class MsgToEmlConverter {
         // RFC 5322 §3.6.1: the Date header is the origination time, "specifically not ... the time that
         // the message was actually transported". Prefer PR_CLIENT_SUBMIT_TIME and fall back to
         // PR_MESSAGE_DELIVERY_TIME, mirroring the PST pipeline (Message.getMessageDate). Reading the two
-        // time properties directly also avoids POI getMessageDate()'s further fallback to the
-        // modification/creation time, which corresponds to no Date: source.
+        // time properties directly also avoids POI getMessageDate()'s fallback to the modification time.
         var submitDate = nonSentinelDate(readTimeProperty(message, MAPIProperty.CLIENT_SUBMIT_TIME));
-        return submitDate != null
-                ? submitDate
-                : nonSentinelDate(readTimeProperty(message, MAPIProperty.MESSAGE_DELIVERY_TIME));
+        if (submitDate != null) {
+            return submitDate;
+        }
+        var deliveryDate = nonSentinelDate(readTimeProperty(message, MAPIProperty.MESSAGE_DELIVERY_TIME));
+        if (deliveryDate != null) {
+            return deliveryDate;
+        }
+        // Unsent/store-only items (drafts, sticky notes, tasks) carry neither time; fall back to the
+        // composition time (PR_CREATION_TIME) rather than returning null and letting EmlSerializer stamp
+        // the conversion moment (new Date()), which corresponds to nothing in the source. The PST driver
+        // mirrors this. Sentinel (FILETIME 0 = 1601-01-01) values are filtered.
+        return nonSentinelDate(readTimeProperty(message, MAPIProperty.CREATION_TIME));
     }
 
     /**

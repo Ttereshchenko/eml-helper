@@ -93,4 +93,60 @@ class VCardGeneratorTest {
     private static String escapeForVcard(String value) {
         return value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,");
     }
+
+    // -----------------------------------------------------------------------
+    // Round-22 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix VCARD-1 — TEL;TYPE= supports compound types (e.g. "work,fax").
+
+    @Test
+    void phonesWithCompoundTypeCarryAllTypeParts() {
+        var card = VCardGenerator.generate(
+                new VCardGenerator.Contact().phone("work,fax", "+1 555 0100").phone("pager", "+1 555 0200"));
+
+        assertTrue(card.contains("TEL;TYPE=work,fax:+1 555 0100"), card);
+        assertTrue(card.contains("TEL;TYPE=pager:+1 555 0200"), card);
+    }
+
+    // Fix VCARD-2 — ORG second component from PR_DEPARTMENT_NAME (RFC 2426 §3.5.5).
+
+    @Test
+    void orgWithDepartmentProducesStructuredOrgLine() {
+        var card = VCardGenerator.generate(
+                new VCardGenerator.Contact().company("Acme").department("Eng"));
+
+        assertTrue(card.contains("ORG:Acme;Eng"), "company;department must form ORG structured value: " + card);
+    }
+
+    @Test
+    void orgWithoutDepartmentHasNoTrailingSemicolon() {
+        var card = VCardGenerator.generate(new VCardGenerator.Contact().company("Acme"));
+
+        assertTrue(card.contains("ORG:Acme"), card);
+        assertFalse(card.contains("ORG:Acme;"), "company-only ORG must not have a trailing semicolon: " + card);
+    }
+
+    @Test
+    void orgWithDepartmentOnlyHasEmptyFirstComponent() {
+        var card = VCardGenerator.generate(new VCardGenerator.Contact().department("Eng"));
+
+        assertTrue(card.contains("ORG:;Eng"), "department-only ORG must have empty first component: " + card);
+    }
+
+    // Fix VCARD-3 — IMPP property (RFC 4770) from PidLidInstantMessagingAddress.
+
+    @Test
+    void imAddressEmitsImppProperty() {
+        var card = VCardGenerator.generate(new VCardGenerator.Contact().imAddress("user@im"));
+
+        assertTrue(card.contains("IMPP:user@im"), "imAddress must emit IMPP property: " + card);
+    }
+
+    @Test
+    void absentImAddressOmitsImppProperty() {
+        var card = VCardGenerator.generate(new VCardGenerator.Contact());
+
+        assertFalse(card.contains("IMPP:"), "no IM address must not emit IMPP: " + card);
+    }
 }

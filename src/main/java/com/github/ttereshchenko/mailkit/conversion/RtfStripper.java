@@ -155,6 +155,25 @@ public final class RtfStripper {
                     }
                     continue;
                 }
+                // Control symbols that denote visible whitespace: `\~` is a non-breaking space and `\_` a
+                // non-breaking hyphen ([MS-OXRTFEX]/RTF spec §Special Characters). Emitting nothing for them
+                // welds the surrounding words ("Mr.\~Smith" -> "Mr.Smith", "page\~1" -> "page1"); emit the
+                // Unicode character they denote instead. `\-` (optional hyphen) is invisible and stays
+                // dropped, as does every other unhandled control symbol.
+                if (next == '~') {
+                    if (skipDepth == 0) {
+                        output.append(' ');
+                    }
+                    index += 2;
+                    continue;
+                }
+                if (next == '_') {
+                    if (skipDepth == 0) {
+                        output.append('‑');
+                    }
+                    index += 2;
+                    continue;
+                }
                 index += 2;
                 continue;
             }
@@ -647,6 +666,12 @@ public final class RtfStripper {
             case "emdash" -> "—";
             case "endash" -> "–";
             case "bullet" -> "•";
+            // Fixed-width spaces (RTF spec §Special Characters): emit the whitespace they denote rather
+            // than dropping them and welding the surrounding words. controlReplacement feeds only the
+            // plain-text strip() path (never deEncapsulateHtml), so this affects no HTML output.
+            case "emspace" -> " ";
+            case "enspace" -> " ";
+            case "qmspace" -> " ";
             default -> null;
         };
     }

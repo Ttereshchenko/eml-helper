@@ -21,7 +21,9 @@ public final class VCardGenerator {
         private String namePrefix;
         private String nameSuffix;
         private String company;
+        private String department;
         private String jobTitle;
+        private String imAddress;
         private final List<String> emails = new ArrayList<>();
         private final Map<String, String> phonesByType = new LinkedHashMap<>();
 
@@ -63,8 +65,20 @@ public final class VCardGenerator {
             return this;
         }
 
+        /** Sets the organizational unit — the second component of the vCard ORG property (RFC 2426 §3.5.5). */
+        public Contact department(String value) {
+            this.department = value;
+            return this;
+        }
+
         public Contact jobTitle(String value) {
             this.jobTitle = value;
+            return this;
+        }
+
+        /** Sets the instant-messaging address emitted as the vCard IMPP property (RFC 4770). */
+        public Contact imAddress(String value) {
+            this.imAddress = value;
             return this;
         }
 
@@ -100,8 +114,16 @@ public final class VCardGenerator {
                 "N:" + escape(blankToEmpty(contact.surname)) + ';' + escape(blankToEmpty(contact.givenName)) + ';'
                         + escape(blankToEmpty(contact.middleName)) + ';' + escape(blankToEmpty(contact.namePrefix))
                         + ';' + escape(blankToEmpty(contact.nameSuffix)));
-        if (contact.company != null && !contact.company.isBlank()) {
-            appendFolded(card, "ORG:" + escape(contact.company.trim()));
+        if ((contact.company != null && !contact.company.isBlank())
+                || (contact.department != null && !contact.department.isBlank())) {
+            // RFC 2426 §3.5.5: ORG is a structured "Organization Name;Organizational Unit" value. Outlook
+            // fills the unit from PidTagDepartmentName; append it only when present so a contact with just a
+            // company stays byte-identical (no trailing ';').
+            var org = new StringBuilder("ORG:").append(escape(blankToEmpty(contact.company)));
+            if (contact.department != null && !contact.department.isBlank()) {
+                org.append(';').append(escape(contact.department.trim()));
+            }
+            appendFolded(card, org.toString());
         }
         if (contact.jobTitle != null && !contact.jobTitle.isBlank()) {
             appendFolded(card, "TITLE:" + escape(contact.jobTitle.trim()));
@@ -111,6 +133,11 @@ public final class VCardGenerator {
         }
         for (var phone : contact.phonesByType.entrySet()) {
             appendFolded(card, "TEL;TYPE=" + phone.getKey() + ':' + escape(phone.getValue()));
+        }
+        if (contact.imAddress != null && !contact.imAddress.isBlank()) {
+            // RFC 4770 extends vCard 3.0 with IMPP for an instant-messaging address. Outlook stores it as a
+            // bare handle (PidLidInstantMessagingAddress); emit it escaped so the IM identity is not lost.
+            appendFolded(card, "IMPP:" + escape(contact.imAddress.trim()));
         }
         appendFolded(card, "END:VCARD");
         return card.toString();

@@ -873,4 +873,351 @@ class ICalendarGeneratorTest {
 
         assertFalse(ical.contains(";ROLE="), "null role must not emit ;ROLE= in ATTENDEE: " + ical);
     }
+
+    // -----------------------------------------------------------------------
+    // Round-22 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix ICAL-1 — CLASS: PidTagSensitivity(1=Personal,2=Private)→CLASS:PRIVATE,
+    //                       (3=Confidential)→CLASS:CONFIDENTIAL, 0/null → no CLASS.
+
+    @Test
+    void sensitivityPrivateEmitsClassPrivate() {
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                2,
+                null,
+                null);
+        var ical = ICalendarGenerator.generate(event);
+        assertTrue(ical.contains("CLASS:PRIVATE\r\n"), "sensitivity=2 (Private) must emit CLASS:PRIVATE: " + ical);
+    }
+
+    @Test
+    void sensitivityPersonalEmitsClassPrivate() {
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                1,
+                null,
+                null);
+        var ical = ICalendarGenerator.generate(event);
+        assertTrue(ical.contains("CLASS:PRIVATE\r\n"), "sensitivity=1 (Personal) must emit CLASS:PRIVATE: " + ical);
+    }
+
+    @Test
+    void sensitivityConfidentialEmitsClassConfidential() {
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                3,
+                null,
+                null);
+        var ical = ICalendarGenerator.generate(event);
+        assertTrue(
+                ical.contains("CLASS:CONFIDENTIAL\r\n"),
+                "sensitivity=3 (Confidential) must emit CLASS:CONFIDENTIAL: " + ical);
+    }
+
+    @Test
+    void sensitivityNormalOrAbsentOmitsClassProperty() {
+        // sensitivity=0 (Normal): CLASS must be absent (RFC 5545 §3.8.1.3 defaults to PUBLIC).
+        var eventNormal = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null);
+        assertFalse(
+                ICalendarGenerator.generate(eventNormal).contains("CLASS:"),
+                "sensitivity=0 (Normal) must not emit CLASS");
+
+        // null sensitivity: CLASS must also be absent.
+        var eventNull = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null);
+        assertFalse(ICalendarGenerator.generate(eventNull).contains("CLASS:"), "null sensitivity must not emit CLASS");
+    }
+
+    // Fix ICAL-3 — PRIORITY: PidTagImportance(2=High)→PRIORITY:1, (0=Low)→PRIORITY:9,
+    //                         (1=Normal)/null → no PRIORITY line.
+
+    @Test
+    void importanceHighEmitsPriorityOne() {
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                null,
+                2,
+                null);
+        assertTrue(
+                ICalendarGenerator.generate(event).contains("PRIORITY:1\r\n"),
+                "importance=2 (High) must emit PRIORITY:1");
+    }
+
+    @Test
+    void importanceLowEmitsPriorityNine() {
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                null,
+                0,
+                null);
+        assertTrue(
+                ICalendarGenerator.generate(event).contains("PRIORITY:9\r\n"),
+                "importance=0 (Low) must emit PRIORITY:9");
+    }
+
+    @Test
+    void importanceNormalOrAbsentOmitsPriorityProperty() {
+        // importance=1 (Normal): PRIORITY must be absent.
+        var eventNormal = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                null,
+                1,
+                null);
+        assertFalse(
+                ICalendarGenerator.generate(eventNormal).contains("PRIORITY:"),
+                "importance=1 (Normal) must not emit PRIORITY");
+
+        // null importance: PRIORITY must also be absent.
+        var eventNull = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null);
+        assertFalse(
+                ICalendarGenerator.generate(eventNull).contains("PRIORITY:"), "null importance must not emit PRIORITY");
+    }
+
+    // Fix ICAL-4 — CATEGORIES: PidNameKeywords comma-joined with embedded commas TEXT-escaped.
+
+    @Test
+    void categoriesAreJoinedAndEmbeddedCommasAreEscaped() {
+        // A category that contains a comma must be TEXT-escaped (RFC 5545 §3.3.11);
+        // the unescaped comma is the separator between category values.
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of("Red, urgent", "Travel"));
+        var ical = ICalendarGenerator.generate(event);
+        assertTrue(
+                ical.contains("CATEGORIES:Red\\, urgent,Travel\r\n"),
+                "embedded comma must be backslash-escaped; separator commas must be unescaped: " + ical);
+    }
+
+    @Test
+    void absentOrEmptyCategoriesOmitsCategoriesProperty() {
+        // null categories: CATEGORIES must be absent.
+        var eventNull = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null);
+        assertFalse(
+                ICalendarGenerator.generate(eventNull).contains("CATEGORIES:"),
+                "null categories must not emit CATEGORIES");
+
+        // Empty list: CATEGORIES must also be absent.
+        var eventEmpty = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "O",
+                "o@ex.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of());
+        assertFalse(
+                ICalendarGenerator.generate(eventEmpty).contains("CATEGORIES:"),
+                "empty categories list must not emit CATEGORIES");
+    }
+
+    // Fix ICAL-TODO-1 — generateTodo 12-arg overload carries PRIORITY; 11-arg defaults to none.
+
+    @Test
+    void todoHighPriorityEmitsPriorityOne() {
+        var vtodo = ICalendarGenerator.generateTodo(
+                "Task", null, null, null, null, null, null, "PUBLISH", null, null, null, 2);
+        assertTrue(vtodo.contains("PRIORITY:1\r\n"), "generateTodo priority=2 (High) must emit PRIORITY:1: " + vtodo);
+    }
+
+    @Test
+    void todoLowPriorityEmitsPriorityNine() {
+        var vtodo = ICalendarGenerator.generateTodo(
+                "Task", null, null, null, null, null, null, "PUBLISH", null, null, null, 0);
+        assertTrue(vtodo.contains("PRIORITY:9\r\n"), "generateTodo priority=0 (Low) must emit PRIORITY:9: " + vtodo);
+    }
+
+    @Test
+    void todoElevenArgOverloadEmitsNoPriority() {
+        // The 11-arg overload passes null for priority → no PRIORITY line.
+        var vtodo = ICalendarGenerator.generateTodo(
+                "Task", null, null, null, null, null, null, "PUBLISH", null, null, null);
+        assertFalse(vtodo.contains("PRIORITY:"), "11-arg generateTodo must not emit PRIORITY: " + vtodo);
+    }
 }
