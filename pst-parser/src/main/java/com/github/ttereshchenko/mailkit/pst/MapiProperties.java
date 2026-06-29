@@ -40,6 +40,17 @@ public final class MapiProperties {
     public static final int PR_READ_RECEIPT_REQUESTED = 0x0029;
 
     /**
+     * The sender-set message expiration time (PT_SYSTIME).
+     * EML alternative: The "Expiry-Date:" header (rfc4021 §2.1.49).
+     */
+    public static final int PR_EXPIRY_TIME = 0x0015;
+
+    /**
+     * The follow-up flag state (PT_LONG): 0 = none, 1 = complete, 2 = flagged ([MS-OXOFLAG] §2.2.1.1).
+     */
+    public static final int PR_FLAG_STATUS = 0x1090;
+
+    /**
      * The internet message ID.
      * EML alternative: The "Message-ID:" header.
      */

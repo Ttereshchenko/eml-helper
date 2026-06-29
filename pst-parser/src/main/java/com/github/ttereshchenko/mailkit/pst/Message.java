@@ -1351,12 +1351,20 @@ public class Message {
         boolean unicode = (flags & 0x8000) != 0;
         var strings =
                 readNulTerminatedStrings(entryId, 24, unicode ? StandardCharsets.UTF_16LE : string8Charset, unicode, 3);
-        if (strings.size() < 3 || strings.get(2).isBlank()) {
+        if (strings.size() < 3) {
             return null;
         }
         String name = strings.get(0);
         String addressType = strings.get(1);
         String email = strings.get(2);
+        // Mirror the MSG one-off parser (DistributionListMembers.parseOneOffEntry): drop the member only
+        // when it carries neither a display name nor an address. A name-only one-off (blank email) is kept
+        // so its name still appears in the exported list / Reply-To as "Name <undisclosed@invalid>", rather
+        // than being silently discarded as it was when a blank email alone disqualified it.
+        boolean nameBlank = name.isBlank() && (fallbackName == null || fallbackName.isBlank());
+        if (nameBlank && email.isBlank()) {
+            return null;
+        }
         if (addressPreference != AddressPreference.PREFER_LEGACY_DN) {
             email = imceaEncapsulate(addressType, email);
         }

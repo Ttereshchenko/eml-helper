@@ -83,6 +83,10 @@ final class MsgFixtureBuilder {
     private static final int TAG_ATTACH_METHOD = (0x3705 << 16) | TYPE_LONG;
     private static final int TAG_ATTACH_CONTENT_ID = (0x3712 << 16) | TYPE_UNICODE;
 
+    // Regular (non-named) property tags for expiry and flag-status.
+    private static final int TAG_EXPIRY_TIME = (0x0015 << 16) | TYPE_SYSTIME;
+    private static final int TAG_FLAG_STATUS = (0x1090 << 16) | TYPE_LONG;
+
     private static final int ATTACH_METHOD_BY_VALUE = 1;
     private static final int ATTACH_METHOD_EMBEDDED_MESSAGE = 5;
     private static final int ATTACH_METHOD_OLE = 6;
@@ -92,6 +96,9 @@ final class MsgFixtureBuilder {
     // exactly what NameIdChunks#getPropertyGUID expects (Data1/2/3 byte-swapped, Data4 as-is).
     private static final byte[] PSETID_APPOINTMENT_GUID = guidStreamBytes("{00062002-0000-0000-C000-000000000046}");
     private static final byte[] PSETID_MEETING_GUID = guidStreamBytes("{6ED8DA90-450B-101B-98DA-00AA003F1305}");
+    /** PSETID_Common {00062008-0000-0000-C000-000000000046} — hosts reminder, flag-request and vote-response LIDs. */
+    private static final byte[] PSETID_COMMON_GUID = guidStreamBytes("{00062008-0000-0000-C000-000000000046}");
+
     private static final int NAMED_BASE_TAG = 0x8000;
 
     private static byte[] guidStreamBytes(String externalForm) {
@@ -405,6 +412,24 @@ final class MsgFixtureBuilder {
         return this;
     }
 
+    /**
+     * PidTagExpiryTime (PR_EXPIRY_TIME, 0x0015, PT_SYSTIME) — the sender-set message expiration
+     * date that Outlook maps to the {@code Expiry-Date} header (RFC 4021 §2.1.49).
+     */
+    MsgFixtureBuilder expiryTime(Date date) {
+        fixedProperties.add(new FixedProperty(TAG_EXPIRY_TIME, fileTime(date)));
+        return this;
+    }
+
+    /**
+     * PidTagFlagStatus (PR_FLAG_STATUS, 0x1090, PT_LONG): 0 = not flagged, 1 = complete, 2 = flagged.
+     * Controls whether PidLidFlagRequest is exported as {@code X-Message-Flag}.
+     */
+    MsgFixtureBuilder flagStatus(int value) {
+        fixedProperties.add(new FixedProperty(TAG_FLAG_STATUS, longBytes(value)));
+        return this;
+    }
+
     MsgFixtureBuilder messageId(String value) {
         return setUnicode(TAG_INTERNET_MESSAGE_ID, value);
     }
@@ -457,6 +482,52 @@ final class MsgFixtureBuilder {
      */
     MsgFixtureBuilder meetingCleanGlobalObjectId(byte[] objectId) {
         namedProperties.add(new NamedNumericProperty(PSETID_MEETING_GUID, 0x0023, TYPE_BINARY, objectId.clone()));
+        return this;
+    }
+
+    /**
+     * PidLidBusyStatus (PSETID_Appointment 0x8205, PT_LONG): 0 = Free, 1 = Tentative, 2 = Busy,
+     * 3 = OOF. Maps to {@code TRANSP} / {@code X-MICROSOFT-CDO-BUSYSTATUS} in the iCal output.
+     */
+    MsgFixtureBuilder namedBusyStatus(int value) {
+        namedProperties.add(new NamedNumericProperty(PSETID_APPOINTMENT_GUID, 0x8205, TYPE_LONG, longBytes(value)));
+        return this;
+    }
+
+    /**
+     * PidLidReminderSet (PSETID_Common 0x8503, PT_BOOLEAN): {@code true} when the user has set a
+     * reminder. Paired with {@link #namedReminderDelta} to drive a {@code VALARM} subcomponent.
+     */
+    MsgFixtureBuilder namedReminderSet(boolean set) {
+        namedProperties.add(new NamedNumericProperty(PSETID_COMMON_GUID, 0x8503, TYPE_BOOLEAN, longBytes(set ? 1 : 0)));
+        return this;
+    }
+
+    /**
+     * PidLidReminderDelta (PSETID_Common 0x8501, PT_LONG): minutes before the start time to fire
+     * the reminder. {@code 0x5AE980FF} is the [MS-OXORMDR] §2.2.1.2 "use default" sentinel that
+     * maps to 15 minutes in the converter.
+     */
+    MsgFixtureBuilder namedReminderDelta(long minutes) {
+        namedProperties.add(new NamedNumericProperty(PSETID_COMMON_GUID, 0x8501, TYPE_LONG, longBytes((int) minutes)));
+        return this;
+    }
+
+    /**
+     * PidLidFlagRequest (PSETID_Common 0x8530, PT_UNICODE): the user-visible follow-up flag label
+     * (e.g. "Follow up", "Review"). Exported as {@code X-Message-Flag} when the flag is active.
+     */
+    MsgFixtureBuilder namedFlagRequest(String value) {
+        namedProperties.add(new NamedNumericProperty(PSETID_COMMON_GUID, 0x8530, TYPE_UNICODE, encodeUtf16(value)));
+        return this;
+    }
+
+    /**
+     * PidLidVerbResponse (PSETID_Common 0x8524, PT_UNICODE): the recipient's chosen voting-button
+     * text (e.g. "Approve", "Reject"). Exported as {@code X-MS-Exchange-Vote-Response}.
+     */
+    MsgFixtureBuilder namedVerbResponse(String value) {
+        namedProperties.add(new NamedNumericProperty(PSETID_COMMON_GUID, 0x8524, TYPE_UNICODE, encodeUtf16(value)));
         return this;
     }
 

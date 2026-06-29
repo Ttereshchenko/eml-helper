@@ -102,6 +102,7 @@ public final class PstToEmlConverter {
     private static final UUID PSETID_MEETING = UUID.fromString("6ED8DA90-450B-101B-98DA-00AA003F1305");
     private static final UUID PSETID_TASK = UUID.fromString("00062003-0000-0000-C000-000000000046");
     private static final UUID PSETID_ADDRESS = UUID.fromString("00062004-0000-0000-C000-000000000046");
+    private static final UUID PSETID_COMMON = UUID.fromString("00062008-0000-0000-C000-000000000046");
     private static final UUID PS_PUBLIC_STRINGS = UUID.fromString("00020329-0000-0000-C000-000000000046");
 
     private static final int ATTACH_OLE = 6; // afStorage: an embedded OLE object
@@ -880,6 +881,30 @@ public final class PstToEmlConverter {
             serializer.addAddressHeader(
                     "Disposition-Notification-To", EmlSerializer.formatAddress(fromName, fromEmail));
         }
+        // PidLidFlagRequest (0x8530, PSETID_Common) is the user-visible follow-up flag label; Outlook
+        // round-trips it as X-Message-Flag (mirrors the MSG driver). Only emitted while the flag is set
+        // (PR_FLAG_STATUS == 2) so a cleared/completed flag does not export a stale label.
+        if (!(message.getProperty(MapiProperties.PR_FLAG_STATUS) instanceof Number flagStatus)
+                || flagStatus.intValue() == 2) {
+            Integer flagRequestId = pstFile.namedPropertyId(PSETID_COMMON, 0x8530);
+            var followUp = flagRequestId != null ? message.getStringProperty(flagRequestId) : null;
+            if (followUp != null && !followUp.isBlank()) {
+                serializer.addCustomHeader("X-Message-Flag", followUp);
+            }
+        }
+        // PR_EXPIRY_TIME (0x0015, PT_SYSTIME) -> Expiry-Date (rfc4021 §2.1.49); mirrors the MSG driver.
+        // Filtered against the FILETIME-0 sentinel (1601-01-01) so a zeroed value emits no header.
+        if (message.getProperty(MapiProperties.PR_EXPIRY_TIME) instanceof Instant expiry
+                && expiry.getEpochSecond() > -11_644_473_600L) {
+            serializer.addCustomHeader("Expiry-Date", EmlSerializer.formatRfc2822Date(Date.from(expiry)));
+        }
+        // PidLidVerbResponse (0x8524, PSETID_Common) is the recipient's chosen voting-button text; preserved
+        // as an Exchange-namespaced X-header (no standard MIME header exists), mirroring the MSG driver.
+        Integer verbResponseId = pstFile.namedPropertyId(PSETID_COMMON, 0x8524);
+        var voteResponse = verbResponseId != null ? message.getStringProperty(verbResponseId) : null;
+        if (voteResponse != null && !voteResponse.isBlank()) {
+            serializer.addCustomHeader("X-MS-Exchange-Vote-Response", voteResponse);
+        }
 
         String msgClass = message.getMessageClass();
 
@@ -1087,6 +1112,26 @@ public final class PstToEmlConverter {
                 Integer cleanGoidId = pstFile.namedPropertyId(PSETID_MEETING, 0x0023);
                 byte[] cleanGlobalObjectId =
                         cleanGoidId != null && message.getProperty(cleanGoidId) instanceof byte[] goid ? goid : null;
+                // PidLidBusyStatus (PSETID_Appointment, 0x8205) -> TRANSP/X-MICROSOFT-CDO-BUSYSTATUS so a
+                // Free/Tentative appointment does not collapse to Busy; null when unset (mirrors the MSG driver).
+                Integer busyStatusId = pstFile.namedPropertyId(PSETID_APPOINTMENT, 0x8205);
+                Integer busyStatus = busyStatusId != null && message.getProperty(busyStatusId) instanceof Number busy
+                        ? busy.intValue()
+                        : null;
+                // PidLidReminderSet/PidLidReminderDelta (PSETID_Common, 0x8503/0x8501) -> a DISPLAY VALARM.
+                // The delta is minutes before the start; 0x5AE980FF is the [MS-OXORMDR] §2.2.1.2 default sentinel.
+                Integer reminderSetId = pstFile.namedPropertyId(PSETID_COMMON, 0x8503);
+                Integer reminderMinutes = null;
+                if (reminderSetId != null
+                        && message.getProperty(reminderSetId) instanceof Boolean reminderSet
+                        && reminderSet) {
+                    Integer reminderDeltaId = pstFile.namedPropertyId(PSETID_COMMON, 0x8501);
+                    var reminderDelta =
+                            reminderDeltaId != null && message.getProperty(reminderDeltaId) instanceof Number delta
+                                    ? delta.intValue()
+                                    : null;
+                    reminderMinutes = reminderDelta == null || reminderDelta == 0x5AE980FF ? 15 : reminderDelta;
+                }
                 var eventDetails = new ICalendarGenerator.EventDetails(
                         method,
                         Date.from(start),
@@ -1101,7 +1146,9 @@ public final class PstToEmlConverter {
                         timeZone,
                         recurrence,
                         sequence,
-                        cleanGlobalObjectId);
+                        cleanGlobalObjectId,
+                        reminderMinutes,
+                        busyStatus);
                 String ical = ICalendarGenerator.generate(eventDetails);
                 serializer.addAttachment(
                         "invite.ics",
@@ -1310,23 +1357,23 @@ public final class PstToEmlConverter {
     }
 
     /**
-     * Ensures sibling embedded-message names are distinct by appending {@code " (2)"}, {@code " (3)"}…
-     * before the {@code .eml} suffix when an earlier sibling already took the name. Unlike the MSG
-     * driver's helper this does not re-sanitize or re-suffix the name — the caller has already built
-     * the final {@code .eml} name — so it only resolves collisions.
+     * Builds a unique, filesystem-safe embedded-message part name, mirroring the MSG driver's helper
+     * ({@code MsgToEmlConverter#uniqueEmbeddedName}): the base (the name minus any {@code .eml} suffix) is
+     * run through {@link EmlSerializer#sanitizeFilename} so a subject-derived name carrying {@code ':'} or
+     * {@code '/'} cannot leak into the {@code name=}/{@code filename=} parameter (where it is a usable
+     * filename a recipient can extract), then {@code " (2)"}, {@code " (3)"}… is appended before the
+     * {@code .eml} suffix when an earlier sibling already took the name.
      */
     private static String uniqueEmbeddedName(String filename, Set<String> usedNames) {
-        if (usedNames.add(filename)) {
-            return filename;
-        }
-        var base = filename.toLowerCase(Locale.ROOT).endsWith(".eml")
+        var rawBase = filename.toLowerCase(Locale.ROOT).endsWith(".eml")
                 ? filename.substring(0, filename.length() - ".eml".length())
                 : filename;
+        var base = EmlSerializer.sanitizeFilename(rawBase);
+        var candidate = base + ".eml";
         var counter = 2;
-        String candidate;
-        do {
+        while (!usedNames.add(candidate)) {
             candidate = base + " (" + counter++ + ").eml";
-        } while (!usedNames.add(candidate));
+        }
         return candidate;
     }
 
@@ -1410,10 +1457,14 @@ public final class PstToEmlConverter {
     private static List<ICalendarGenerator.Attendee> visibleAttendees(List<Message.Recipient> recipients) {
         var attendees = new ArrayList<ICalendarGenerator.Attendee>();
         for (Message.Recipient recipient : recipients) {
+            var maskedType = recipient.type & 0x0FFFFFFF;
             if (recipient.email != null
                     && !recipient.email.isBlank()
-                    && (recipient.type & 0x0FFFFFFF) != EmlSerializer.RECIPIENT_TYPE_BCC) {
-                attendees.add(new ICalendarGenerator.Attendee(recipient.name, recipient.email));
+                    && maskedType != EmlSerializer.RECIPIENT_TYPE_BCC) {
+                // Cc -> OPT-PARTICIPANT (RFC 5545 §3.2.16); To keeps the default REQ-PARTICIPANT (role null),
+                // matching the MSG driver, so required attendees and the ORGANIZER stay byte-identical.
+                var role = maskedType == EmlSerializer.RECIPIENT_TYPE_CC ? "OPT-PARTICIPANT" : null;
+                attendees.add(new ICalendarGenerator.Attendee(recipient.name, recipient.email, null, role));
             }
         }
         return attendees;

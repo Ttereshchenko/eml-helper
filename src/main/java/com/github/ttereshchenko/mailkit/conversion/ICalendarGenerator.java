@@ -30,10 +30,15 @@ public final class ICalendarGenerator {
      * participation status (RFC 5545 §3.2.12) — {@code ACCEPTED}/{@code DECLINED}/{@code TENTATIVE}
      * on a meeting-response REPLY, or {@code null} when unknown (NEEDS-ACTION is then implied).
      */
-    public record Attendee(String name, String email, String partStat) {
+    public record Attendee(String name, String email, String partStat, String role) {
         /** A participant whose response status is unknown ({@code PARTSTAT} omitted). */
         public Attendee(String name, String email) {
-            this(name, email, null);
+            this(name, email, null, null);
+        }
+
+        /** A participant with a known {@code PARTSTAT} but the default {@code REQ-PARTICIPANT} role. */
+        public Attendee(String name, String email, String partStat) {
+            this(name, email, partStat, null);
         }
     }
 
@@ -69,7 +74,44 @@ public final class ICalendarGenerator {
             WindowsTimeZone timeZone,
             AppointmentRecurrence.Pattern recurrence,
             int sequence,
-            byte[] cleanGlobalObjectId) {
+            byte[] cleanGlobalObjectId,
+            Integer reminderMinutes,
+            Integer busyStatus) {
+
+        /** An event with a meeting identity but no display reminder or free/busy status. */
+        public EventDetails(
+                String method,
+                Date startTime,
+                Date endTime,
+                String location,
+                String subject,
+                String organizerName,
+                String organizerEmail,
+                String description,
+                List<Attendee> attendees,
+                boolean allDay,
+                WindowsTimeZone timeZone,
+                AppointmentRecurrence.Pattern recurrence,
+                int sequence,
+                byte[] cleanGlobalObjectId) {
+            this(
+                    method,
+                    startTime,
+                    endTime,
+                    location,
+                    subject,
+                    organizerName,
+                    organizerEmail,
+                    description,
+                    attendees,
+                    allDay,
+                    timeZone,
+                    recurrence,
+                    sequence,
+                    cleanGlobalObjectId,
+                    null,
+                    null);
+        }
 
         /** An event with no stored meeting identity ({@code UID} falls back to a random value). */
         public EventDetails(
@@ -285,6 +327,18 @@ public final class ICalendarGenerator {
         builder.append("UID:").append(uid).append("\r\n");
         builder.append("DTSTAMP:").append(dtStamp).append("\r\n");
         builder.append("SEQUENCE:").append(Math.max(0, event.sequence())).append("\r\n");
+        if (event.busyStatus() != null) {
+            // [MS-OXCICAL] §2.1.3.1.1.20.13: PidLidBusyStatus maps to TRANSP (Free -> TRANSPARENT, every
+            // other state -> OPAQUE so the slot reads as busy) plus the Outlook X-MICROSOFT-CDO-BUSYSTATUS
+            // round-trip hint. Emitted only when the source carries the property, so an event that stores
+            // none stays byte-identical (RFC 5545 §3.8.2.7 makes TRANSP optional, defaulting to OPAQUE).
+            builder.append("TRANSP:")
+                    .append(event.busyStatus() == 0 ? "TRANSPARENT" : "OPAQUE")
+                    .append("\r\n");
+            builder.append("X-MICROSOFT-CDO-BUSYSTATUS:")
+                    .append(busyStatusLabel(event.busyStatus()))
+                    .append("\r\n");
+        }
         if (event.startTime() != null) {
             appendEventDate(builder, "DTSTART", event.startTime(), event.allDay(), timeZone, utcFormat);
         }
@@ -295,10 +349,11 @@ public final class ICalendarGenerator {
             appendRecurrence(builder, event.recurrence(), event.startTime(), event.allDay(), timeZone, utcFormat);
         }
 
-        appendParticipant(builder, "ORGANIZER", event.organizerName(), event.organizerEmail(), null);
+        appendParticipant(builder, "ORGANIZER", event.organizerName(), event.organizerEmail(), null, null);
         if (event.attendees() != null && !"PUBLISH".equals(safeMethod)) {
             for (var attendee : event.attendees()) {
-                appendParticipant(builder, "ATTENDEE", attendee.name(), attendee.email(), attendee.partStat());
+                appendParticipant(
+                        builder, "ATTENDEE", attendee.name(), attendee.email(), attendee.partStat(), attendee.role());
             }
         }
 
@@ -314,6 +369,19 @@ public final class ICalendarGenerator {
                     .append("\r\n");
         }
 
+        if (event.reminderMinutes() != null) {
+            // [MS-OXORMDR] §2.2.1.1/§2.2.1.2 + RFC 5545 §3.6.6: a set reminder becomes a DISPLAY VALARM
+            // (ACTION + TRIGGER + DESCRIPTION are all required) firing reminderMinutes before DTSTART. The
+            // subcomponent is emitted only when the source set the reminder, so an event without one is
+            // byte-identical.
+            builder.append("BEGIN:VALARM\r\n");
+            builder.append("ACTION:DISPLAY\r\n");
+            builder.append("TRIGGER:-PT")
+                    .append(Math.max(0, event.reminderMinutes()))
+                    .append("M\r\n");
+            builder.append("DESCRIPTION:Reminder\r\n");
+            builder.append("END:VALARM\r\n");
+        }
         builder.append("END:VEVENT\r\n");
         builder.append("END:VCALENDAR\r\n");
 
@@ -481,10 +549,11 @@ public final class ICalendarGenerator {
         // RFC 5546 §3.4: a scheduling VTODO carries an ORGANIZER and ATTENDEE(s); effectiveTodoMethod has
         // already downgraded to PUBLISH when those are absent. Emit the ORGANIZER whenever it resolves and
         // the ATTENDEE list only for an actual scheduling method (a PUBLISH must not carry attendees).
-        appendParticipant(todo, "ORGANIZER", organizerName, organizerEmail, null);
+        appendParticipant(todo, "ORGANIZER", organizerName, organizerEmail, null, null);
         if (attendees != null && !"PUBLISH".equals(safeMethod)) {
             for (var attendee : attendees) {
-                appendParticipant(todo, "ATTENDEE", attendee.name(), attendee.email(), attendee.partStat());
+                appendParticipant(
+                        todo, "ATTENDEE", attendee.name(), attendee.email(), attendee.partStat(), attendee.role());
             }
         }
         todo.append("END:VTODO\r\n");
@@ -612,7 +681,7 @@ public final class ICalendarGenerator {
      * terminate the line and the CN/PARTSTAT of anything that could escape their parameter values.
      */
     private static void appendParticipant(
-            StringBuilder builder, String property, String name, String email, String partStat) {
+            StringBuilder builder, String property, String name, String email, String partStat, String role) {
         var safeEmail = sanitizeCalAddress(email);
         if (safeEmail.isEmpty()) {
             return;
@@ -621,10 +690,30 @@ public final class ICalendarGenerator {
         if (name != null && !name.isBlank()) {
             builder.append(";CN=\"").append(escapeParameterValue(name)).append('"');
         }
+        // RFC 5545 §3.2.16: ROLE is optional and defaults to REQ-PARTICIPANT, so only a non-default role
+        // (e.g. OPT-PARTICIPANT for a Cc'd optional attendee) is emitted — a required To attendee and the
+        // ORGANIZER stay byte-identical. The value is unquoted, so it is stripped of param-terminators.
+        if (role != null && !role.isBlank()) {
+            builder.append(";ROLE=").append(escapeUnquotedParameterValue(role));
+        }
         if (partStat != null && !partStat.isBlank()) {
             builder.append(";PARTSTAT=").append(escapeUnquotedParameterValue(partStat));
         }
         builder.append(":mailto:").append(safeEmail).append("\r\n");
+    }
+
+    /**
+     * The Outlook {@code X-MICROSOFT-CDO-BUSYSTATUS} label for a PidLidBusyStatus value
+     * ([MS-OXOCAL] §2.2.1.2): 0 Free, 1 Tentative, 3 Out-of-office; every other value (Busy, or an
+     * unrecognised state such as working-elsewhere) reads as BUSY.
+     */
+    private static String busyStatusLabel(int busyStatus) {
+        return switch (busyStatus) {
+            case 0 -> "FREE";
+            case 1 -> "TENTATIVE";
+            case 3 -> "OOF";
+            default -> "BUSY";
+        };
     }
 
     /**

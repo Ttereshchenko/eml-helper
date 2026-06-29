@@ -1084,8 +1084,24 @@ public final class EmlSerializer {
             }
             var cleaned = sanitizeContentId(original);
             if (!cleaned.equals(original.trim())) {
+                // Retarget only WHOLE cid: tokens: a LITERAL replaceAll also rewrites a prefix match, so an
+                // attachment cid "image1" (rewritten to image1@mailkit.invalid) would corrupt a sibling
+                // body reference cid:image10 into cid:image1@mailkit.invalid0 and break its inline part. The
+                // trailing-character guard mirrors containsCidReference, keeping the read/write paths symmetric.
                 var reference = Pattern.compile("cid:" + original.trim(), Pattern.CASE_INSENSITIVE | Pattern.LITERAL);
-                text = reference.matcher(text).replaceAll(Matcher.quoteReplacement("cid:" + cleaned));
+                var matcher = reference.matcher(text);
+                var rewritten = new StringBuilder();
+                var replacement = Matcher.quoteReplacement("cid:" + cleaned);
+                while (matcher.find()) {
+                    var afterMatch = matcher.end();
+                    if (afterMatch >= text.length() || !isContentIdChar(text.charAt(afterMatch))) {
+                        matcher.appendReplacement(rewritten, replacement);
+                    } else {
+                        matcher.appendReplacement(rewritten, Matcher.quoteReplacement(matcher.group()));
+                    }
+                }
+                matcher.appendTail(rewritten);
+                text = rewritten.toString();
             }
         }
         return text;

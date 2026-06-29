@@ -692,4 +692,185 @@ class ICalendarGeneratorTest {
                 Pattern.compile("\r\nUID:\\S+\r\n").matcher(emptyGoid).find(),
                 "an empty GOID must fall back to a generated UID: " + emptyGoid);
     }
+
+    // -----------------------------------------------------------------------
+    // Round-21 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix #3 — VALARM: a non-null reminderMinutes emits a DISPLAY VALARM with the right TRIGGER.
+
+    @Test
+    void reminderMinutesEmitsValarmBlock() {
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                "Room",
+                "Subject",
+                "Organizer",
+                "org@example.com",
+                "Desc",
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                15,
+                null);
+        var ical = ICalendarGenerator.generate(event);
+
+        assertTrue(ical.contains("BEGIN:VALARM\r\n"), "reminderMinutes must emit BEGIN:VALARM: " + ical);
+        assertTrue(ical.contains("ACTION:DISPLAY\r\n"), ical);
+        assertTrue(ical.contains("TRIGGER:-PT15M\r\n"), "TRIGGER must carry the minute count: " + ical);
+        assertTrue(ical.contains("DESCRIPTION:Reminder\r\n"), ical);
+        assertTrue(ical.contains("END:VALARM\r\n"), ical);
+        // VALARM must appear before END:VEVENT
+        assertTrue(
+                ical.indexOf("BEGIN:VALARM") < ical.indexOf("END:VEVENT"),
+                "VALARM must be nested inside VEVENT: " + ical);
+    }
+
+    @Test
+    void nullReminderOmitsValarmBlock() {
+        // The 14-arg ctor delegates with null, null for reminderMinutes and busyStatus.
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                "Room",
+                "Subject",
+                "Organizer",
+                "org@example.com",
+                "Desc",
+                List.of(),
+                false,
+                null,
+                null,
+                0);
+        var ical = ICalendarGenerator.generate(event);
+
+        assertFalse(ical.contains("BEGIN:VALARM"), "null reminderMinutes must not emit VALARM: " + ical);
+    }
+
+    // Fix #7 — TRANSP / X-MICROSOFT-CDO-BUSYSTATUS: emitted only when busyStatus is non-null.
+
+    @Test
+    void busyStatusFreeEmitsTransparentAndFreeLabel() {
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "Organizer",
+                "org@example.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                0);
+        var ical = ICalendarGenerator.generate(event);
+
+        assertTrue(ical.contains("TRANSP:TRANSPARENT\r\n"), "Free must emit TRANSP:TRANSPARENT: " + ical);
+        assertTrue(ical.contains("X-MICROSOFT-CDO-BUSYSTATUS:FREE\r\n"), "Free must emit CDO-BUSYSTATUS:FREE: " + ical);
+    }
+
+    @Test
+    void busyStatusBusyEmitsOpaqueAndBusyLabel() {
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "Organizer",
+                "org@example.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                2);
+        var ical = ICalendarGenerator.generate(event);
+
+        assertTrue(ical.contains("TRANSP:OPAQUE\r\n"), "Busy must emit TRANSP:OPAQUE: " + ical);
+        assertTrue(ical.contains("X-MICROSOFT-CDO-BUSYSTATUS:BUSY\r\n"), ical);
+    }
+
+    @Test
+    void busyStatusTentativeEmitsOpaqueAndTentativeLabel() {
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "Organizer",
+                "org@example.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                1);
+        var ical = ICalendarGenerator.generate(event);
+
+        assertTrue(ical.contains("TRANSP:OPAQUE\r\n"), ical);
+        assertTrue(ical.contains("X-MICROSOFT-CDO-BUSYSTATUS:TENTATIVE\r\n"), ical);
+    }
+
+    @Test
+    void nullBusyStatusOmitsTranspAndCdoHeader() {
+        // The 14-arg ctor delegates with null busyStatus.
+        var event = new ICalendarGenerator.EventDetails(
+                "PUBLISH",
+                START,
+                END,
+                null,
+                "Subject",
+                "Organizer",
+                "org@example.com",
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                0);
+        var ical = ICalendarGenerator.generate(event);
+
+        assertFalse(ical.contains("TRANSP"), "null busyStatus must not emit TRANSP: " + ical);
+        assertFalse(ical.contains("X-MICROSOFT-CDO-BUSYSTATUS"), ical);
+    }
+
+    // Fix #8 — ATTENDEE ROLE: Attendee.role is emitted as ;ROLE= only when non-null.
+
+    @Test
+    void attendeeWithOptParticipantRoleEmitsRoleParam() {
+        var ical = generate(
+                "REQUEST", List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com", null, "OPT-PARTICIPANT")));
+
+        assertTrue(ical.contains(";ROLE=OPT-PARTICIPANT"), "OPT-PARTICIPANT must appear in ATTENDEE line: " + ical);
+        assertTrue(
+                ical.contains("ATTENDEE;CN=\"Bob\";ROLE=OPT-PARTICIPANT:mailto:bob@example.com"),
+                "Full ATTENDEE line with ROLE param: " + ical);
+    }
+
+    @Test
+    void attendeeWithNullRoleOmitsRoleParam() {
+        // The 2-arg Attendee ctor sets role = null → default REQ-PARTICIPANT, not emitted.
+        var ical = generate("REQUEST", List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")));
+
+        assertFalse(ical.contains(";ROLE="), "null role must not emit ;ROLE= in ATTENDEE: " + ical);
+    }
 }
