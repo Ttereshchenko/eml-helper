@@ -1285,4 +1285,33 @@ class EmlSerializerTest {
                 asciiEml.contains("Content-Location: " + asciiLocation),
                 "A pure-ASCII Content-Location must be emitted unchanged: " + asciiEml);
     }
+
+    // Round-21 audit — Fix #2: the bodyTextForOutput cid: rewrite must not corrupt a sibling whose
+    // Content-ID starts with the same prefix as the sanitized shorter id.
+    @Test
+    void cidPrefixOverMatchIsNotCorruptedBySiblingWithLongerCid() throws Exception {
+        // "image1" has no @-domain → sanitizeContentId appends @mailkit.invalid.
+        // "image10@contoso.com" already has @-domain → left untouched.
+        // Old code: replaceAll("cid:image1", ...) also matched the prefix inside
+        //     cid:image10@contoso.com, rewriting it to cid:image1@mailkit.invalid0@contoso.com.
+        // New code: whole-token guard sees "0" (a digit, an isContentIdChar) after the match and
+        //     skips the replacement.
+        var serializer = new EmlSerializer();
+        serializer.addBody("<img src=\"cid:image1\"><img src=\"cid:image10@contoso.com\">", "text/html; charset=UTF-8");
+        serializer.addAttachment("img1.png", "image/png", new byte[] {1}, "image1", true);
+        serializer.addAttachment("img10.png", "image/png", new byte[] {2}, "image10@contoso.com", true);
+
+        var writer = new java.io.StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        // The bare cid (image1) must be retargeted to the sanitized form.
+        assertTrue(eml.contains("cid:image1@mailkit.invalid"), "bare cid must be retargeted: " + eml);
+        // The qualified cid (image10@contoso.com) must be preserved unchanged.
+        assertTrue(eml.contains("cid:image10@contoso.com"), "qualified cid must be preserved: " + eml);
+        // The prefix over-match bug would produce this corrupted form — it must not appear.
+        assertFalse(
+                eml.contains("cid:image1@mailkit.invalid0@contoso.com"),
+                "prefix over-match must not corrupt the longer cid: " + eml);
+    }
 }

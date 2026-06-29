@@ -1991,4 +1991,295 @@ class MsgToEmlConverterTest {
         }
         return false;
     }
+
+    // -----------------------------------------------------------------------
+    // Round-21 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix #1 — MSG body codepage fallback: when only PR_MESSAGE_CODEPAGE is set (no
+    // PR_INTERNET_CPID), applySourceCodepage must use it as the body decode charset so the
+    // plain-text and HTML bodies decode correctly instead of defaulting to CP1252.
+
+    /**
+     * A plain-text (PT_STRING8) body in a Cyrillic (windows-1251) MSG that declares only
+     * PR_MESSAGE_CODEPAGE and no PR_INTERNET_CPID must decode correctly. Under the old behaviour
+     * bodyDecodeCharset fell back to null (no INTERNET_CPID) and POI kept its CP1252 default,
+     * producing mojibake; the fix lets the message codepage substitute for the missing body
+     * codepage.
+     *
+     * <p>Bytes CF F0 E8 E2 E5 F2 = "Привет" (U+041F U+0440 U+0438 U+0432 U+0435 U+0442) under
+     * windows-1251. Under CP1252 those same bytes decode to Ïðâèåò (Ï=0xCF, ð=0xF0, …).
+     */
+    @Test
+    void messageCodepageOnlyFallsBackForPlainTextBody() throws Exception {
+        // windows-1251 bytes for "Привет" (П=0xCF, р=0xF0, и=0xE8, в=0xE2, е=0xE5, т=0xF2)
+        var cyrillicBytes = new byte[] {(byte) 0xCF, (byte) 0xF0, (byte) 0xE8, (byte) 0xE2, (byte) 0xE5, (byte) 0xF2};
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Codepage fallback test")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageCodepage(1251)
+                // No internetCpid: forces the fallback path in applySourceCodepage.
+                .textBodyAnsi(cyrillicBytes)
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        // "Привет" in UTF-8 QP: =D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82
+        assertTrue(
+                eml.contains("=D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82"),
+                "windows-1251 body must decode to Cyrillic when only messageCodepage is set: " + eml);
+        // Under CP1252 the same bytes decode to Ï ð è â å ò (U+00CF…), which yields:
+        // =C3=8F=C3=B0=C3=A8=C3=A2=C3=A5=C3=B2 — must not appear.
+        assertFalse(
+                eml.contains("=C3=8F=C3=B0"),
+                "Body must NOT contain CP1252 mojibake when only messageCodepage is set: " + eml);
+    }
+
+    /**
+     * A binary PR_HTML body in a Cyrillic (windows-1251) MSG that declares only
+     * PR_MESSAGE_CODEPAGE must also decode correctly. The binary HTML chunk goes through
+     * readHtmlBody, which falls back to resolveGeneralCodepage when INTERNET_CPID is absent.
+     *
+     * <p>Mirrors the pattern of arabicBinaryHtmlBodyIsDecodedWithWindows1256NotHebrew, which tests
+     * the INTERNET_CPID-present path. This test covers the new fallback branch.
+     */
+    @Test
+    void messageCodepageOnlyFallsBackForBinaryHtmlBody() throws Exception {
+        // windows-1251 bytes for "Привет" (П=0xCF, р=0xF0, и=0xE8, в=0xE2, е=0xE5, т=0xF2)
+        var cyrillicBytes = new byte[] {(byte) 0xCF, (byte) 0xF0, (byte) 0xE8, (byte) 0xE2, (byte) 0xE5, (byte) 0xF2};
+        var win1251 = java.nio.charset.Charset.forName("windows-1251");
+        // Build the HTML byte array in windows-1251 (ASCII-range tags + Cyrillic word).
+        var htmlBytes = ("<html><body>" + new String(cyrillicBytes, win1251) + "</body></html>").getBytes(win1251);
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Binary HTML codepage fallback")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageCodepage(1251)
+                // No internetCpid — readHtmlBody must fall back to the message codepage.
+                .htmlBodyBinary(htmlBytes)
+                .toBytes();
+
+        var eml = convertString(bytes).replace("=\r\n", "");
+
+        assertTrue(eml.contains("Content-Type: text/html; charset=UTF-8"), eml);
+        // "Привет" in UTF-8 QP: =D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82
+        assertTrue(
+                eml.contains("=D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82"),
+                "Binary HTML body must decode with windows-1251 via messageCodepage fallback: " + eml);
+        // Under CP1252 0xCF→Ï, 0xF0→ð … → =C3=8F=C3=B0… must not appear.
+        assertFalse(eml.contains("=C3=8F=C3=B0"), "Binary HTML body must NOT contain CP1252 mojibake: " + eml);
+    }
+
+    // Fix #4 — X-Message-Flag: PidLidFlagRequest exported as X-Message-Flag only when the flag
+    // is set (PR_FLAG_STATUS absent or == 2); suppressed when the flag is cleared/completed.
+
+    @Test
+    void flagRequestEmitsXMessageFlagWhenFlagStatusAbsent() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Flagged message")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .namedFlagRequest("Follow up")
+                // No flagStatus: converter treats absent as flagged (gate: null || == 2).
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(
+                eml.contains("X-Message-Flag: Follow up\r\n"),
+                "X-Message-Flag must be emitted when flagStatus absent: " + eml);
+    }
+
+    @Test
+    void flagRequestSuppressedWhenFlagStatusIsCompleted() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Completed flag message")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .namedFlagRequest("Follow up")
+                .flagStatus(1) // 1 = complete
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(
+                eml.contains("X-Message-Flag"),
+                "X-Message-Flag must be suppressed when flagStatus=1 (complete): " + eml);
+    }
+
+    // Fix #7 — TRANSP / busy status: PidLidBusyStatus drives TRANSP and
+    // X-MICROSOFT-CDO-BUSYSTATUS in the iCal output via the MSG calendar path.
+
+    @Test
+    void busyStatusFreeEmitsTransparentInCalendarInvite() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Appointment")
+                .subject("Free slot")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                .namedBusyStatus(0) // Free
+                .toBytes();
+
+        var invite = decodedInvite(convertString(bytes));
+
+        assertTrue(invite.contains("TRANSP:TRANSPARENT\r\n"), "Free status must emit TRANSP:TRANSPARENT: " + invite);
+        assertTrue(
+                invite.contains("X-MICROSOFT-CDO-BUSYSTATUS:FREE\r\n"),
+                "Free status must emit CDO-BUSYSTATUS:FREE: " + invite);
+    }
+
+    @Test
+    void busyStatusBusyEmitsOpaqueInCalendarInvite() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Appointment")
+                .subject("Busy slot")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                .namedBusyStatus(2) // Busy
+                .toBytes();
+
+        var invite = decodedInvite(convertString(bytes));
+
+        assertTrue(invite.contains("TRANSP:OPAQUE\r\n"), "Busy status must emit TRANSP:OPAQUE: " + invite);
+        assertTrue(
+                invite.contains("X-MICROSOFT-CDO-BUSYSTATUS:BUSY\r\n"),
+                "Busy status must emit CDO-BUSYSTATUS:BUSY: " + invite);
+    }
+
+    // Fix #3 — VALARM reminder: PidLidReminderSet/PidLidReminderDelta drive a DISPLAY VALARM.
+
+    @Test
+    void reminderSetEmitsValarmInCalendarInvite() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Appointment")
+                .subject("Meeting with reminder")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                .namedReminderSet(true)
+                .namedReminderDelta(30)
+                .toBytes();
+
+        var invite = decodedInvite(convertString(bytes));
+
+        assertTrue(invite.contains("BEGIN:VALARM\r\n"), "Reminder must emit BEGIN:VALARM: " + invite);
+        assertTrue(invite.contains("ACTION:DISPLAY\r\n"), invite);
+        assertTrue(invite.contains("TRIGGER:-PT30M\r\n"), "Delta 30 must emit TRIGGER:-PT30M: " + invite);
+        assertTrue(invite.contains("DESCRIPTION:Reminder\r\n"), invite);
+        assertTrue(invite.contains("END:VALARM\r\n"), invite);
+    }
+
+    @Test
+    void reminderSentinelDeltaDefaultsToFifteenMinutes() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Appointment")
+                .subject("Sentinel reminder")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                .namedReminderSet(true)
+                .namedReminderDelta(0x5AE980FFL) // [MS-OXORMDR] §2.2.1.2 "use default" sentinel
+                .toBytes();
+
+        var invite = decodedInvite(convertString(bytes));
+
+        assertTrue(
+                invite.contains("TRIGGER:-PT15M\r\n"),
+                "The sentinel delta 0x5AE980FF must fall back to 15 minutes: " + invite);
+    }
+
+    @Test
+    void reminderNotSetOmitsValarm() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Appointment")
+                .subject("No reminder")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                // No namedReminderSet / namedReminderDelta.
+                .toBytes();
+
+        var invite = decodedInvite(convertString(bytes));
+
+        assertFalse(invite.contains("BEGIN:VALARM"), "No reminder set must omit VALARM: " + invite);
+    }
+
+    // Fix #8 — ATTENDEE ROLE: Cc recipients in a meeting REQUEST get ROLE=OPT-PARTICIPANT; To
+    // recipients keep the default REQ-PARTICIPANT (no ROLE= param emitted).
+
+    @Test
+    void ccRecipientInMeetingRequestGetsOptParticipantRole() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Schedule.Meeting.Request")
+                .subject("Team sync")
+                .sender("Chair", "chair@example.com")
+                .recipientTo("Required", "req@example.com")
+                .recipientCc("Optional", "opt@example.com")
+                .appointmentStartEnd(new Date(1490725800000L), new Date(1490727600000L))
+                .toBytes();
+
+        var invite = decodedInvite(convertString(bytes));
+
+        // The To attendee must NOT carry ROLE=.
+        assertTrue(
+                invite.contains("ATTENDEE;CN=\"Required\":mailto:req@example.com"),
+                "To attendee must have no ROLE= param: " + invite);
+        // The Cc attendee must carry ROLE=OPT-PARTICIPANT.
+        assertTrue(invite.contains(";ROLE=OPT-PARTICIPANT"), "Cc attendee must carry ROLE=OPT-PARTICIPANT: " + invite);
+        assertTrue(
+                invite.contains("ATTENDEE;CN=\"Optional\";ROLE=OPT-PARTICIPANT:mailto:opt@example.com"),
+                "Cc attendee full ATTENDEE line: " + invite);
+    }
+
+    // Fix #9 — Expiry-Date: PR_EXPIRY_TIME exports as Expiry-Date header; absent/sentinel suppressed.
+
+    @Test
+    void expiryTimeEmitsExpiryDateHeader() throws Exception {
+        var expiryDate = new Date(1720000000000L); // 2024-07-03 — a non-sentinel date
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Expires soon")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .expiryTime(expiryDate)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Expiry-Date: "), "PR_EXPIRY_TIME must produce Expiry-Date header: " + eml);
+    }
+
+    @Test
+    void expiryTimeAbsentSuppressesExpiryDateHeader() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("No expiry")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                // No expiryTime set.
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(eml.contains("Expiry-Date"), "Absent PR_EXPIRY_TIME must not emit Expiry-Date: " + eml);
+    }
+
+    // Fix #10 — X-MS-Exchange-Vote-Response: PidLidVerbResponse exported as a vote-response header.
+
+    @Test
+    void verbResponseEmitsXmsExchangeVoteResponseHeader() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Vote response")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .namedVerbResponse("Approve")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(
+                eml.contains("X-MS-Exchange-Vote-Response: Approve\r\n"),
+                "PidLidVerbResponse must produce X-MS-Exchange-Vote-Response: " + eml);
+    }
 }

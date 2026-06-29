@@ -84,6 +84,7 @@ public final class MsgToEmlConverter {
     private static final ClassID PSETID_MEETING = new ClassID("{6ED8DA90-450B-101B-98DA-00AA003F1305}");
     private static final ClassID PSETID_TASK = new ClassID("{00062003-0000-0000-C000-000000000046}");
     private static final ClassID PSETID_ADDRESS = new ClassID("{00062004-0000-0000-C000-000000000046}");
+    private static final ClassID PSETID_COMMON = new ClassID("{00062008-0000-0000-C000-000000000046}");
     private static final ClassID PS_PUBLIC_STRINGS = new ClassID("{00020329-0000-0000-C000-000000000046}");
 
     private MsgToEmlConverter() {}
@@ -386,6 +387,12 @@ public final class MsgToEmlConverter {
             if (binaryChunk != null && binaryChunk.getValue() != null) {
                 var charsetName = charsetForCodepage(
                         readMainLong(message, MAPIProperty.INTERNET_CPID.id), "PR_INTERNET_CPID", log);
+                if (charsetName == null) {
+                    // No PR_INTERNET_CPID: fall back to the message codepage so a binary PR_HTML body in an
+                    // ANSI message decodes with the same charset as the plain-text body and the PST driver
+                    // instead of POI's CP1252 default.
+                    charsetName = charsetForCodepage(resolveGeneralCodepage(message), "PR_MESSAGE_CODEPAGE", log);
+                }
                 if (charsetName != null) {
                     try {
                         return new String(binaryChunk.getValue(), Charset.forName(charsetName));
@@ -807,6 +814,30 @@ public final class MsgToEmlConverter {
             serializer.addAddressHeader(
                     "Disposition-Notification-To", EmlSerializer.formatAddress(from.name(), from.email()));
         }
+        // PidLidFlagRequest (0x8530, PSETID_Common) is the user-visible follow-up flag label (e.g. "Follow
+        // up", "Review"); Outlook round-trips it over Internet mail as the X-Message-Flag header. Mirror
+        // that, but only while the flag is set (PidTagFlagStatus 0x1090 == 2 = flagged) so a cleared or
+        // completed flag does not export a stale label. The PST driver emits the same header.
+        var flagStatus = readMainLong(message, 0x1090);
+        if (flagStatus == null || flagStatus == 2) {
+            var followUp = readNamedString(message, PSETID_COMMON, 0x8530);
+            if (followUp != null && !followUp.isBlank()) {
+                serializer.addCustomHeader("X-Message-Flag", followUp);
+            }
+        }
+        // PR_EXPIRY_TIME (0x0015, PT_SYSTIME) is the sender-set message expiration; Outlook maps it to the
+        // Expiry-Date header (RFC 4021 §2.1.49). Emitted only when present and non-sentinel; PST mirrors this.
+        var expiry = nonSentinelDate(readTimeProperty(message, MAPIProperty.EXPIRY_TIME));
+        if (expiry != null) {
+            serializer.addCustomHeader("Expiry-Date", EmlSerializer.formatRfc2822Date(expiry));
+        }
+        // PidLidVerbResponse (0x8524, PSETID_Common) is the recipient's chosen voting-button text (e.g.
+        // "Approve"/"Reject"). It has no standard MIME header, so the recorded vote is preserved as an
+        // Exchange-namespaced X-header rather than being dropped to a plain note. The PST driver mirrors this.
+        var voteResponse = readNamedString(message, PSETID_COMMON, 0x8524);
+        if (voteResponse != null && !voteResponse.isBlank()) {
+            serializer.addCustomHeader("X-MS-Exchange-Vote-Response", voteResponse);
+        }
     }
 
     private static String readMessageClass(MAPIMessage message) {
@@ -914,6 +945,16 @@ public final class MsgToEmlConverter {
         // identity that maps to the iCal UID ([MS-OXCICAL] §2.1.3.1.1.20.26), so a REQUEST/REPLY/CANCEL
         // of the same meeting share one UID. Absent on personal appointments, which then get a random UID.
         var cleanGlobalObjectId = readNamedBytes(message, PSETID_MEETING, 0x0023);
+        // PidLidBusyStatus (PSETID_Appointment, 0x8205) -> TRANSP/X-MICROSOFT-CDO-BUSYSTATUS so a Free or
+        // Tentative appointment does not collapse to Busy; null when unset (no TRANSP emitted).
+        var busyStatus = readNamedLong(message, PSETID_APPOINTMENT, 0x8205);
+        // PidLidReminderSet/PidLidReminderDelta (PSETID_Common, 0x8503/0x8501) -> a DISPLAY VALARM. The
+        // delta is minutes before the start; 0x5AE980FF is the [MS-OXORMDR] §2.2.1.2 "use default" sentinel.
+        Integer reminderMinutes = null;
+        if (Boolean.TRUE.equals(readNamedBoolean(message, PSETID_COMMON, 0x8503))) {
+            var reminderDelta = readNamedLong(message, PSETID_COMMON, 0x8501);
+            reminderMinutes = reminderDelta == null || reminderDelta == 0x5AE980FF ? 15 : reminderDelta;
+        }
         var eventDetails = new ICalendarGenerator.EventDetails(
                 method,
                 start,
@@ -928,7 +969,9 @@ public final class MsgToEmlConverter {
                 timeZone,
                 recurrence,
                 sequence != null ? sequence : 0,
-                cleanGlobalObjectId);
+                cleanGlobalObjectId,
+                reminderMinutes,
+                busyStatus);
         var ical = ICalendarGenerator.generate(eventDetails);
         serializer.addAttachment(
                 "invite.ics",
@@ -1055,7 +1098,12 @@ public final class MsgToEmlConverter {
                 }
                 var address = resolveRecipientAddress(details[index]);
                 if (address != null && !address.isBlank()) {
-                    attendees.add(new ICalendarGenerator.Attendee(details[index].getRecipientName(), address));
+                    // A Cc recipient is an optional attendee (RFC 5545 §3.2.16 OPT-PARTICIPANT); a To
+                    // recipient keeps the default REQ-PARTICIPANT (role null), so required attendees and the
+                    // ORGANIZER stay byte-identical.
+                    var role = type != null && type == EmlSerializer.RECIPIENT_TYPE_CC ? "OPT-PARTICIPANT" : null;
+                    attendees.add(
+                            new ICalendarGenerator.Attendee(details[index].getRecipientName(), address, null, role));
                 }
             }
         }
@@ -1535,6 +1583,27 @@ public final class MsgToEmlConverter {
     }
 
     /**
+     * The legacy "general" code page POI's {@code guess7BitEncoding} uses for non-body PT_STRING8 strings:
+     * {@code PR_MESSAGE_CODEPAGE} first and, when absent, the {@code PR_MESSAGE_LOCALE_ID} fallback (the
+     * second of POI's three sources). Never the {@code PR_INTERNET_CPID} body fallback, which would
+     * mis-decode a Subject when no message codepage is declared (see round 11). Returns {@code null} when
+     * neither is available.
+     */
+    private static Integer resolveGeneralCodepage(MAPIMessage message) {
+        var messageCodepage = readMainLong(message, MAPIProperty.MESSAGE_CODEPAGE.id);
+        if (messageCodepage == null) {
+            var localeId = readMainLong(message, MAPIProperty.MESSAGE_LOCALE_ID.id);
+            if (localeId != null) {
+                var localeCodepage = LocaleUtil.getDefaultCodePageFromLCID(localeId);
+                if (localeCodepage != 0) {
+                    messageCodepage = localeCodepage;
+                }
+            }
+        }
+        return messageCodepage;
+    }
+
+    /**
      * Re-decodes the legacy ANSI strings of an MSG with the codepage the message actually declares,
      * fixing three blind spots in POI's {@link MAPIMessage#guess7BitEncoding()}:
      *
@@ -1583,34 +1652,29 @@ public final class MsgToEmlConverter {
         // Subject/named-props/recipients with that divergent charset and the re-decode below would be skipped
         // (messageCodepageCharset == null), leaving them mojibaked. For every non-divergent code page
         // charsetForCodepage returns POI's identical charset, so the re-decode stays a byte-identical no-op.
-        var messageCodepage = readMainLong(message, MAPIProperty.MESSAGE_CODEPAGE.id);
-        if (messageCodepage == null) {
-            var localeId = readMainLong(message, MAPIProperty.MESSAGE_LOCALE_ID.id);
-            if (localeId != null) {
-                var localeCodepage = LocaleUtil.getDefaultCodePageFromLCID(localeId);
-                if (localeCodepage != 0) {
-                    messageCodepage = localeCodepage;
-                }
-            }
-        }
-        var messageCodepageCharset = charsetForCodepage(messageCodepage, "PR_MESSAGE_CODEPAGE", log);
+        var messageCodepageCharset = charsetForCodepage(resolveGeneralCodepage(message), "PR_MESSAGE_CODEPAGE", log);
+        // PR_INTERNET_CPID governs the body, but an ANSI message that declares only PR_MESSAGE_CODEPAGE (no
+        // INTERNET_CPID) would otherwise leave PR_BODY/PR_BODY_HTML at POI's CP1252 default and mojibake,
+        // while the Subject (re-decoded below) and the PST driver decode correctly. Fall back to the message
+        // codepage so the body matches the rest of the message (PST's getInternetCharset uses the same chain).
+        var bodyDecodeCharset = bodyCharset != null ? bodyCharset : messageCodepageCharset;
         // Attachment name strings follow the message codepage too; INTERNET_CPID is the documented
         // fallback there (preserves the prior behavior of the attachment loop).
         var attachmentCharset = messageCodepageCharset != null ? messageCodepageCharset : bodyCharset;
 
-        if (bodyCharset != null) {
+        if (bodyDecodeCharset != null) {
             // PR_BODY and the legacy string PR_BODY_HTML are both governed by PR_INTERNET_CPID in POI's
             // guess7BitEncoding (its bodycodepage and htmlbodycodepage), and POI decodes both with the
-            // buggy codepageToEncoding charset. Re-decode each StringChunk with the corrected bodyCharset
-            // so an ANSI 1256/932/874/950 body — plain or HTML — matches charsetForCodepage and the PST
-            // driver. (The modern binary PR_HTML chunk is a ByteChunk POI decodes internally; readHtmlBody
-            // handles that one directly.)
+            // buggy codepageToEncoding charset. Re-decode each StringChunk with the corrected bodyDecodeCharset
+            // (INTERNET_CPID, else the message codepage) so an ANSI 1256/932/874/950 body — plain or HTML —
+            // matches charsetForCodepage and the PST driver. (The modern binary PR_HTML chunk is a ByteChunk
+            // POI decodes internally; readHtmlBody handles that one directly.)
             for (var bodyProperty : new MAPIProperty[] {MAPIProperty.BODY, MAPIProperty.BODY_HTML}) {
                 var bodyChunks = mainChunks.getAll().get(bodyProperty);
                 if (bodyChunks != null) {
                     for (var chunk : bodyChunks) {
                         if (chunk instanceof StringChunk bodyChunk) {
-                            bodyChunk.set7BitEncoding(bodyCharset);
+                            bodyChunk.set7BitEncoding(bodyDecodeCharset);
                         }
                     }
                 }

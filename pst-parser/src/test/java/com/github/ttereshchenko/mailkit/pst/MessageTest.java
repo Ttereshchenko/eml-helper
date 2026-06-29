@@ -585,4 +585,22 @@ class MessageTest {
                 "<a title=\"" + (char) 233 + "x\">",
                 Message.decodeHtmlTagContent("<a title=\"\\u233 \\}x\">", "windows-1252"));
     }
+
+    // Round-21 — Fix #5: parseOneOffRecipient must keep a one-off member that has a display name
+    // but a blank email address, mirroring the MSG one-off parser. The old code returned null when
+    // the email was blank (only checked email.isEmpty()), so a name-only distribution-list member
+    // was silently dropped. The fix drops a member only when BOTH name and email are blank.
+    @Test
+    void parseOneOffRecipientWithNameButBlankEmailIsKept() {
+        // Build a Unicode one-off ENTRYID ([MS-OXCDATA] §2.2.5.1) with a display name and a blank
+        // email address, then verify that parseReplyRecipients returns a recipient carrying the name.
+        var ansiCharset = StandardCharsets.ISO_8859_1;
+        var nameOnlyEntry = oneOffEntryId("Name Only Person", "SMTP", "", true, ansiCharset);
+        var blob = flatEntryList(nameOnlyEntry);
+
+        var recipients = Message.parseReplyRecipients(blob, "", ansiCharset, Message.AddressPreference.PREFER_SMTP);
+
+        assertEquals(1, recipients.size(), "name-only one-off member must not be dropped: " + recipients);
+        assertEquals("Name Only Person", recipients.get(0).name, "display name must be preserved");
+    }
 }

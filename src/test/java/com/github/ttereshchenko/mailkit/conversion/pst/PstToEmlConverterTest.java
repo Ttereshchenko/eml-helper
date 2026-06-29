@@ -3792,4 +3792,32 @@ class PstToEmlConverterTest {
                     "the generic 'message' fallback must not appear when the inner subject is non-blank: " + eml);
         }
     }
+
+    // Round-21 — Fix #6: uniqueEmbeddedName now runs the base through EmlSerializer.sanitizeFilename
+    // so a subject containing ':' or '/' does not leak into the name=/filename= parameter as a
+    // literal colon or slash (which is a path-separator on many filesystems). Pre-fix, the display
+    // name was used verbatim and "RE: Quarterly results" became name="RE: Quarterly results.eml".
+
+    @Test
+    void embeddedMessageWithColonInSubjectGetsSanitizedFilename() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            // Display name contains ':' — should be replaced by '_' by sanitizeFilename.
+            var inner = new StubMessage(pstFile, "RE: Quarterly results", List.of(), null, "");
+            var colonyAttach = new EmbeddedAttachmentStub("RE: Quarterly results");
+            var host = new StubMessage(pstFile, "Host", List.of(colonyAttach), inner, "");
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(host, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            // Colon must be replaced; the sanitized form uses '_'.
+            assertTrue(
+                    eml.contains("name=\"RE_ Quarterly results.eml\""),
+                    "colon in display name must be sanitized to underscore: " + eml);
+            assertFalse(
+                    eml.contains("name=\"RE: Quarterly results.eml\""),
+                    "raw colon must not appear in the name= parameter: " + eml);
+        }
+    }
 }

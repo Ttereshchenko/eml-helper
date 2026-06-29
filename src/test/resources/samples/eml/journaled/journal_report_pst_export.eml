@@ -18,9 +18,9 @@ Message-Id: <original-7f3a@example.com>
 Recipients:
    bob@example.com (To)
 --MAILKIT_8c2e6f4a9b1d4e72a3c5d8f0b6a91c47
-Content-Type: message/rfc822; name="RE: Quarterly results.eml"
+Content-Type: message/rfc822; name="RE_ Quarterly results.eml"
 Content-Transfer-Encoding: 8bit
-Content-Disposition: attachment; filename="RE: Quarterly results.eml"
+Content-Disposition: attachment; filename="RE_ Quarterly results.eml"
 
 From: "Alice" <alice@example.com>
 To: <bob@example.com>
