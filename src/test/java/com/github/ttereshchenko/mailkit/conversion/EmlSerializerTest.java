@@ -1286,6 +1286,47 @@ class EmlSerializerTest {
                 "A pure-ASCII Content-Location must be emitted unchanged: " + asciiEml);
     }
 
+    // -----------------------------------------------------------------------
+    // Round-22 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix EML-1 — an attachment cited by Content-Location (RFC 2557 §4) is placed inside
+    // multipart/related so the HTML reference resolves; the whole-token guard prevents a strict
+    // prefix from being pulled in.
+
+    @Test
+    void contentLocationReferenceCreatesMultipartRelated() throws Exception {
+        var serializer = new EmlSerializer();
+        serializer.addBody("<img src=\"http://h/a.png\">", "text/html; charset=UTF-8");
+        serializer.addAttachment("a.png", "image/png", new byte[] {1}, null, "http://h/a.png", false);
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertTrue(
+                eml.contains("multipart/related"),
+                "attachment cited by Content-Location must be placed in multipart/related: " + eml);
+        assertTrue(eml.contains("Content-Location: http://h/a.png"), eml);
+    }
+
+    @Test
+    void contentLocationPrefixDoesNotMatchWholeToken() throws Exception {
+        // "http://h/a.pn" is a strict prefix of the cited URL "http://h/a.png";
+        // the whole-token guard must prevent it from being pulled into multipart/related.
+        var serializer = new EmlSerializer();
+        serializer.addBody("<img src=\"http://h/a.png\">", "text/html; charset=UTF-8");
+        serializer.addAttachment("a.pn", "image/png", new byte[] {2}, null, "http://h/a.pn", false);
+
+        var writer = new StringWriter();
+        serializer.writeTo(writer);
+        var eml = writer.toString();
+
+        assertFalse(
+                eml.contains("multipart/related"),
+                "a prefix-only Content-Location must not create multipart/related: " + eml);
+    }
+
     // Round-21 audit — Fix #2: the bodyTextForOutput cid: rewrite must not corrupt a sibling whose
     // Content-ID starts with the same prefix as the sanitized shorter id.
     @Test

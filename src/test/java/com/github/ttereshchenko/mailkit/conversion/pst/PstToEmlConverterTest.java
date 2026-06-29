@@ -924,6 +924,11 @@ class PstToEmlConverterTest {
         }
 
         @Override
+        public String getExtension() {
+            return "";
+        }
+
+        @Override
         public String getDisplayName() {
             return displayName;
         }
@@ -3818,6 +3823,100 @@ class PstToEmlConverterTest {
             assertFalse(
                     eml.contains("name=\"RE: Quarterly results.eml\""),
                     "raw colon must not appear in the name= parameter: " + eml);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Round-22 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix NPCLASS-1 — isAllowedMessageClass uses case-insensitive matching so non-canonical
+    // casings ("ipm.note", "IPM.NOTE") are accepted the same as the canonical form.
+
+    @Test
+    void allowedMessageClassMatchingIsCaseInsensitive() {
+        // Canonical form — always accepted.
+        assertTrue(PstToEmlConverter.isAllowedMessageClass("IPM.Note", false), "canonical IPM.Note must be accepted");
+        // All-lowercase variant.
+        assertTrue(
+                PstToEmlConverter.isAllowedMessageClass("ipm.note", false), "all-lowercase ipm.note must be accepted");
+        // All-uppercase variant.
+        assertTrue(
+                PstToEmlConverter.isAllowedMessageClass("IPM.NOTE", false), "all-uppercase IPM.NOTE must be accepted");
+        // Mixed-case subclass (Report.* prefix is allowed).
+        assertTrue(
+                PstToEmlConverter.isAllowedMessageClass("Report.Ipm.Note.NDR", false),
+                "mixed-case Report.Ipm.Note.NDR must be accepted");
+        // A genuinely unknown class must still be blocked regardless of case.
+        assertFalse(
+                PstToEmlConverter.isAllowedMessageClass("IPM.UnknownGarbage", false),
+                "unknown class must remain blocked");
+    }
+
+    // Fix ATT-3 — when PR_ATTACH_LONG_FILENAME and PR_ATTACH_FILENAME are both empty but
+    // PR_ATTACH_EXTENSION is present, the fallback filename is "attachment.<ext>" not "attachment.dat".
+
+    @Test
+    void attachmentWithExtensionButNoFilenameUsesExtensionInFallbackName() throws Exception {
+        var pdfAttach = new Attachment() {
+            @Override
+            public String getLongFilename() {
+                return "";
+            }
+
+            @Override
+            public String getFilename() {
+                return "";
+            }
+
+            @Override
+            public String getExtension() {
+                return ".pdf";
+            }
+
+            @Override
+            public int getAttachMethod() {
+                return 1; // afByValue
+            }
+
+            @Override
+            public byte[] getData() {
+                return new byte[] {1, 2, 3};
+            }
+
+            @Override
+            public String getMimeTag() {
+                return "application/pdf";
+            }
+
+            @Override
+            public String getContentId() {
+                return null;
+            }
+
+            @Override
+            public String getContentLocation() {
+                return null;
+            }
+
+            @Override
+            public boolean isInline() {
+                return false;
+            }
+        };
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new StubMessage(pstFile, "Extension fallback", List.of(pdfAttach), null, "");
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(
+                    eml.contains("attachment.pdf"),
+                    "PR_ATTACH_EXTENSION '.pdf' must produce filename 'attachment.pdf': " + eml);
+            assertFalse(
+                    eml.contains("attachment.dat"),
+                    "generic fallback 'attachment.dat' must not be used when extension is known: " + eml);
         }
     }
 }

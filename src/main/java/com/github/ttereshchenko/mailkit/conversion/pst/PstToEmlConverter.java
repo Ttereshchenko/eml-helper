@@ -730,6 +730,14 @@ public final class PstToEmlConverter {
         }
 
         var date = message.getMessageDate();
+        if (date == null
+                && message.getProperty(MapiProperties.PR_CREATION_TIME) instanceof Instant creationTime
+                && creationTime.getEpochSecond() > -11_644_473_600L) {
+            // Unsent/store-only items (drafts, notes, tasks) store no submit or delivery time; fall back to
+            // the composition time (PR_CREATION_TIME) rather than letting EmlSerializer stamp the conversion
+            // moment, mirroring the MSG driver. Filtered against the FILETIME-0 sentinel (1601-01-01).
+            date = creationTime;
+        }
         if (date != null) {
             serializer.setDate(Date.from(date));
         }
@@ -835,7 +843,16 @@ public final class PstToEmlConverter {
             // compare, matching the MSG path: a recipient Exchange-flagged as already-processed
             // (e.g. 0x10000001 on a resent item) otherwise matches no class and is silently dropped.
             var maskedType = recipient.type & 0x0FFFFFFF;
-            serializer.addRecipient(maskedType, recipient.name, recipient.email);
+            if ((recipient.email == null || recipient.email.isBlank())
+                    && recipient.name != null
+                    && EmlSerializer.looksLikeSmtpAddress(recipient.name)) {
+                // The row stores no address but its display name is itself an addr-spec: promote it into
+                // the address slot so the recipient stays repliable, mirroring the MSG driver and
+                // addDisplayFallback rather than demoting it behind the undisclosed@invalid placeholder.
+                serializer.addRecipient(maskedType, null, recipient.name);
+            } else {
+                serializer.addRecipient(maskedType, recipient.name, recipient.email);
+            }
             if ((recipient.name != null && !recipient.name.isBlank())
                     || (recipient.email != null && !recipient.email.isBlank())) {
                 seenTypes.add(maskedType);
@@ -1132,6 +1149,20 @@ public final class PstToEmlConverter {
                                     : null;
                     reminderMinutes = reminderDelta == null || reminderDelta == 0x5AE980FF ? 15 : reminderDelta;
                 }
+                // PR_SENSITIVITY -> VEVENT CLASS, PR_IMPORTANCE -> VEVENT PRIORITY and PidNameKeywords ->
+                // VEVENT CATEGORIES, mirroring the MSG driver so the appointment's privacy/priority/category
+                // metadata survives on the calendar object. Each is gated in ICalendarGenerator (Normal/absent
+                // emits nothing), so existing appointment fixtures stay byte-identical.
+                Integer sensitivity =
+                        message.getProperty(MapiProperties.PR_SENSITIVITY) instanceof Number sensitivityValue
+                                ? sensitivityValue.intValue()
+                                : null;
+                Integer importance = message.getProperty(MapiProperties.PR_IMPORTANCE) instanceof Number importanceValue
+                        ? importanceValue.intValue()
+                        : null;
+                Integer keywordsPropId = pstFile.namedPropertyId(PS_PUBLIC_STRINGS, "Keywords");
+                List<String> categories =
+                        keywordsPropId != null ? collectStrings(message.getProperty(keywordsPropId)) : List.of();
                 var eventDetails = new ICalendarGenerator.EventDetails(
                         method,
                         Date.from(start),
@@ -1148,7 +1179,10 @@ public final class PstToEmlConverter {
                         sequence,
                         cleanGlobalObjectId,
                         reminderMinutes,
-                        busyStatus);
+                        busyStatus,
+                        sensitivity,
+                        importance,
+                        categories);
                 String ical = ICalendarGenerator.generate(eventDetails);
                 serializer.addAttachment(
                         "invite.ics",
@@ -1192,7 +1226,16 @@ public final class PstToEmlConverter {
 
             String attachName = attachment.getLongFilename();
             if (attachName.isEmpty()) attachName = attachment.getFilename();
-            if (attachName.isEmpty()) attachName = "attachment.dat";
+            if (attachName.isEmpty()) {
+                // No filename property: name from PR_ATTACH_EXTENSION (e.g. ".pdf") so the recipient's
+                // client gets the real type hint instead of "attachment.dat", which — with
+                // PR_ATTACH_MIME_TAG frequently also absent — would otherwise read as
+                // application/octet-stream. Mirrors the MSG driver's pickFilename.
+                var attachExtension = attachment.getExtension().trim();
+                attachName = attachExtension.isEmpty()
+                        ? "attachment.dat"
+                        : "attachment" + (attachExtension.startsWith(".") ? attachExtension : "." + attachExtension);
+            }
 
             if (attachment.getAttachMethod() == ATTACH_EMBEDDED_MSG) {
                 if (attachName.equals("attachment.dat")) {
@@ -1406,13 +1449,23 @@ public final class PstToEmlConverter {
                 .jobTitle(message.getStringProperty(MapiProperties.PR_TITLE_W))
                 .phone("work", message.getStringProperty(MapiProperties.PR_BUSINESS_TELEPHONE_NUMBER_W))
                 .phone("home", message.getStringProperty(MapiProperties.PR_HOME_TELEPHONE_NUMBER_W))
-                .phone("cell", message.getStringProperty(MapiProperties.PR_MOBILE_TELEPHONE_NUMBER_W));
+                .phone("cell", message.getStringProperty(MapiProperties.PR_MOBILE_TELEPHONE_NUMBER_W))
+                .phone("work,fax", message.getStringProperty(MapiProperties.PR_BUSINESS_FAX_NUMBER_W))
+                .phone("home,fax", message.getStringProperty(MapiProperties.PR_HOME_FAX_NUMBER_W))
+                .phone("fax", message.getStringProperty(MapiProperties.PR_PRIMARY_FAX_NUMBER_W))
+                .phone("pager", message.getStringProperty(MapiProperties.PR_PAGER_TELEPHONE_NUMBER_W))
+                .department(message.getStringProperty(MapiProperties.PR_DEPARTMENT_NAME_W));
         // PidLidEmail1EmailAddress / Email2 / Email3 ([MS-OXOCNTC] §2.2.1.2.3).
         for (int namedId : new int[] {0x8083, 0x8093, 0x80A3}) {
             Integer propertyId = pstFile.namedPropertyId(PSETID_ADDRESS, namedId);
             if (propertyId != null) {
                 contact.email(message.getStringProperty(propertyId));
             }
+        }
+        // PidLidInstantMessagingAddress (PSETID_Address, 0x8062, [MS-OXOCNTC] §2.2.1.2.1) -> vCard IMPP.
+        Integer imAddressId = pstFile.namedPropertyId(PSETID_ADDRESS, 0x8062);
+        if (imAddressId != null) {
+            contact.imAddress(message.getStringProperty(imAddressId));
         }
         return VCardGenerator.generate(contact);
     }
@@ -1434,6 +1487,11 @@ public final class PstToEmlConverter {
         Boolean complete =
                 completeId != null && message.getProperty(completeId) instanceof Boolean value ? value : null;
         Instant completed = namedInstant(message, pstFile, 0x810F); // PidLidTaskDateCompleted
+        // PR_IMPORTANCE (0x0017) -> VTODO PRIORITY so the task's High/Low flag survives on task.ics, mirroring
+        // the MSG driver (gated in generateTodo: Normal/absent emits no PRIORITY -> existing tasks unchanged).
+        Integer importance = message.getProperty(MapiProperties.PR_IMPORTANCE) instanceof Number importanceValue
+                ? importanceValue.intValue()
+                : null;
         return ICalendarGenerator.generateTodo(
                 subject,
                 message.getBody(),
@@ -1445,7 +1503,8 @@ public final class PstToEmlConverter {
                 method,
                 organizerName,
                 organizerEmail,
-                attendees);
+                attendees,
+                importance);
     }
 
     /**
@@ -1760,19 +1819,25 @@ public final class PstToEmlConverter {
      * missing message class — and the "no form found" {@code IPM} class — as the generic note, so such
      * an item is treated as a plain email (best-effort fidelity) rather than silently dropped.
      * Everything else must match an allowed prefix.
+     *
+     * <p>The class is matched case-insensitively, as [MS-OXCMSG] §2.2.1.3 requires: a non-canonical-case
+     * class (e.g. {@code "ipm.note"} or {@code "IPM.NOTE"} written by a third-party producer) routes
+     * exactly like its canonical form instead of falling through and having the whole message dropped.
+     * Outlook/Exchange always write canonical case, so this only ever WIDENS the match — every existing
+     * (canonical-case) fixture keeps matching the same prefix and is exported byte-identically.
      */
     static boolean isAllowedMessageClass(String messageClass, boolean exportNonMailItems) {
-        if (messageClass == null || messageClass.isEmpty() || messageClass.equals("IPM")) {
+        if (messageClass == null || messageClass.isEmpty() || messageClass.equalsIgnoreCase("IPM")) {
             return true;
         }
         for (String allowed : ALLOWED_MESSAGE_CLASSES) {
-            if (messageClass.startsWith(allowed)) {
+            if (messageClass.regionMatches(true, 0, allowed, 0, allowed.length())) {
                 return true;
             }
         }
         if (exportNonMailItems) {
             for (String allowed : NON_MAIL_MESSAGE_CLASSES) {
-                if (messageClass.startsWith(allowed)) {
+                if (messageClass.regionMatches(true, 0, allowed, 0, allowed.length())) {
                     return true;
                 }
             }

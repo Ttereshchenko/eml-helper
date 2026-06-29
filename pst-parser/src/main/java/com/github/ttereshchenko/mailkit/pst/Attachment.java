@@ -40,6 +40,11 @@ public class Attachment {
         return propertyContext.getProperty(MapiProperties.PR_ATTACH_FILENAME_W) instanceof String value ? value : "";
     }
 
+    /** The filename extension including the leading dot (PR_ATTACH_EXTENSION), or an empty string if absent. */
+    public String getExtension() {
+        return propertyContext.getProperty(MapiProperties.PR_ATTACH_EXTENSION_W) instanceof String value ? value : "";
+    }
+
     /** The MIME type (PR_ATTACH_MIME_TAG), or an empty string if absent. */
     public String getMimeTag() {
         return propertyContext.getProperty(MapiProperties.PR_ATTACH_MIME_TAG_W) instanceof String value ? value : "";

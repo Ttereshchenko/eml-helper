@@ -2282,4 +2282,55 @@ class MsgToEmlConverterTest {
                 eml.contains("X-MS-Exchange-Vote-Response: Approve\r\n"),
                 "PidLidVerbResponse must produce X-MS-Exchange-Vote-Response: " + eml);
     }
+
+    // -----------------------------------------------------------------------
+    // Round-22 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix RECIP-1 — a recipient row whose only identifier is an SMTP-looking PR_DISPLAY_NAME
+    // must be promoted to the address slot, not demoted to "undisclosed@invalid".
+
+    @Test
+    void recipientRowWithSmtpLookingDisplayNameIsPromotedToAddressSlot() throws Exception {
+        // The row has PR_DISPLAY_NAME = "user@host.com" but no PR_EMAIL_ADDRESS / PR_SMTP_ADDRESS.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("SMTP-like display name")
+                .sender("Alice", "alice@example.com")
+                .recipientToWithoutSmtp("user@host.com", null, null)
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(
+                eml.contains("<user@host.com>"),
+                "SMTP-looking display name must be placed in the addr-spec slot: " + eml);
+        assertFalse(
+                eml.contains("undisclosed@invalid"),
+                "SMTP-looking display name must not fall back to undisclosed@invalid: " + eml);
+    }
+
+    // Fix DATE-1 — fall back to PR_CREATION_TIME when submit and delivery times are absent.
+
+    @Test
+    void creationTimeFallsBackToDateHeaderWhenSubmitAndDeliveryAbsent() throws Exception {
+        // A draft/task message stores neither PR_CLIENT_SUBMIT_TIME nor PR_MESSAGE_DELIVERY_TIME;
+        // the Date: header must derive from PR_CREATION_TIME (not the conversion moment).
+        var creationTime = new Date(1_700_000_000_000L); // 2023-11-14
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Date fallback to creation time")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .creationTime(creationTime)
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        var dateLine =
+                eml.lines().filter(line -> line.startsWith("Date:")).findFirst().orElse("");
+        assertTrue(
+                dateLine.contains("2023"),
+                "Date must derive from PR_CREATION_TIME when submit/delivery absent: " + dateLine);
+    }
 }

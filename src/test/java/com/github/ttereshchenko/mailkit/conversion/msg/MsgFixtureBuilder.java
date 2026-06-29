@@ -60,6 +60,7 @@ final class MsgFixtureBuilder {
     private static final int TAG_TRANSPORT_HEADERS = (0x007D << 16) | TYPE_UNICODE;
     private static final int TAG_MESSAGE_DELIVERY_TIME = (0x0E06 << 16) | TYPE_SYSTIME;
     private static final int TAG_CLIENT_SUBMIT_TIME = (0x0039 << 16) | TYPE_SYSTIME;
+    private static final int TAG_CREATION_TIME = (0x3007 << 16) | TYPE_SYSTIME;
     private static final int TAG_SENT_REPRESENTING_NAME = (0x0042 << 16) | TYPE_UNICODE;
     private static final int TAG_SENT_REPRESENTING_SMTP_ADDRESS = (0x5D02 << 16) | TYPE_UNICODE;
     private static final int TAG_IMPORTANCE = (0x0017 << 16) | TYPE_LONG;
@@ -409,6 +410,15 @@ final class MsgFixtureBuilder {
     /** PR_CLIENT_SUBMIT_TIME (origination time) — the RFC 5322 §3.6.1 Date source. */
     MsgFixtureBuilder clientSubmitTime(Date date) {
         fixedProperties.add(new FixedProperty(TAG_CLIENT_SUBMIT_TIME, fileTime(date)));
+        return this;
+    }
+
+    /**
+     * PR_CREATION_TIME (0x3007, PT_SYSTIME) — item composition time; the Date: fallback when
+     * both PR_CLIENT_SUBMIT_TIME and PR_MESSAGE_DELIVERY_TIME are absent (e.g. drafts/tasks).
+     */
+    MsgFixtureBuilder creationTime(Date date) {
+        fixedProperties.add(new FixedProperty(TAG_CREATION_TIME, fileTime(date)));
         return this;
     }
 

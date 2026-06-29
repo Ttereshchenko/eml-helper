@@ -46,6 +46,12 @@ public final class MapiProperties {
     public static final int PR_EXPIRY_TIME = 0x0015;
 
     /**
+     * The message creation time (PT_SYSTIME) — when the item was composed/stored.
+     * EML alternative: a last-resort "Date:" source for unsent/store-only items (drafts, notes, tasks).
+     */
+    public static final int PR_CREATION_TIME = 0x3007;
+
+    /**
      * The follow-up flag state (PT_LONG): 0 = none, 1 = complete, 2 = flagged ([MS-OXOFLAG] §2.2.1.1).
      */
     public static final int PR_FLAG_STATUS = 0x1090;
@@ -266,6 +272,12 @@ public final class MapiProperties {
     public static final int PR_ATTACH_FILENAME_W = 0x3704;
 
     /**
+     * The attachment's filename extension, including the leading dot (e.g. {@code ".pdf"}).
+     * EML alternative: the type hint in the "filename" parameter when no filename property is present.
+     */
+    public static final int PR_ATTACH_EXTENSION_W = 0x3703;
+
+    /**
      * The MIME tag (content type) of the attachment.
      * EML alternative: The "Content-Type" header of the attachment part.
      */
@@ -372,6 +384,21 @@ public final class MapiProperties {
 
     /** The contact's mobile phone (PidTagMobileTelephoneNumber). EML alternative: vCard TEL;TYPE=cell. */
     public static final int PR_MOBILE_TELEPHONE_NUMBER_W = 0x3A1C;
+
+    /** The contact's business fax (PidTagBusinessFaxNumber). EML alternative: vCard TEL;TYPE=work,fax. */
+    public static final int PR_BUSINESS_FAX_NUMBER_W = 0x3A24;
+
+    /** The contact's home fax (PidTagHomeFaxNumber). EML alternative: vCard TEL;TYPE=home,fax. */
+    public static final int PR_HOME_FAX_NUMBER_W = 0x3A25;
+
+    /** The contact's primary fax (PidTagPrimaryFaxNumber). EML alternative: vCard TEL;TYPE=fax. */
+    public static final int PR_PRIMARY_FAX_NUMBER_W = 0x3A23;
+
+    /** The contact's pager (PidTagPagerTelephoneNumber). EML alternative: vCard TEL;TYPE=pager. */
+    public static final int PR_PAGER_TELEPHONE_NUMBER_W = 0x3A21;
+
+    /** The contact's department (PidTagDepartmentName). EML alternative: vCard ORG (Organizational Unit). */
+    public static final int PR_DEPARTMENT_NAME_W = 0x3A18;
 
     private MapiProperties() {}
 }

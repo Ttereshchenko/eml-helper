@@ -197,6 +197,28 @@ public final class EmlSerializer {
     }
 
     /**
+     * True when any text/html body references the given Content-Location URL as a whole token (RFC 2557
+     * §4). Mirrors {@link #htmlBodyReferences} for {@code cid:} parts: an inline image the HTML cites by
+     * its Content-Location (an MHTML/RFC 2557 reference) rather than a {@code cid:} URL belongs in the
+     * multipart/related subtree so the reference resolves and the image renders; otherwise it is demoted
+     * to a mixed attachment and stops rendering. The whole-token guard (see {@link #containsCidReference})
+     * stops a generic prefix such as {@code http://} from matching an unrelated part.
+     */
+    private boolean htmlBodyReferencesLocation(String contentLocation) {
+        if (contentLocation == null || contentLocation.isBlank()) {
+            return false;
+        }
+        var reference = contentLocation.trim().toLowerCase(Locale.ROOT);
+        for (var body : bodies) {
+            if (body.contentType.contains("text/html")
+                    && containsCidReference(body.text.toLowerCase(Locale.ROOT), reference)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * True when {@code haystack} cites {@code reference} ({@code "cid:" + id}) as a whole {@code cid:}
      * URL token — the match must not be immediately followed by another Content-ID character. A plain
      * substring test would treat {@code cid:image1} as referenced by HTML that only cites
@@ -431,7 +453,7 @@ public final class EmlSerializer {
         var relatedParts = new ArrayList<Attachment>();
         var mixedParts = new ArrayList<Attachment>();
         for (var part : attachments) {
-            if (htmlBodyReferences(part.contentId())) {
+            if (htmlBodyReferences(part.contentId()) || htmlBodyReferencesLocation(part.contentLocation())) {
                 relatedParts.add(part);
             } else {
                 mixedParts.add(part.isInline() ? part.asRegularAttachment() : part);

@@ -76,7 +76,53 @@ public final class ICalendarGenerator {
             int sequence,
             byte[] cleanGlobalObjectId,
             Integer reminderMinutes,
-            Integer busyStatus) {
+            Integer busyStatus,
+            Integer sensitivity,
+            Integer importance,
+            List<String> categories) {
+
+        /**
+         * An event with a reminder/busy status but no calendar-object privacy, priority or category
+         * metadata ({@code CLASS}/{@code PRIORITY}/{@code CATEGORIES} are then omitted).
+         */
+        public EventDetails(
+                String method,
+                Date startTime,
+                Date endTime,
+                String location,
+                String subject,
+                String organizerName,
+                String organizerEmail,
+                String description,
+                List<Attendee> attendees,
+                boolean allDay,
+                WindowsTimeZone timeZone,
+                AppointmentRecurrence.Pattern recurrence,
+                int sequence,
+                byte[] cleanGlobalObjectId,
+                Integer reminderMinutes,
+                Integer busyStatus) {
+            this(
+                    method,
+                    startTime,
+                    endTime,
+                    location,
+                    subject,
+                    organizerName,
+                    organizerEmail,
+                    description,
+                    attendees,
+                    allDay,
+                    timeZone,
+                    recurrence,
+                    sequence,
+                    cleanGlobalObjectId,
+                    reminderMinutes,
+                    busyStatus,
+                    null,
+                    null,
+                    null);
+        }
 
         /** An event with a meeting identity but no display reminder or free/busy status. */
         public EventDetails(
@@ -327,6 +373,22 @@ public final class ICalendarGenerator {
         builder.append("UID:").append(uid).append("\r\n");
         builder.append("DTSTAMP:").append(dtStamp).append("\r\n");
         builder.append("SEQUENCE:").append(Math.max(0, event.sequence())).append("\r\n");
+        if (event.sensitivity() != null && event.sensitivity() != 0) {
+            // [MS-OXCICAL] §2.1.3.1.1.20.10: PidTagSensitivity maps to CLASS — Personal(1)/Private(2) ->
+            // PRIVATE, Confidential(3) -> CONFIDENTIAL. Emitted only when the source marks the item
+            // non-Normal, so a Normal/public appointment stays byte-identical (RFC 5545 §3.8.1.3 defaults
+            // CLASS to PUBLIC).
+            builder.append("CLASS:")
+                    .append(event.sensitivity() == 3 ? "CONFIDENTIAL" : "PRIVATE")
+                    .append("\r\n");
+        }
+        if (event.importance() != null && event.importance() != 1) {
+            // [MS-OXCICAL] §2.1.3.1.1.20.17: PidTagImportance maps to PRIORITY — High(2) -> 1, Low(0) -> 9.
+            // Normal(1)/absent emits nothing (RFC 5545 §3.8.1.9 defaults PRIORITY to 0 = undefined).
+            builder.append("PRIORITY:")
+                    .append(event.importance() == 2 ? "1" : "9")
+                    .append("\r\n");
+        }
         if (event.busyStatus() != null) {
             // [MS-OXCICAL] §2.1.3.1.1.20.13: PidLidBusyStatus maps to TRANSP (Free -> TRANSPARENT, every
             // other state -> OPAQUE so the slot reads as busy) plus the Outlook X-MICROSOFT-CDO-BUSYSTATUS
@@ -367,6 +429,26 @@ public final class ICalendarGenerator {
             builder.append("DESCRIPTION:")
                     .append(escapeIcal(event.description()))
                     .append("\r\n");
+        }
+
+        if (event.categories() != null && !event.categories().isEmpty()) {
+            // [MS-OXCICAL] §2.1.3.1.1.20.7: PidNameKeywords maps to CATEGORIES. Each value is TEXT-escaped
+            // (RFC 5545 §3.3.11) and the values are joined by the unescaped commas the property separates on,
+            // so a category that itself contains a comma is escaped and not mistaken for a separator. Emitted
+            // only when the source carries categories, so an appointment with none stays byte-identical.
+            var joinedCategories = new StringBuilder();
+            for (var category : event.categories()) {
+                if (category == null || category.isBlank()) {
+                    continue;
+                }
+                if (joinedCategories.length() > 0) {
+                    joinedCategories.append(',');
+                }
+                joinedCategories.append(escapeIcal(category));
+            }
+            if (joinedCategories.length() > 0) {
+                builder.append("CATEGORIES:").append(joinedCategories).append("\r\n");
+            }
         }
 
         if (event.reminderMinutes() != null) {
@@ -475,6 +557,34 @@ public final class ICalendarGenerator {
         return hasOrganizer && hasAttendee ? requested : "PUBLISH";
     }
 
+    /** A participant-aware VTODO with no {@code PRIORITY} (Normal/absent importance). */
+    public static String generateTodo(
+            String subject,
+            String description,
+            Date startDate,
+            Date dueDate,
+            Double percentComplete,
+            Boolean complete,
+            Date completedDate,
+            String method,
+            String organizerName,
+            String organizerEmail,
+            List<Attendee> attendees) {
+        return generateTodo(
+                subject,
+                description,
+                startDate,
+                dueDate,
+                percentComplete,
+                complete,
+                completedDate,
+                method,
+                organizerName,
+                organizerEmail,
+                attendees,
+                null);
+    }
+
     /**
      * Builds a folded VCALENDAR/VTODO document with an explicit iTIP {@code METHOD} (RFC 5546 §3.4):
      * {@code REQUEST} for an assigned task request ({@code IPM.TaskRequest}), {@code REPLY} for its
@@ -496,7 +606,8 @@ public final class ICalendarGenerator {
             String method,
             String organizerName,
             String organizerEmail,
-            List<Attendee> attendees) {
+            List<Attendee> attendees,
+            Integer priority) {
         var utcFormat = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'");
         utcFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
 
@@ -545,6 +656,11 @@ public final class ICalendarGenerator {
         }
         if (percent != null) {
             todo.append("PERCENT-COMPLETE:").append(percent).append("\r\n");
+        }
+        if (priority != null && priority != 1) {
+            // [MS-OXCICAL] §2.1.3.1.1.20.17: PidTagImportance maps to PRIORITY — High(2) -> 1, Low(0) -> 9;
+            // Normal(1)/absent omitted (RFC 5545 §3.8.1.9 defaults PRIORITY to 0 = undefined).
+            todo.append("PRIORITY:").append(priority == 2 ? "1" : "9").append("\r\n");
         }
         // RFC 5546 §3.4: a scheduling VTODO carries an ORGANIZER and ATTENDEE(s); effectiveTodoMethod has
         // already downgraded to PUBLISH when those are absent. Emit the ORGANIZER whenever it resolves and

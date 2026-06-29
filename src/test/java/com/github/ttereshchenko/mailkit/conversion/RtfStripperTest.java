@@ -371,4 +371,51 @@ class RtfStripperTest {
         assertFalse(html.contains("\r"), "no CR must survive in de-encapsulated output");
         assertFalse(html.contains("\n"), "no LF must survive in de-encapsulated output");
     }
+
+    // -----------------------------------------------------------------------
+    // Round-22 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix RTF-1 — control symbols \~, \_, \-, \emspace, \enspace, \qmspace must not weld words.
+
+    @Test
+    void nonBreakingSpaceControlSymbolSeparatesAdjacentWords() {
+        // \~ is a non-breaking space; "Mr.\~Smith" must NOT produce "Mr.Smith" (words welded).
+        var text = RtfStripper.strip("{\\rtf1\\ansi Mr.\\~Smith}");
+        assertFalse(text.contains("Mr.Smith"), "\\~ must not weld words — got: '" + text + "'");
+        assertTrue(text.contains("Mr."), "prefix word must survive: '" + text + "'");
+        assertTrue(text.contains("Smith"), "suffix word must survive: '" + text + "'");
+    }
+
+    @Test
+    void nonBreakingHyphenControlSymbolEmitsUnicode2011() {
+        // \_ is U+2011 NON-BREAKING HYPHEN (not dropped, not a plain hyphen-minus).
+        var text = RtfStripper.strip("{\\rtf1\\ansi A\\_B}");
+        assertTrue(text.contains("‑"), "\\_ must emit U+2011 non-breaking hyphen: '" + text + "'");
+    }
+
+    @Test
+    void optionalHyphenControlSymbolIsDropped() {
+        // \- is an optional hyphen — invisible, produces no character in the output.
+        var text = RtfStripper.strip("{\\rtf1\\ansi A\\-B}");
+        assertEquals("AB", text, "\\- optional hyphen must be dropped: '" + text + "'");
+    }
+
+    @Test
+    void emspaceEnspaceAndQmspaceEachProduceASpace() {
+        // Fixed-width space control words emit a Unicode space character (U+2003 EM SPACE, U+2002
+        // EN SPACE, U+2005 FOUR-PER-EM SPACE respectively) so surrounding words are not welded.
+        var emspace = RtfStripper.strip("{\\rtf1\\ansi A\\emspace B}");
+        assertFalse(emspace.contains("AB"), "\\emspace must not weld words: '" + emspace + "'");
+        assertTrue(emspace.contains("A") && emspace.contains("B"), emspace);
+        assertTrue(emspace.contains(" "), "\\emspace must emit U+2003 EM SPACE: '" + emspace + "'");
+
+        var enspace = RtfStripper.strip("{\\rtf1\\ansi A\\enspace B}");
+        assertFalse(enspace.contains("AB"), "\\enspace must not weld words: '" + enspace + "'");
+        assertTrue(enspace.contains(" "), "\\enspace must emit U+2002 EN SPACE: '" + enspace + "'");
+
+        var qmspace = RtfStripper.strip("{\\rtf1\\ansi A\\qmspace B}");
+        assertFalse(qmspace.contains("AB"), "\\qmspace must not weld words: '" + qmspace + "'");
+        assertTrue(qmspace.contains(" "), "\\qmspace must emit U+2005 FOUR-PER-EM SPACE: '" + qmspace + "'");
+    }
 }
