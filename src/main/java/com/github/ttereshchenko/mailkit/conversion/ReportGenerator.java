@@ -1,5 +1,6 @@
 package com.github.ttereshchenko.mailkit.conversion;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
@@ -89,15 +90,30 @@ public final class ReportGenerator {
         // Part 1 (rfc6522 §3): the human-readable explanation.
         appendBoundary(body, boundary, false);
         body.append("Content-Type: text/plain; charset=utf-8").append(CRLF);
-        body.append("Content-Transfer-Encoding: 8bit").append(CRLF);
-        body.append(CRLF);
         // Defense-in-depth: Part 1 deliberately preserves the original CRLFs of the human-readable
         // text, so guard against a crafted body whose line reproduces the (random) boundary delimiter
         // and could otherwise be parsed as a part separator (rfc2046 §5.1.1). The status-part header
         // fields are already CRLF-scrubbed; this removes the remaining implicit reliance on the
         // boundary's unguessability.
-        body.append(neutralizeBoundary(humanReadableText(info), boundary));
-        body.append(CRLF);
+        var humanReadable = neutralizeBoundary(humanReadableText(info), boundary);
+        if (hasLineOverHardLimit(humanReadable)) {
+            // Since round 20 the human-readable text can be an unwrapped PR_BODY fallback. Emitting a
+            // line longer than the rfc5322 §2.1.1 998-octet hard limit under 8bit lets a strict MTA
+            // truncate or hard-fold it, so switch this part to quoted-printable — which self-wraps at
+            // <=76 octets — when, and only when, a raw line would overflow; short or pre-wrapped
+            // bodies keep the verbatim 8bit emission byte-for-byte. Boundary neutralization already
+            // ran above and QP leaves the '-'/space/alnum of "- -<boundary>" literal, so the
+            // forged-delimiter guard still holds. The encoder appends its own trailing CRLF, which is
+            // the CRLF that precedes the next boundary delimiter (rfc2046 §5.1.1).
+            body.append("Content-Transfer-Encoding: quoted-printable").append(CRLF);
+            body.append(CRLF);
+            body.append(EmlSerializer.quotedPrintableEncode(humanReadable));
+        } else {
+            body.append("Content-Transfer-Encoding: 8bit").append(CRLF);
+            body.append(CRLF);
+            body.append(humanReadable);
+            body.append(CRLF);
+        }
 
         // Part 2 (rfc6522 §3): the machine-parsable status part.
         appendBoundary(body, boundary, false);
@@ -134,6 +150,22 @@ public final class ReportGenerator {
         return info.isDeliveryReport()
                 ? "This is a delivery status notification for a message you sent."
                 : "This is a return receipt for a message you sent.";
+    }
+
+    /**
+     * Whether any line of the CRLF-normalized human-readable text exceeds the rfc5322 §2.1.1
+     * 998-octet hard limit, measured in UTF-8 bytes rather than chars (a non-ASCII line can be under
+     * 998 chars yet over 998 octets). Since round 20 the text may be an unwrapped {@code PR_BODY}
+     * fallback, so when a line overflows {@link #generate} emits Part 1 as quoted-printable instead of
+     * 8bit; when every line fits, the verbatim 8bit emission is kept byte-for-byte.
+     */
+    private static boolean hasLineOverHardLimit(String text) {
+        for (var line : text.split("\r\n", -1)) {
+            if (line.getBytes(StandardCharsets.UTF_8).length > MAX_LINE_OCTETS) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -162,9 +162,11 @@ public class Attachment {
      * or the ATT_MHTML_REF (0x4) / ATT_INVISIBLE_IN_HTML (0x1) attach flags mean inline.
      * PR_RENDERING_POSITION is deliberately not consulted: writers routinely store {@code 0} on
      * ordinary attachments, so treating "has a position" as inline would misfile real attachments
-     * into the multipart/related body subtree. Package-private for testing.
+     * into the multipart/related body subtree. Public so the MSG driver
+     * ({@code MsgToEmlConverter.populateAttachments}) shares these exact thresholds rather than
+     * duplicating them — the one-way app-to-pst-parser dependency makes that reuse the source of truth.
      */
-    static boolean isInline(Object disposition, Object hidden, Object attachFlags) {
+    public static boolean isInline(Object disposition, Object hidden, Object attachFlags) {
         if (disposition instanceof String dispositionValue) {
             return "inline".equalsIgnoreCase(dispositionValue.trim());
         }

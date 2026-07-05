@@ -1936,6 +1936,99 @@ class PstToEmlConverterTest {
         assertTrue(vcard.contains("EMAIL;TYPE=internet:SebastianWright@dayrep.com"), vcard);
     }
 
+    /**
+     * Fix A-VCARD-1 (PST): a contact's PidLidEmail1EmailAddress ([MS-OXOCNTC] §2.2.1.2.3) may hold an
+     * X.500 DN when PidLidEmail1AddressType is "EX". buildContactCard used to pass that DN straight to the
+     * vCard EMAIL, emitting an unparseable {@code EMAIL;TYPE=internet:/o=.../cn=...} value; it must now be
+     * IMCEA-encapsulated (like every other PST address-bearing path) into a synthesized addr-spec.
+     * aspose-contacts.pst already maps the Email1 named property, so the lookup is driven end-to-end.
+     */
+    @Test
+    void contactExchangeEmailIsImceaEncapsulated() throws Exception {
+        var contactsPst = Paths.get("src/test/resources/samples/pst/aspose-contacts.pst");
+        try (var pstFile = new PstFile(contactsPst)) {
+            var addressGuid = UUID.fromString("00062004-0000-0000-C000-000000000046");
+            var emailId = pstFile.namedPropertyId(addressGuid, 0x8083);
+            assertNotNull(emailId, "aspose-contacts.pst must map the Email1EmailAddress named property");
+            var typeId = pstFile.namedPropertyId(addressGuid, 0x8082);
+            var exchangeDn = "/o=First/cn=Recipients/cn=jdoe";
+
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Contact";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Exchange Contact";
+                }
+
+                @Override
+                public String getBody() {
+                    return "";
+                }
+
+                @Override
+                public String getSenderName() {
+                    return "Directory";
+                }
+
+                @Override
+                public String getSenderEmail() {
+                    return "directory@example.com";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public String getStringProperty(int propertyId) {
+                    if (propertyId == emailId) {
+                        return exchangeDn;
+                    }
+                    if (typeId != null && propertyId == typeId) {
+                        return "EX";
+                    }
+                    return null;
+                }
+            };
+
+            var writer = new StringWriter();
+            PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP)
+                    .writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("name=\"contact.vcf\""), "contact.vcf must be present: " + eml);
+            var vcard = new String(
+                    Base64.getMimeDecoder()
+                            .decode(Pattern.compile("(?s)name=\"contact\\.vcf\".*?base64\r\n.*?\r\n\r\n(.*?)\r\n--")
+                                    .matcher(eml)
+                                    .results()
+                                    .findFirst()
+                                    .orElseThrow()
+                                    .group(1)),
+                    StandardCharsets.UTF_8);
+
+            // vCard folds content lines at 75 octets (RFC 2426 §2.6), so unfold before matching the long value.
+            var unfolded = vcard.replace("\r\n ", "").replace("\r\n\t", "");
+            assertTrue(
+                    unfolded.contains(
+                            "EMAIL;TYPE=internet:IMCEAEX-_o_x003D_First_cn_x003D_Recipients_cn_x003D_jdoe@invalid"),
+                    "EX contact email must be IMCEA-encapsulated: " + vcard);
+            assertFalse(
+                    unfolded.contains("EMAIL;TYPE=internet:" + exchangeDn),
+                    "The raw X.500 DN must not leak into the vCard EMAIL value: " + vcard);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // REPORT.*  →  RFC 6522 multipart/report
     // -----------------------------------------------------------------------
@@ -3917,6 +4010,155 @@ class PstToEmlConverterTest {
             assertFalse(
                     eml.contains("attachment.dat"),
                     "generic fallback 'attachment.dat' must not be used when extension is known: " + eml);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Round-23 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix IH-1 — X-Unsent: PR_MESSAGE_FLAGS MSGFLAG_UNSENT (0x8) marks a draft ([MS-OXCMSG] §2.2.1.6);
+    // the converter exports the canonical X-Unsent: 1 marker only while that bit is set (MSG-parity).
+
+    @Test
+    void messageFlagsUnsentBitEmitsXUnsentHeader() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Draft";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    return propertyId == MapiProperties.PR_MESSAGE_FLAGS ? 0x8 : null;
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertTrue(eml.contains("X-Unsent: 1"), "MSGFLAG_UNSENT (0x8) must produce X-Unsent: 1: " + eml);
+        }
+    }
+
+    @Test
+    void messageFlagsWithoutUnsentBitSuppressesXUnsentHeader() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Note";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Sent";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Body";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    // MSGFLAG_READ (0x1) | MSGFLAG_HASATTACH (0x10), but NOT MSGFLAG_UNSENT (0x8).
+                    return propertyId == MapiProperties.PR_MESSAGE_FLAGS ? (0x1 | 0x10) : null;
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertFalse(eml.contains("X-Unsent"), "Absent MSGFLAG_UNSENT (0x8) must not emit X-Unsent: " + eml);
+        }
+    }
+
+    // DSC-1 — X-Journal-*: an IPM.Activity journal item exposes its PSETID_Log defining data
+    // (PidLidLogType/Start/End/Duration) as X-Journal-* headers, mirroring the MSG driver. No vendored
+    // PST fixture defines the PSETID_Log named-property set, so this pins the gate: when the store has no
+    // PSETID_Log mapping every namedPropertyId lookup returns null and no X-Journal-* header is emitted,
+    // keeping such items byte-identical. The header-populated path is covered on the MSG side, whose
+    // fixtures can synthesize the named props (MsgToEmlConverterTest#journalActivity*).
+    @Test
+    void journalActivityWithoutLogPropertiesEmitsNoJournalHeaders() throws Exception {
+        try (var pstFile = new PstFile(SAMPLE)) {
+            var message = new Message(pstFile, 0x122) {
+                @Override
+                public String getMessageClass() {
+                    return "IPM.Activity";
+                }
+
+                @Override
+                public String getSubject() {
+                    return "Phone call with Bob";
+                }
+
+                @Override
+                public String getBody() {
+                    return "Discussed the plan.";
+                }
+
+                @Override
+                public List<Recipient> getRecipients() {
+                    return List.of();
+                }
+
+                @Override
+                public List<Attachment> getAttachments() {
+                    return List.of();
+                }
+
+                @Override
+                public Object getProperty(int propertyId) {
+                    return null;
+                }
+            };
+
+            var serializer = PstToEmlConverter.createSerializer(message, defaultOptions(), pstFile, ConversionLog.NOOP);
+            var writer = new StringWriter();
+            serializer.writeTo(writer);
+            var eml = writer.toString();
+
+            assertFalse(
+                    eml.contains("X-Journal-"),
+                    "an IPM.Activity item whose store defines no PSETID_Log props must emit no X-Journal-* headers: "
+                            + eml);
         }
     }
 }

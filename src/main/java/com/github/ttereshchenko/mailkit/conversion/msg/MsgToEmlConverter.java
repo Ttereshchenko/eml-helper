@@ -11,7 +11,9 @@ import com.github.ttereshchenko.mailkit.conversion.ReportGenerator;
 import com.github.ttereshchenko.mailkit.conversion.RtfStripper;
 import com.github.ttereshchenko.mailkit.conversion.SmimeEntityHoist;
 import com.github.ttereshchenko.mailkit.conversion.VCardGenerator;
+import com.github.ttereshchenko.mailkit.conversion.VerbStream;
 import com.github.ttereshchenko.mailkit.conversion.WindowsTimeZone;
+import com.github.ttereshchenko.mailkit.pst.Attachment;
 import com.github.ttereshchenko.mailkit.pst.CompressedRtf;
 import com.github.ttereshchenko.mailkit.pst.Message;
 import java.io.ByteArrayOutputStream;
@@ -36,6 +38,7 @@ import org.apache.poi.hsmf.datatypes.AttachmentChunks;
 import org.apache.poi.hsmf.datatypes.ByteChunk;
 import org.apache.poi.hsmf.datatypes.Chunks;
 import org.apache.poi.hsmf.datatypes.MAPIProperty;
+import org.apache.poi.hsmf.datatypes.NameIdChunks;
 import org.apache.poi.hsmf.datatypes.PropertiesChunk;
 import org.apache.poi.hsmf.datatypes.PropertyValue;
 import org.apache.poi.hsmf.datatypes.RecipientChunks;
@@ -69,6 +72,11 @@ public final class MsgToEmlConverter {
     // Kept in step with PstToEmlConverter.MAX_EMBEDDED_DEPTH so both pipelines truncate alike.
     private static final int MAX_EMBEDDED_DEPTH = 10;
 
+    // PidTagAttachmentHidden (PR_ATTACHMENT_HIDDEN, 0x7FFE, PT_BOOLEAN): how Outlook marks a
+    // cid-referenced inline image. POI 5.5.1 ships no MAPIProperty constant for it, so it is read by
+    // raw id from the attachment's fixed-property stream.
+    private static final int PR_ATTACHMENT_HIDDEN = 0x7FFE;
+
     // Bounds the synthesized To/Cc/Bcc headers on a pathological message; the overflow is logged and
     // truncated rather than failing the conversion of an otherwise valid message.
     private static final int MAX_RECIPIENTS = 2048;
@@ -85,6 +93,8 @@ public final class MsgToEmlConverter {
     private static final ClassID PSETID_TASK = new ClassID("{00062003-0000-0000-C000-000000000046}");
     private static final ClassID PSETID_ADDRESS = new ClassID("{00062004-0000-0000-C000-000000000046}");
     private static final ClassID PSETID_COMMON = new ClassID("{00062008-0000-0000-C000-000000000046}");
+    private static final ClassID PSETID_NOTE = new ClassID("{0006200E-0000-0000-C000-000000000046}");
+    private static final ClassID PSETID_LOG = new ClassID("{0006200A-0000-0000-C000-000000000046}");
     private static final ClassID PS_PUBLIC_STRINGS = new ClassID("{00020329-0000-0000-C000-000000000046}");
 
     private MsgToEmlConverter() {}
@@ -156,10 +166,16 @@ public final class MsgToEmlConverter {
             throws IOException, ChunkNotFoundException {
         // Each top-level message gets a fresh attachment budget; the recursive overload threads the
         // same instance through embedded messages so the caps bound the whole tree (see AttachmentBudget).
-        return convert(message, depth, log, new AttachmentBudget());
+        // The top-level message owns the __nameid namespace, so no ancestor map is threaded into it.
+        return convert(message, depth, log, new AttachmentBudget(), null);
     }
 
-    private static EmlSerializer convert(MAPIMessage message, int depth, ConversionLog log, AttachmentBudget budget)
+    private static EmlSerializer convert(
+            MAPIMessage message,
+            int depth,
+            ConversionLog log,
+            AttachmentBudget budget,
+            NameIdChunks ancestorNameIdChunks)
             throws IOException, ChunkNotFoundException {
         if (depth > MAX_EMBEDDED_DEPTH) {
             // Mirror the PST converter: emit a stub rather than throwing, so an over-deep nested
@@ -259,7 +275,7 @@ public final class MsgToEmlConverter {
             serializer.setScl(spamConfidenceLevel);
         }
 
-        populateMapiHeaders(message, serializer, from, ansiCharset);
+        populateMapiHeaders(message, serializer, from, ansiCharset, ancestorNameIdChunks, log);
 
         var messageClass = readMessageClass(message);
         if (messageClass != null
@@ -285,20 +301,25 @@ public final class MsgToEmlConverter {
         // the PST pipeline. Fall back to the regular body pass when no members decode.
         var distListBody = messageClass != null
                 && messageClass.startsWith("IPM.DistList")
-                && populateDistributionList(message, serializer, ansiCharset);
+                && populateDistributionList(message, serializer, ansiCharset, ancestorNameIdChunks);
         if (!distListBody) {
             populateBodies(message, serializer, log);
         }
-        populateCalendarInvite(message, messageClass, from, serializer, log);
-        populateContactCard(message, messageClass, serializer);
-        populateTaskTodo(message, messageClass, serializer, log);
+        populateCalendarInvite(message, messageClass, from, serializer, log, ancestorNameIdChunks);
+        populateContactCard(message, messageClass, serializer, ancestorNameIdChunks);
+        populateTaskTodo(message, messageClass, serializer, log, ancestorNameIdChunks);
+        populateJournal(message, messageClass, serializer, ancestorNameIdChunks);
         if (messageClass != null && !hasSpecializedHandler(messageClass)) {
             // Every other class still exported a generic EML above; make that downgrade visible rather
             // than silently dropping the item's specialized semantics (journal, document, custom forms).
             log.info("No specialized handler for message class " + messageClass + "; exported as a generic message");
         }
 
-        populateAttachments(message, depth, serializer, log, budget);
+        // Embedded messages inherit this message's effective __nameid map: its own when present, else the
+        // ancestor's (an embedded sub-message has no __nameid stream of its own, [MS-OXMSG] §2.2.3), so a
+        // nested appointment/contact/task can still resolve its named properties one level deeper.
+        var childNameIdChunks = message.getNameIdChunks() != null ? message.getNameIdChunks() : ancestorNameIdChunks;
+        populateAttachments(message, depth, serializer, log, budget, childNameIdChunks);
 
         return serializer;
     }
@@ -453,7 +474,12 @@ public final class MsgToEmlConverter {
     }
 
     private static void populateAttachments(
-            MAPIMessage message, int depth, EmlSerializer serializer, ConversionLog log, AttachmentBudget budget)
+            MAPIMessage message,
+            int depth,
+            EmlSerializer serializer,
+            ConversionLog log,
+            AttachmentBudget budget,
+            NameIdChunks childNameIdChunks)
             throws IOException {
         var raw = message.getAttachmentFiles();
         if (raw == null || raw.length == 0) {
@@ -484,7 +510,7 @@ public final class MsgToEmlConverter {
                     // must reach the parent EML byte-for-byte or its signature breaks. EmlSerializer emits
                     // these bytes through its byte-exact raw-body path.
                     var nestedStream = new ByteArrayOutputStream();
-                    convert(embedded, depth + 1, log, budget).writeTo(nestedStream);
+                    convert(embedded, depth + 1, log, budget, childNameIdChunks).writeTo(nestedStream);
                     nestedEml = nestedStream.toByteArray();
                 } catch (Exception failure) {
                     log.error("Failed to convert embedded message: " + failure.getMessage());
@@ -550,10 +576,20 @@ public final class MsgToEmlConverter {
                 var mime = pickMimeType(chunks);
                 var contentId = pickContentId(chunks);
                 var contentLocation = chunkValue(chunks.getAttachContentLocation());
-                // A Content-ID marks a part as an inline candidate; EmlSerializer demotes it to a
-                // regular attachment unless an HTML body actually references the cid (see writeTo),
-                // so an unreferenced cid never produces a stray multipart/related member.
-                boolean isInline = contentId != null;
+                // A Content-ID marks a part as an inline candidate; beyond that, mirror the PST driver
+                // (PstToEmlConverter, via the shared Attachment.isInline) so an explicit
+                // PR_ATTACH_CONTENT_DISPOSITION, PR_ATTACHMENT_HIDDEN, or a PR_ATTACH_FLAGS ATT_MHTML_REF
+                // (0x4) / ATT_INVISIBLE_IN_HTML (0x1) also counts. Without this an MHTML inline image with
+                // no Content-ID (referenced from the HTML body by its Content-Location) routed into the
+                // multipart/related subtree still carried Content-Disposition: attachment, so clients
+                // rendered it twice — and MSG disagreed with PST on identical source. EmlSerializer.writeTo
+                // demotes an unreferenced inline part back to a plain attachment, so OR-ing these signals
+                // never strays a member.
+                var attachDisposition = readAttachmentProperty(chunks, MAPIProperty.ATTACH_DISPOSITION.id);
+                var attachmentHidden = readAttachmentProperty(chunks, PR_ATTACHMENT_HIDDEN);
+                var attachFlags = readAttachmentProperty(chunks, MAPIProperty.ATTACH_FLAGS.id);
+                boolean isInline =
+                        contentId != null || Attachment.isInline(attachDisposition, attachmentHidden, attachFlags);
 
                 log.info("Found attachment: " + filename + " (" + mime + ")");
                 serializer.addAttachment(filename, mime, bytes, contentId, contentLocation, isInline);
@@ -583,6 +619,30 @@ public final class MsgToEmlConverter {
                 var values = propertiesChunk.getProperties().get(MAPIProperty.ATTACH_METHOD);
                 if (values != null && !values.isEmpty() && values.get(0).getValue() instanceof Number number) {
                     return number.intValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * First value of the attachment property with the given tag id from its fixed-property stream, or
+     * {@code null} when absent. Matches by numeric id (not by {@link MAPIProperty} identity) because POI
+     * keys an unrecognized property such as PR_ATTACHMENT_HIDDEN under a synthesized custom
+     * {@code MAPIProperty} rather than a shared constant, so an identity lookup would miss it. A
+     * variable-length property (e.g. PR_ATTACH_CONTENT_DISPOSITION) keeps its value in a separate stream
+     * and reads back {@code null} here, which the caller treats as "signal absent".
+     */
+    private static Object readAttachmentProperty(AttachmentChunks chunks, int propertyId) {
+        for (var chunk : chunks.getAll()) {
+            if (chunk instanceof PropertiesChunk propertiesChunk) {
+                for (var entry : propertiesChunk.getProperties().entrySet()) {
+                    if (entry.getKey().id == propertyId) {
+                        var values = entry.getValue();
+                        if (values != null && !values.isEmpty()) {
+                            return values.get(0).getValue();
+                        }
+                    }
                 }
             }
         }
@@ -758,7 +818,12 @@ public final class MsgToEmlConverter {
      * one when a stored transport-header block already carries the same header, so none can double up.
      */
     private static void populateMapiHeaders(
-            MAPIMessage message, EmlSerializer serializer, MailboxIdentity from, Charset ansiCharset) {
+            MAPIMessage message,
+            EmlSerializer serializer,
+            MailboxIdentity from,
+            Charset ansiCharset,
+            NameIdChunks ancestorNameIdChunks,
+            ConversionLog log) {
         var importance = readMainLong(message, 0x0017); // PR_IMPORTANCE: 0 = low, 1 = normal, 2 = high
         if (importance != null && importance == 2) {
             serializer.addCustomHeader("Importance", "High");
@@ -805,7 +870,8 @@ public final class MsgToEmlConverter {
                 serializer.addAddressHeader("Reply-To", String.join(", ", replyTo));
             }
         }
-        var keywords = readNamedStrings(message, PS_PUBLIC_STRINGS, "Keywords", 0); // PidNameKeywords
+        // PidNameKeywords
+        var keywords = readNamedStrings(message, PS_PUBLIC_STRINGS, "Keywords", 0, ancestorNameIdChunks);
         if (!keywords.isEmpty()) {
             serializer.addCustomHeader("Keywords", String.join(", ", keywords));
         }
@@ -820,7 +886,7 @@ public final class MsgToEmlConverter {
         // completed flag does not export a stale label. The PST driver emits the same header.
         var flagStatus = readMainLong(message, 0x1090);
         if (flagStatus == null || flagStatus == 2) {
-            var followUp = readNamedString(message, PSETID_COMMON, 0x8530);
+            var followUp = readNamedString(message, PSETID_COMMON, 0x8530, ancestorNameIdChunks);
             if (followUp != null && !followUp.isBlank()) {
                 serializer.addCustomHeader("X-Message-Flag", followUp);
             }
@@ -834,10 +900,63 @@ public final class MsgToEmlConverter {
         // PidLidVerbResponse (0x8524, PSETID_Common) is the recipient's chosen voting-button text (e.g.
         // "Approve"/"Reject"). It has no standard MIME header, so the recorded vote is preserved as an
         // Exchange-namespaced X-header rather than being dropped to a plain note. The PST driver mirrors this.
-        var voteResponse = readNamedString(message, PSETID_COMMON, 0x8524);
+        var voteResponse = readNamedString(message, PSETID_COMMON, 0x8524, ancestorNameIdChunks);
         if (voteResponse != null && !voteResponse.isBlank()) {
             serializer.addCustomHeader("X-MS-Exchange-Vote-Response", voteResponse);
         }
+        // PidLidVerbStream (0x8520, PSETID_Common, PT_BINARY) is a *sent* poll's voting-button
+        // definition ([MS-OXOMSG] §2.2.1.74); its Unicode option labels have no standard MIME header,
+        // so they are preserved as X-MS-Exchange-Vote-Options (the send-side counterpart of the
+        // recipient-side X-MS-Exchange-Vote-Response above) rather than being dropped. The stream is
+        // untrusted, so VerbStream returns nothing on any structural anomaly. The PST driver mirrors this.
+        var verbStream = readNamedBytes(message, PSETID_COMMON, 0x8520, ancestorNameIdChunks);
+        if (verbStream != null) {
+            var voteOptions = VerbStream.parseVoteOptions(verbStream);
+            if (!voteOptions.isEmpty()) {
+                serializer.addCustomHeader("X-MS-Exchange-Vote-Options", String.join(", ", voteOptions));
+            } else {
+                log.info("A PidLidVerbStream was present but yielded no vote options (malformed or empty);"
+                        + " X-MS-Exchange-Vote-Options was not emitted");
+            }
+        }
+        // PR_MESSAGE_FLAGS (0x0E07, PT_LONG): the MSGFLAG_UNSENT bit (0x8) marks a message that was
+        // composed but never submitted — a draft ([MS-OXCMSG] §2.2.1.6). Outlook exports the canonical
+        // X-Unsent: 1 marker so such an .eml reopens as a draft rather than as sent mail; mirror that only
+        // while the bit is set, so sent/received messages are unaffected. The PST driver mirrors this.
+        var messageFlags = readMainLong(message, 0x0E07);
+        if (messageFlags != null && (messageFlags & 0x8) != 0) {
+            serializer.addCustomHeader("X-Unsent", "1");
+        }
+        // PidLidNoteColor (0x8B00, PSETID_Note, PT_LONG) records a sticky note's paper color
+        // ([MS-OXONOTE] §2.2.1.1). It has no standard MIME header, so an IPM.StickyNote's color would be
+        // lost when the note exports as generic EML; preserve it as X-Note-Color. Gated on the sticky-note
+        // class AND a known color value so every other item stays byte-identical. The PST driver mirrors this.
+        var noteClass = readMessageClass(message);
+        if (noteClass != null && noteClass.equalsIgnoreCase("IPM.StickyNote")) {
+            var noteColorName = noteColorName(readNamedLong(message, PSETID_NOTE, 0x8B00, ancestorNameIdChunks));
+            if (noteColorName != null) {
+                serializer.addCustomHeader("X-Note-Color", noteColorName);
+            }
+        }
+    }
+
+    /**
+     * The X-Note-Color name for a PidLidNoteColor value per [MS-OXONOTE] §2.2.1.1
+     * (0=Blue, 1=Green, 2=Pink, 3=Yellow, 4=White); any other or absent value yields {@code null}
+     * so no header is emitted.
+     */
+    private static String noteColorName(Integer noteColor) {
+        if (noteColor == null) {
+            return null;
+        }
+        return switch (noteColor) {
+            case 0 -> "Blue";
+            case 1 -> "Green";
+            case 2 -> "Pink";
+            case 3 -> "Yellow";
+            case 4 -> "White";
+            default -> null;
+        };
     }
 
     private static String readMessageClass(MAPIMessage message) {
@@ -895,24 +1014,28 @@ public final class MsgToEmlConverter {
             String messageClass,
             MailboxIdentity organizer,
             EmlSerializer serializer,
-            ConversionLog log) {
+            ConversionLog log,
+            NameIdChunks ancestorNameIdChunks) {
         if (messageClass == null
                 || !(messageClass.startsWith("IPM.Appointment") || messageClass.startsWith("IPM.Schedule.Meeting"))) {
             return;
         }
-        var start = readNamedTime(message, PSETID_APPOINTMENT, 0x820D); // PidLidAppointmentStartWhole
+        // PidLidAppointmentStartWhole
+        var start = readNamedTime(message, PSETID_APPOINTMENT, 0x820D, ancestorNameIdChunks);
         if (start == null) {
             // Without a real start time the invite would have to fabricate one; emit none instead.
             log.info("Skipping calendar invite: no start time stored");
             return;
         }
-        var end = readNamedTime(message, PSETID_APPOINTMENT, 0x820E); // PidLidAppointmentEndWhole
-        var location = readNamedString(message, PSETID_APPOINTMENT, 0x8208); // PidLidLocation
-        var allDay = Boolean.TRUE.equals(readNamedBoolean(message, PSETID_APPOINTMENT, 0x8215));
-        var timeZoneStruct = readNamedBytes(message, PSETID_APPOINTMENT, 0x8233); // PidLidTimeZoneStruct
+        var end = readNamedTime(message, PSETID_APPOINTMENT, 0x820E, ancestorNameIdChunks); // PidLidAppointmentEndWhole
+        var location = readNamedString(message, PSETID_APPOINTMENT, 0x8208, ancestorNameIdChunks); // PidLidLocation
+        var allDay = Boolean.TRUE.equals(readNamedBoolean(message, PSETID_APPOINTMENT, 0x8215, ancestorNameIdChunks));
+        // PidLidTimeZoneStruct
+        var timeZoneStruct = readNamedBytes(message, PSETID_APPOINTMENT, 0x8233, ancestorNameIdChunks);
         var timeZone = timeZoneStruct != null ? WindowsTimeZone.parse(timeZoneStruct) : null;
         AppointmentRecurrence.Pattern recurrence = null;
-        var recurrenceBlob = readNamedBytes(message, PSETID_APPOINTMENT, 0x8216); // PidLidAppointmentRecur
+        // PidLidAppointmentRecur
+        var recurrenceBlob = readNamedBytes(message, PSETID_APPOINTMENT, 0x8216, ancestorNameIdChunks);
         if (recurrenceBlob != null) {
             recurrence = AppointmentRecurrence.parse(recurrenceBlob);
             if (recurrence == null) {
@@ -940,19 +1063,20 @@ public final class MsgToEmlConverter {
             eventAttendees = List.of(new ICalendarGenerator.Attendee(
                     organizer.name(), organizer.email(), ICalendarGenerator.responsePartStat(messageClass)));
         }
-        var sequence = readNamedLong(message, PSETID_APPOINTMENT, 0x8201); // PidLidAppointmentSequence
+        // PidLidAppointmentSequence
+        var sequence = readNamedLong(message, PSETID_APPOINTMENT, 0x8201, ancestorNameIdChunks);
         // PidLidCleanGlobalObjectId (PSETID_Meeting, LID 0x0023, PT_BINARY): the meeting's stable
         // identity that maps to the iCal UID ([MS-OXCICAL] §2.1.3.1.1.20.26), so a REQUEST/REPLY/CANCEL
         // of the same meeting share one UID. Absent on personal appointments, which then get a random UID.
-        var cleanGlobalObjectId = readNamedBytes(message, PSETID_MEETING, 0x0023);
+        var cleanGlobalObjectId = readNamedBytes(message, PSETID_MEETING, 0x0023, ancestorNameIdChunks);
         // PidLidBusyStatus (PSETID_Appointment, 0x8205) -> TRANSP/X-MICROSOFT-CDO-BUSYSTATUS so a Free or
         // Tentative appointment does not collapse to Busy; null when unset (no TRANSP emitted).
-        var busyStatus = readNamedLong(message, PSETID_APPOINTMENT, 0x8205);
+        var busyStatus = readNamedLong(message, PSETID_APPOINTMENT, 0x8205, ancestorNameIdChunks);
         // PidLidReminderSet/PidLidReminderDelta (PSETID_Common, 0x8503/0x8501) -> a DISPLAY VALARM. The
         // delta is minutes before the start; 0x5AE980FF is the [MS-OXORMDR] §2.2.1.2 "use default" sentinel.
         Integer reminderMinutes = null;
-        if (Boolean.TRUE.equals(readNamedBoolean(message, PSETID_COMMON, 0x8503))) {
-            var reminderDelta = readNamedLong(message, PSETID_COMMON, 0x8501);
+        if (Boolean.TRUE.equals(readNamedBoolean(message, PSETID_COMMON, 0x8503, ancestorNameIdChunks))) {
+            var reminderDelta = readNamedLong(message, PSETID_COMMON, 0x8501, ancestorNameIdChunks);
             reminderMinutes = reminderDelta == null || reminderDelta == 0x5AE980FF ? 15 : reminderDelta;
         }
         // PR_SENSITIVITY (0x0036) -> VEVENT CLASS, PR_IMPORTANCE (0x0017) -> VEVENT PRIORITY and
@@ -961,7 +1085,7 @@ public final class MsgToEmlConverter {
         // ICalendarGenerator, so a Normal/absent value emits nothing and existing fixtures stay byte-identical.
         var sensitivity = readMainLong(message, 0x0036);
         var importance = readMainLong(message, 0x0017);
-        var categories = readNamedStrings(message, PS_PUBLIC_STRINGS, "Keywords", 0);
+        var categories = readNamedStrings(message, PS_PUBLIC_STRINGS, "Keywords", 0, ancestorNameIdChunks);
         var eventDetails = new ICalendarGenerator.EventDetails(
                 method,
                 start,
@@ -994,7 +1118,8 @@ public final class MsgToEmlConverter {
     }
 
     /** A vCard for an {@code IPM.Contact} item: names, organization, phones and Email1-3 — mirrors the PST pipeline. */
-    private static void populateContactCard(MAPIMessage message, String messageClass, EmlSerializer serializer) {
+    private static void populateContactCard(
+            MAPIMessage message, String messageClass, EmlSerializer serializer, NameIdChunks ancestorNameIdChunks) {
         if (messageClass == null || !messageClass.startsWith("IPM.Contact")) {
             return;
         }
@@ -1015,10 +1140,16 @@ public final class MsgToEmlConverter {
                 .phone("fax", readMainStringById(message, 0x3A23)) // PR_PRIMARY_FAX_NUMBER
                 .phone("pager", readMainStringById(message, 0x3A21)) // PR_PAGER_TELEPHONE_NUMBER
                 .department(readMainStringById(message, 0x3A18)) // PR_DEPARTMENT_NAME
-                .imAddress(readNamedString(message, PSETID_ADDRESS, 0x8062)); // PidLidInstantMessagingAddress
-        // PidLidEmail1EmailAddress / Email2 / Email3 ([MS-OXOCNTC] §2.2.1.2.3).
-        for (var namedId : new int[] {0x8083, 0x8093, 0x80A3}) {
-            contact.email(readNamedString(message, PSETID_ADDRESS, namedId));
+                // PidLidInstantMessagingAddress
+                .imAddress(readNamedString(message, PSETID_ADDRESS, 0x8062, ancestorNameIdChunks));
+        // PidLidEmail1EmailAddress / Email2 / Email3 ([MS-OXOCNTC] §2.2.1.2.3), each paired with the
+        // parallel PidLidEmailNAddressType (0x8082 / 0x8092 / 0x80A2). An EX-type contact stores an X.500
+        // DN in the address slot; routing (type, address) through IMCEA yields a parseable rfc822 value
+        // instead of a raw DN. An SMTP address (or an absent type) passes imceaEncapsulate unchanged.
+        for (var pair : new int[][] {{0x8082, 0x8083}, {0x8092, 0x8093}, {0x80A2, 0x80A3}}) {
+            var addressType = readNamedString(message, PSETID_ADDRESS, pair[0], ancestorNameIdChunks);
+            var address = readNamedString(message, PSETID_ADDRESS, pair[1], ancestorNameIdChunks);
+            contact.email(EmlSerializer.imceaEncapsulate(addressType, address));
         }
         serializer.addAttachment(
                 "contact.vcf",
@@ -1034,16 +1165,20 @@ public final class MsgToEmlConverter {
      * response) carries the matching iTIP {@code METHOD} instead of being mislabeled as a plain task.
      */
     private static void populateTaskTodo(
-            MAPIMessage message, String messageClass, EmlSerializer serializer, ConversionLog log) {
+            MAPIMessage message,
+            String messageClass,
+            EmlSerializer serializer,
+            ConversionLog log,
+            NameIdChunks ancestorNameIdChunks) {
         if (messageClass == null || !messageClass.startsWith("IPM.Task")) {
             return;
         }
         var method = taskMethod(messageClass);
-        var start = readNamedTime(message, PSETID_TASK, 0x8104); // PidLidTaskStartDate
-        var due = readNamedTime(message, PSETID_TASK, 0x8105); // PidLidTaskDueDate
-        var percent = readNamedDouble(message, PSETID_TASK, 0x8102); // PidLidPercentComplete
-        var complete = readNamedBoolean(message, PSETID_TASK, 0x811C); // PidLidTaskComplete
-        var completed = readNamedTime(message, PSETID_TASK, 0x810F); // PidLidTaskDateCompleted
+        var start = readNamedTime(message, PSETID_TASK, 0x8104, ancestorNameIdChunks); // PidLidTaskStartDate
+        var due = readNamedTime(message, PSETID_TASK, 0x8105, ancestorNameIdChunks); // PidLidTaskDueDate
+        var percent = readNamedDouble(message, PSETID_TASK, 0x8102, ancestorNameIdChunks); // PidLidPercentComplete
+        var complete = readNamedBoolean(message, PSETID_TASK, 0x811C, ancestorNameIdChunks); // PidLidTaskComplete
+        var completed = readNamedTime(message, PSETID_TASK, 0x810F, ancestorNameIdChunks); // PidLidTaskDateCompleted
         // RFC 5546 §3.4: a task REQUEST/REPLY carries an ORGANIZER and ATTENDEE(s). For a REQUEST the
         // ORGANIZER is the assigner (sender) and the ATTENDEE(s) the assignee recipients. For a REPLY the
         // roles swap (mirroring the meeting path): the ORGANIZER is the original assigner (the To
@@ -1102,6 +1237,46 @@ public final class MsgToEmlConverter {
     }
 
     /**
+     * Preserves an {@code IPM.Activity} journal item's defining data as {@code X-Journal-*} headers.
+     *
+     * <p>A journal entry records an activity (a phone call, a document edit, a meeting) over a span of
+     * time; that span lives in the PSETID_Log named-property set ([MS-OXOJRNL] §2.2.2): PidLidLogType
+     * (0x8700) names the activity, PidLidLogStart/PidLidLogEnd (0x8706/0x8708) bound it, and
+     * PidLidLogDuration (0x8707) is its length in minutes. None of these has a standard MIME header, so a
+     * journal item would otherwise export as a bare Subject + body and lose what it records. The class is
+     * deliberately left out of {@link #hasSpecializedHandler} so the "generic message" downgrade log still
+     * fires; each header is emitted only when its property resolves, so a journal item that carries none
+     * of them stays byte-identical. The PST driver mirrors this.
+     */
+    private static void populateJournal(
+            MAPIMessage message, String messageClass, EmlSerializer serializer, NameIdChunks ancestorNameIdChunks) {
+        if (messageClass == null || !messageClass.equalsIgnoreCase("IPM.Activity")) {
+            return;
+        }
+        // PidLidLogType (0x8700); PidLidLogTypeDesc (0x8712) is the localized description used as a fallback.
+        var logType = readNamedString(message, PSETID_LOG, 0x8700, ancestorNameIdChunks);
+        if (logType == null || logType.isBlank()) {
+            logType = readNamedString(message, PSETID_LOG, 0x8712, ancestorNameIdChunks);
+        }
+        if (logType != null && !logType.isBlank()) {
+            serializer.addCustomHeader("X-Journal-Type", logType);
+        }
+        var logStart = readNamedTime(message, PSETID_LOG, 0x8706, ancestorNameIdChunks); // PidLidLogStart
+        if (logStart != null) {
+            serializer.addCustomHeader("X-Journal-Start", EmlSerializer.formatRfc2822Date(logStart));
+        }
+        var logEnd = readNamedTime(message, PSETID_LOG, 0x8708, ancestorNameIdChunks); // PidLidLogEnd
+        if (logEnd != null) {
+            serializer.addCustomHeader("X-Journal-End", EmlSerializer.formatRfc2822Date(logEnd));
+        }
+        // PidLidLogDuration (0x8707): the activity's length in minutes.
+        var logDuration = readNamedLong(message, PSETID_LOG, 0x8707, ancestorNameIdChunks);
+        if (logDuration != null) {
+            serializer.addCustomHeader("X-Journal-Duration", Integer.toString(logDuration));
+        }
+    }
+
+    /**
      * The visible ATTENDEE list (RFC 5546) for a meeting or assigned-task scheduling object: every
      * recipient with a resolvable address except BCC-class recipients, which are hidden from the other
      * participants and must not leak into a property they can all read.
@@ -1156,8 +1331,9 @@ public final class MsgToEmlConverter {
      * {@link #readNamedStrings} collects multiple {@link StringChunk}s), so the single-valued
      * {@link #readNamedBytes} would silently drop all but the first value.
      */
-    private static byte[][] readNamedMultiBytes(MAPIMessage message, ClassID propertySet, long lid) {
-        var propertyId = namedPropertyId(message, propertySet, null, lid);
+    private static byte[][] readNamedMultiBytes(
+            MAPIMessage message, ClassID propertySet, long lid, NameIdChunks ancestorNameIdChunks) {
+        var propertyId = namedPropertyId(message, propertySet, null, lid, ancestorNameIdChunks);
         var mainChunks = message.getMainChunks();
         if (propertyId < 0 || mainChunks == null) {
             return new byte[0][];
@@ -1184,15 +1360,17 @@ public final class MsgToEmlConverter {
      * falls back to the regular body pass.
      */
     private static boolean populateDistributionList(
-            MAPIMessage message, EmlSerializer serializer, Charset ansiCharset) {
+            MAPIMessage message, EmlSerializer serializer, Charset ansiCharset, NameIdChunks ancestorNameIdChunks) {
         // PidLidDistributionListOneOffMembers (0x8054) carries inline one-off addresses; fall back to
         // PidLidDistributionListMembers (0x8055) keyed on the PARSED member count, not the raw blob count.
         // A 0x8054 that is present but holds only unparseable EntryIDs (e.g. store EntryIDs) would otherwise
         // never consult 0x8055 — which often holds resolvable one-off/address-book members — and the whole
         // member listing would be lost. Mirrors the PST driver (Message.getDistributionListMembers).
-        var members = DistributionListMembers.parse(readNamedMultiBytes(message, PSETID_ADDRESS, 0x8054), ansiCharset);
+        var members = DistributionListMembers.parse(
+                readNamedMultiBytes(message, PSETID_ADDRESS, 0x8054, ancestorNameIdChunks), ansiCharset);
         if (members.isEmpty()) {
-            members = DistributionListMembers.parse(readNamedMultiBytes(message, PSETID_ADDRESS, 0x8055), ansiCharset);
+            members = DistributionListMembers.parse(
+                    readNamedMultiBytes(message, PSETID_ADDRESS, 0x8055, ancestorNameIdChunks), ansiCharset);
         }
         if (members.isEmpty()) {
             return false;
@@ -1349,10 +1527,23 @@ public final class MsgToEmlConverter {
 
     /**
      * Resolves a named property (property set GUID + numeric or string name) to the file-local
-     * transient property id, or -1 when the message has no {@code __nameid} mapping for it.
+     * transient property id, or -1 when no {@code __nameid} mapping resolves it.
+     *
+     * <p>[MS-OXMSG] §2.2.3: the {@code __nameid} named-property map is stored ONLY in the top-level
+     * message storage. POI builds an embedded sub-message's {@link MAPIMessage} from its own storage
+     * alone, so {@link MAPIMessage#getNameIdChunks()} is {@code null} for every embedded message and its
+     * named properties (appointment start, contact EMAIL, task/note fields) would never resolve. Fall
+     * back to {@code ancestorNameIdChunks} — the effective map threaded down from the top-level storage,
+     * which owns the single namespace the whole {@code .msg} tree shares. A message that has its own map
+     * MUST NOT consult the ancestor: its transient ids are file-local and could collide, so the own-map
+     * check gates the fallback.
      */
-    private static int namedPropertyId(MAPIMessage message, ClassID propertySet, String name, long lid) {
+    private static int namedPropertyId(
+            MAPIMessage message, ClassID propertySet, String name, long lid, NameIdChunks ancestorNameIdChunks) {
         var nameIdChunks = message.getNameIdChunks();
+        if (nameIdChunks == null) {
+            nameIdChunks = ancestorNameIdChunks;
+        }
         if (nameIdChunks == null) {
             return -1;
         }
@@ -1360,43 +1551,50 @@ public final class MsgToEmlConverter {
         return tag == 0 ? -1 : (int) tag;
     }
 
-    private static Date readNamedTime(MAPIMessage message, ClassID propertySet, long lid) {
-        var propertyId = namedPropertyId(message, propertySet, null, lid);
+    private static Date readNamedTime(
+            MAPIMessage message, ClassID propertySet, long lid, NameIdChunks ancestorNameIdChunks) {
+        var propertyId = namedPropertyId(message, propertySet, null, lid, ancestorNameIdChunks);
         return propertyId >= 0 && readFixedValueById(message, propertyId) instanceof Calendar calendar
                 ? calendar.getTime()
                 : null;
     }
 
-    private static Boolean readNamedBoolean(MAPIMessage message, ClassID propertySet, long lid) {
-        var propertyId = namedPropertyId(message, propertySet, null, lid);
+    private static Boolean readNamedBoolean(
+            MAPIMessage message, ClassID propertySet, long lid, NameIdChunks ancestorNameIdChunks) {
+        var propertyId = namedPropertyId(message, propertySet, null, lid, ancestorNameIdChunks);
         return propertyId >= 0 ? readMainBoolean(message, propertyId) : null;
     }
 
-    private static Double readNamedDouble(MAPIMessage message, ClassID propertySet, long lid) {
-        var propertyId = namedPropertyId(message, propertySet, null, lid);
+    private static Double readNamedDouble(
+            MAPIMessage message, ClassID propertySet, long lid, NameIdChunks ancestorNameIdChunks) {
+        var propertyId = namedPropertyId(message, propertySet, null, lid, ancestorNameIdChunks);
         return propertyId >= 0 && readFixedValueById(message, propertyId) instanceof Number number
                 ? number.doubleValue()
                 : null;
     }
 
-    private static Integer readNamedLong(MAPIMessage message, ClassID propertySet, long lid) {
-        var propertyId = namedPropertyId(message, propertySet, null, lid);
+    private static Integer readNamedLong(
+            MAPIMessage message, ClassID propertySet, long lid, NameIdChunks ancestorNameIdChunks) {
+        var propertyId = namedPropertyId(message, propertySet, null, lid, ancestorNameIdChunks);
         return propertyId >= 0 ? readMainLong(message, propertyId) : null;
     }
 
-    private static byte[] readNamedBytes(MAPIMessage message, ClassID propertySet, long lid) {
-        var propertyId = namedPropertyId(message, propertySet, null, lid);
+    private static byte[] readNamedBytes(
+            MAPIMessage message, ClassID propertySet, long lid, NameIdChunks ancestorNameIdChunks) {
+        var propertyId = namedPropertyId(message, propertySet, null, lid, ancestorNameIdChunks);
         return propertyId >= 0 ? readMainBytesById(message, propertyId) : null;
     }
 
-    private static String readNamedString(MAPIMessage message, ClassID propertySet, long lid) {
-        var propertyId = namedPropertyId(message, propertySet, null, lid);
+    private static String readNamedString(
+            MAPIMessage message, ClassID propertySet, long lid, NameIdChunks ancestorNameIdChunks) {
+        var propertyId = namedPropertyId(message, propertySet, null, lid, ancestorNameIdChunks);
         return propertyId >= 0 ? readMainStringById(message, propertyId) : null;
     }
 
     /** All string values stored under a named property (a multi-valued property yields one chunk per value). */
-    private static List<String> readNamedStrings(MAPIMessage message, ClassID propertySet, String name, long lid) {
-        var propertyId = namedPropertyId(message, propertySet, name, lid);
+    private static List<String> readNamedStrings(
+            MAPIMessage message, ClassID propertySet, String name, long lid, NameIdChunks ancestorNameIdChunks) {
+        var propertyId = namedPropertyId(message, propertySet, name, lid, ancestorNameIdChunks);
         var mainChunks = message.getMainChunks();
         if (propertyId < 0 || mainChunks == null) {
             return List.of();

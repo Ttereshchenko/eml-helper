@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.ttereshchenko.mailkit.conversion.ReportGenerator.Report;
 import com.github.ttereshchenko.mailkit.conversion.ReportGenerator.ReportInfo;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 class ReportGeneratorTest {
@@ -330,6 +331,74 @@ class ReportGeneratorTest {
                     line.startsWith("X-Bad:"),
                     "CRLF in Final-Recipient must not inject X-Bad as a standalone header line: " + report.body());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Part 1 human-readable — 8bit vs quoted-printable (rfc5322 §2.1.1)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void humanReadableLineOverHardLimitSwitchesPartOneToQuotedPrintable() {
+        // Since round 20 the human-readable text can be an unwrapped PR_BODY fallback: a single line
+        // longer than the rfc5322 §2.1.1 998-octet hard limit emitted under 8bit is truncated or
+        // hard-folded by a strict MTA. Part 1 must switch to quoted-printable (self-wraps <=76).
+        var longLine = "x".repeat(1500);
+        var report = generate(new ReportInfo(true, longLine, null, null, null, null, null, null, null));
+
+        var body = report.body();
+        assertTrue(
+                body.contains("Content-Transfer-Encoding: quoted-printable"),
+                "an overlong human-readable line must switch Part 1 to quoted-printable: " + body);
+        assertFalse(
+                body.contains("Content-Transfer-Encoding: 8bit"),
+                "the 8bit CTE must be gone once Part 1 is quoted-printable: " + body);
+        // The whole assembled body must now be free of any line over the 998-octet hard limit.
+        for (var line : body.split("\r\n", -1)) {
+            assertTrue(
+                    line.getBytes(StandardCharsets.UTF_8).length <= 998,
+                    "no line may exceed 998 octets after QP encoding: [" + line + "]");
+        }
+        // The encoder soft-wrapped, so the raw 1500-char run must not survive intact on one line.
+        assertTrue(body.contains("=\r\n"), "quoted-printable must soft-wrap the long run: " + body);
+    }
+
+    @Test
+    void shortHumanReadablePartKeepsEightBitEmissionByteIdentical() {
+        // The >998 gate is load-bearing: a short, pre-wrapped body must keep the verbatim 8bit
+        // emission byte-for-byte (an unconditional CTE switch was excluded in a prior round).
+        var report = generate(
+                new ReportInfo(true, "Your message was not delivered.", null, null, null, null, null, null, null));
+
+        var body = report.body();
+        assertTrue(body.contains("Content-Transfer-Encoding: 8bit"), "a short body must stay on 8bit: " + body);
+        assertFalse(body.contains("quoted-printable"), "a short body must not switch to quoted-printable: " + body);
+
+        // Byte-identity of the 8bit Part 1: the 8bit CTE, a blank line, then the verbatim text
+        // terminated by exactly one CRLF that precedes the (random) boundary delimiter.
+        var boundary = extractBoundary(report.contentType());
+        assertTrue(
+                body.contains("Content-Transfer-Encoding: 8bit\r\n\r\nYour message was not delivered.\r\n"),
+                "the 8bit Part 1 must carry the verbatim human-readable text: " + body);
+        assertTrue(
+                body.contains("Your message was not delivered.\r\n--" + boundary),
+                "the human-readable text must be followed by exactly one CRLF then the boundary: " + body);
+    }
+
+    @Test
+    void quotedPrintablePartOneStillYieldsExactlyTheRealBoundaryDelimiters() {
+        // caveat (b): boundary neutralization must still run on the QP path. Even a body long enough
+        // to trigger quoted-printable must not forge a part separator; the structure stays parseable
+        // with exactly the two real boundary delimiters.
+        var longText = "This report is padded to force quoted-printable. " + "y".repeat(1200);
+        var report = generate(new ReportInfo(true, longText, null, null, null, null, null, null, null));
+
+        var body = report.body();
+        assertTrue(
+                body.contains("Content-Transfer-Encoding: quoted-printable"),
+                "the padded body must trigger quoted-printable: " + body);
+        var boundary = extractBoundary(report.contentType());
+        assertTrue(body.contains("--" + boundary + "\r\n"), "opening boundary delimiter must be present: " + body);
+        assertTrue(body.contains("--" + boundary + "--"), "closing boundary delimiter must be present: " + body);
     }
 
     // -----------------------------------------------------------------------

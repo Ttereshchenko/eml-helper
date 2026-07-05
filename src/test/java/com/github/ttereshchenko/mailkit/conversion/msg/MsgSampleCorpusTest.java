@@ -375,6 +375,9 @@ class MsgSampleCorpusTest {
         assertTrue(headers.contains("From: <undisclosed@invalid>"), headers);
         assertTrue(headers.contains("Date: "), headers);
         assertTrue(headers.contains("X-MailKit-Synthesized-Headers: From,"), headers);
+        // PR_MESSAGE_FLAGS carries MSGFLAG_UNSENT (0x8), so the draft marker is exported ([MS-OXCMSG]
+        // §2.2.1.6): the .eml reopens as a draft rather than as sent mail.
+        assertTrue(headers.contains("X-Unsent: 1"), headers);
     }
 
     // Regression: DistributionListMembers had ONE_OFF_MUID endianness-swapped (A4 1F 2B 81 …

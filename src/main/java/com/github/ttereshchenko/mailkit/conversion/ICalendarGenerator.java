@@ -373,6 +373,14 @@ public final class ICalendarGenerator {
         builder.append("UID:").append(uid).append("\r\n");
         builder.append("DTSTAMP:").append(dtStamp).append("\r\n");
         builder.append("SEQUENCE:").append(Math.max(0, event.sequence())).append("\r\n");
+        if ("CANCEL".equals(safeMethod)) {
+            // RFC 5546 §3.2.5: a CANCEL carries the cancellation both in the METHOD and in the VEVENT's
+            // STATUS, so a non-iTIP consumer that imports the .ics as a plain file (and never inspects the
+            // scheduling method) still sees the meeting as cancelled. Emitted only for an effective CANCEL,
+            // so every REQUEST/REPLY/PUBLISH invite stays byte-identical (RFC 5545 §3.8.1.11 leaves STATUS
+            // absent by default).
+            builder.append("STATUS:CANCELLED\r\n");
+        }
         if (event.sensitivity() != null && event.sensitivity() != 0) {
             // [MS-OXCICAL] §2.1.3.1.1.20.10: PidTagSensitivity maps to CLASS — Personal(1)/Private(2) ->
             // PRIVATE, Confidential(3) -> CONFIDENTIAL. Emitted only when the source marks the item

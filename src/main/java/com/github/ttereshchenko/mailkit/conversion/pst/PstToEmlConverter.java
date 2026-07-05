@@ -10,6 +10,7 @@ import com.github.ttereshchenko.mailkit.conversion.ReportGenerator;
 import com.github.ttereshchenko.mailkit.conversion.RtfStripper;
 import com.github.ttereshchenko.mailkit.conversion.SmimeEntityHoist;
 import com.github.ttereshchenko.mailkit.conversion.VCardGenerator;
+import com.github.ttereshchenko.mailkit.conversion.VerbStream;
 import com.github.ttereshchenko.mailkit.conversion.WindowsTimeZone;
 import com.github.ttereshchenko.mailkit.pst.Attachment;
 import com.github.ttereshchenko.mailkit.pst.Folder;
@@ -103,6 +104,8 @@ public final class PstToEmlConverter {
     private static final UUID PSETID_TASK = UUID.fromString("00062003-0000-0000-C000-000000000046");
     private static final UUID PSETID_ADDRESS = UUID.fromString("00062004-0000-0000-C000-000000000046");
     private static final UUID PSETID_COMMON = UUID.fromString("00062008-0000-0000-C000-000000000046");
+    private static final UUID PSETID_NOTE = UUID.fromString("0006200E-0000-0000-C000-000000000046");
+    private static final UUID PSETID_LOG = UUID.fromString("0006200A-0000-0000-C000-000000000046");
     private static final UUID PS_PUBLIC_STRINGS = UUID.fromString("00020329-0000-0000-C000-000000000046");
 
     private static final int ATTACH_OLE = 6; // afStorage: an embedded OLE object
@@ -922,8 +925,74 @@ public final class PstToEmlConverter {
         if (voteResponse != null && !voteResponse.isBlank()) {
             serializer.addCustomHeader("X-MS-Exchange-Vote-Response", voteResponse);
         }
+        // PidLidVerbStream (0x8520, PSETID_Common, PT_BINARY) is a sent poll's voting-button definition
+        // ([MS-OXOMSG] §2.2.1.74); its Unicode option labels are preserved as X-MS-Exchange-Vote-Options
+        // (the send-side counterpart of the recipient-side X-MS-Exchange-Vote-Response above), mirroring
+        // the MSG driver. VerbStream returns nothing on any structural anomaly in the untrusted blob.
+        Integer verbStreamId = pstFile.namedPropertyId(PSETID_COMMON, 0x8520);
+        if (verbStreamId != null && message.getProperty(verbStreamId) instanceof byte[] verbStream) {
+            var voteOptions = VerbStream.parseVoteOptions(verbStream);
+            if (!voteOptions.isEmpty()) {
+                serializer.addCustomHeader("X-MS-Exchange-Vote-Options", String.join(", ", voteOptions));
+            } else {
+                log.info("Message " + message.getNid() + " carries a PidLidVerbStream that yielded no vote"
+                        + " options (malformed or empty); X-MS-Exchange-Vote-Options was not emitted");
+            }
+        }
+        // PR_MESSAGE_FLAGS (0x0E07, PT_LONG): the MSGFLAG_UNSENT bit (0x8) marks a draft — composed but
+        // never submitted ([MS-OXCMSG] §2.2.1.6). Emit the canonical X-Unsent: 1 marker while that bit is
+        // set so the draft reopens as a draft, mirroring the MSG driver; sent/received mail is unaffected.
+        if (message.getProperty(MapiProperties.PR_MESSAGE_FLAGS) instanceof Number messageFlags
+                && (messageFlags.intValue() & 0x8) != 0) {
+            serializer.addCustomHeader("X-Unsent", "1");
+        }
 
         String msgClass = message.getMessageClass();
+
+        // PidLidNoteColor (0x8B00, PSETID_Note, PT_LONG) records a sticky note's paper color
+        // ([MS-OXONOTE] §2.2.1.1). It has no standard MIME header, so an IPM.StickyNote's color would be
+        // lost when the note exports as generic EML; preserve it as X-Note-Color, mirroring the MSG driver.
+        // Gated on the sticky-note class AND a known color value so every other item stays byte-identical.
+        if (msgClass != null && msgClass.equalsIgnoreCase("IPM.StickyNote")) {
+            Integer noteColorId = pstFile.namedPropertyId(PSETID_NOTE, 0x8B00);
+            Integer noteColor = noteColorId != null && message.getProperty(noteColorId) instanceof Number value
+                    ? value.intValue()
+                    : null;
+            var noteColorName = noteColorName(noteColor);
+            if (noteColorName != null) {
+                serializer.addCustomHeader("X-Note-Color", noteColorName);
+            }
+        }
+
+        // PSETID_Log ({0006200A-...}) carries an IPM.Activity journal item's defining data ([MS-OXOJRNL]
+        // §2.2.2): PidLidLogType (0x8700) names the activity, PidLidLogStart/PidLidLogEnd (0x8706/0x8708)
+        // bound it, and PidLidLogDuration (0x8707) is its length in minutes. None has a standard MIME
+        // header, so a journal item would otherwise export as a bare Subject + body and lose what it
+        // records; preserve them as X-Journal-* headers, mirroring the MSG driver. Gated on the
+        // IPM.Activity class AND each property resolving, so every other item stays byte-identical.
+        if (msgClass != null && msgClass.equalsIgnoreCase("IPM.Activity")) {
+            Integer logTypeId = pstFile.namedPropertyId(PSETID_LOG, 0x8700);
+            var logType = logTypeId != null ? message.getStringProperty(logTypeId) : null;
+            if (logType == null || logType.isBlank()) {
+                Integer logTypeDescId = pstFile.namedPropertyId(PSETID_LOG, 0x8712); // PidLidLogTypeDesc fallback
+                logType = logTypeDescId != null ? message.getStringProperty(logTypeDescId) : null;
+            }
+            if (logType != null && !logType.isBlank()) {
+                serializer.addCustomHeader("X-Journal-Type", logType);
+            }
+            Integer logStartId = pstFile.namedPropertyId(PSETID_LOG, 0x8706);
+            if (logStartId != null && message.getProperty(logStartId) instanceof Instant logStart) {
+                serializer.addCustomHeader("X-Journal-Start", EmlSerializer.formatRfc2822Date(Date.from(logStart)));
+            }
+            Integer logEndId = pstFile.namedPropertyId(PSETID_LOG, 0x8708);
+            if (logEndId != null && message.getProperty(logEndId) instanceof Instant logEnd) {
+                serializer.addCustomHeader("X-Journal-End", EmlSerializer.formatRfc2822Date(Date.from(logEnd)));
+            }
+            Integer logDurationId = pstFile.namedPropertyId(PSETID_LOG, 0x8707);
+            if (logDurationId != null && message.getProperty(logDurationId) instanceof Number logDuration) {
+                serializer.addCustomHeader("X-Journal-Duration", Integer.toString(logDuration.intValue()));
+            }
+        }
 
         // REPORT.* (NDR/DSN and read/non-read receipts) become an RFC 6522 multipart/report so the
         // structured delivery-status / disposition-notification survives instead of being flattened to
@@ -1455,12 +1524,18 @@ public final class PstToEmlConverter {
                 .phone("fax", message.getStringProperty(MapiProperties.PR_PRIMARY_FAX_NUMBER_W))
                 .phone("pager", message.getStringProperty(MapiProperties.PR_PAGER_TELEPHONE_NUMBER_W))
                 .department(message.getStringProperty(MapiProperties.PR_DEPARTMENT_NAME_W));
-        // PidLidEmail1EmailAddress / Email2 / Email3 ([MS-OXOCNTC] §2.2.1.2.3).
-        for (int namedId : new int[] {0x8083, 0x8093, 0x80A3}) {
-            Integer propertyId = pstFile.namedPropertyId(PSETID_ADDRESS, namedId);
-            if (propertyId != null) {
-                contact.email(message.getStringProperty(propertyId));
+        // PidLidEmail1EmailAddress / Email2 / Email3 ([MS-OXOCNTC] §2.2.1.2.3), each paired with the
+        // parallel PidLidEmailNAddressType (0x8082 / 0x8092 / 0x80A2). An EX-type contact stores an X.500
+        // DN in the address slot; routing (type, address) through IMCEA yields a parseable rfc822 value
+        // instead of a raw DN. An SMTP address (or an absent type) passes imceaEncapsulate unchanged.
+        for (int[] pair : new int[][] {{0x8082, 0x8083}, {0x8092, 0x8093}, {0x80A2, 0x80A3}}) {
+            Integer addressId = pstFile.namedPropertyId(PSETID_ADDRESS, pair[1]);
+            if (addressId == null) {
+                continue;
             }
+            Integer typeId = pstFile.namedPropertyId(PSETID_ADDRESS, pair[0]);
+            String addressType = typeId != null ? message.getStringProperty(typeId) : null;
+            contact.email(EmlSerializer.imceaEncapsulate(addressType, message.getStringProperty(addressId)));
         }
         // PidLidInstantMessagingAddress (PSETID_Address, 0x8062, [MS-OXOCNTC] §2.2.1.2.1) -> vCard IMPP.
         Integer imAddressId = pstFile.namedPropertyId(PSETID_ADDRESS, 0x8062);
@@ -1707,6 +1782,25 @@ public final class PstToEmlConverter {
             return "REQUEST";
         }
         return "PUBLISH";
+    }
+
+    /**
+     * The X-Note-Color name for a PidLidNoteColor value per [MS-OXONOTE] §2.2.1.1
+     * (0=Blue, 1=Green, 2=Pink, 3=Yellow, 4=White); any other or absent value yields {@code null}
+     * so no header is emitted.
+     */
+    private static String noteColorName(Integer noteColor) {
+        if (noteColor == null) {
+            return null;
+        }
+        return switch (noteColor) {
+            case 0 -> "Blue";
+            case 1 -> "Green";
+            case 2 -> "Pink";
+            case 3 -> "Yellow";
+            case 4 -> "White";
+            default -> null;
+        };
     }
 
     /**
