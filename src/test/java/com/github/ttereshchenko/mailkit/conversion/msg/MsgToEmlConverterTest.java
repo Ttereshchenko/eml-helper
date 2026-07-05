@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.ttereshchenko.mailkit.conversion.ConversionException;
 import com.github.ttereshchenko.mailkit.conversion.ConversionLog;
+import com.github.ttereshchenko.mailkit.conversion.EmlSerializer;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -205,6 +206,50 @@ class MsgToEmlConverterTest {
                 "Nested message should re-contain inner subject: " + nestedSection);
     }
 
+    // round-23 audit A25-1/A25-2: an embedded message carries no __nameid stream of its own
+    // ([MS-OXMSG] §2.2.3), so POI's getNameIdChunks() is null for it and its named properties can only
+    // resolve through the top-level map threaded down the recursion. Without that threading an embedded
+    // IPM.Appointment loses its start time and no invite.ics is generated at all.
+    @Test
+    void embeddedAppointmentResolvesNamedPropertiesFromTopLevelNameId() throws Exception {
+        // The embedded appointment stores PidLidAppointmentStartWhole/EndWhole under their transient
+        // 0x80xx tags but has NO __nameid of its own (withoutNameIdMapping), exactly like a real Outlook
+        // embedded sub-message. The parent's __nameid — seeded with the same appointment mapping so the
+        // shared namespace can resolve those tags — is the only place the ids can be looked up.
+        var embeddedStart = new Date(1490725800000L);
+        var embeddedEnd = new Date(1490727600000L);
+        var embedded = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Appointment")
+                .subject("Nested planning session")
+                .sender("Organizer", "organizer@example.com")
+                .appointmentStartEnd(embeddedStart, embeddedEnd)
+                .withoutNameIdMapping()
+                .textBody("Agenda inside the nested appointment");
+
+        var parentBytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Note")
+                .subject("Please review the attached appointment")
+                .sender("Outer", "outer@example.com")
+                .recipientTo("OuterTo", "outer-r@example.com")
+                .textBody("outer body")
+                // Seed the top-level __nameid with the appointment start/end mapping; as an IPM.Note the
+                // parent emits no invite.ics of its own, so any DTSTART in the output comes from the child.
+                .appointmentStartEnd(embeddedStart, embeddedEnd)
+                .embeddedAttachment("nested-appointment", embedded)
+                .toBytes();
+
+        var eml = convertString(parentBytes);
+
+        // Before the fix the embedded getNameIdChunks() is null, the appointment start never resolves, and
+        // the calendar path bails ("Skipping calendar invite: no start time stored") — no invite.ics at all.
+        assertTrue(
+                eml.contains("filename=\"invite.ics\""),
+                "the embedded appointment must emit an invite.ics once its named props resolve: " + eml);
+        var invite = decodedInvite(eml);
+        assertTrue(invite.contains("BEGIN:VEVENT"), invite);
+        assertTrue(invite.contains("DTSTART"), "the resolved appointment start must produce a DTSTART: " + invite);
+    }
+
     @Test
     void ccRecipientsAreFilteredFromTo() throws Exception {
         var bytes = MsgFixtureBuilder.topLevel()
@@ -294,6 +339,48 @@ class MsgToEmlConverterTest {
         assertTrue(
                 eml.contains("multipart/related"),
                 "a bracketed Content-ID must still match the cid: reference and stay inline: " + eml);
+    }
+
+    @Test
+    void mhtmlInlineImageWithoutContentIdIsInlineViaAttachFlags() throws Exception {
+        // An MHTML inline image the HTML body cites by its Content-Location (RFC 2557) instead of a cid:
+        // URL: no PR_ATTACH_CONTENT_ID, only PR_ATTACH_FLAGS = ATT_MHTML_REF (0x4). It is routed into the
+        // multipart/related subtree; before the fix isInline keyed solely off the Content-ID, so the part
+        // carried Content-Disposition: attachment and clients rendered the image twice — and MSG disagreed
+        // with the PST driver (which honours the same flag via Attachment.isInline) on identical source.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("MHTML inline image")
+                .sender("A", "a@x")
+                .recipientTo("B", "b@x")
+                .htmlBody("<img src=\"banner.png\">")
+                .contentLocationAttachment("banner.png", "image/png", new byte[] {1, 2, 3}, "banner.png", 0x4)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("multipart/related"), eml);
+        assertTrue(eml.contains("Content-Location: banner.png"), eml);
+        assertTrue(eml.contains("Content-Disposition: inline"), eml);
+        assertFalse(eml.contains("Content-Disposition: attachment"), eml);
+    }
+
+    @Test
+    void contentLocationAttachmentWithoutInlineSignalsStaysAttachment() throws Exception {
+        // Gating check: the same Content-Location-referenced part with NO ATT_MHTML_REF flag (and no
+        // Content-ID or hidden flag) must keep Content-Disposition: attachment, so the fix triggers only
+        // on a genuine inline signal and leaves every other attachment byte-identical.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Plain location attachment")
+                .sender("A", "a@x")
+                .recipientTo("B", "b@x")
+                .htmlBody("<img src=\"banner.png\">")
+                .contentLocationAttachment("banner.png", "image/png", new byte[] {1, 2, 3}, "banner.png", 0x0)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("Content-Disposition: attachment"), eml);
+        assertFalse(eml.contains("Content-Disposition: inline"), eml);
     }
 
     @Test
@@ -1243,6 +1330,88 @@ class MsgToEmlConverterTest {
         assertTrue(
                 loggedMessages.stream().anyMatch(message -> message.contains("IPM.Activity")),
                 "an unrecognized message class must trigger an info downgrade log: " + loggedMessages);
+    }
+
+    // --- DSC-1: IPM.Activity journal items preserve their PSETID_Log defining data as X-Journal-* headers.
+    // The class stays OUT of hasSpecializedHandler, so the "generic message" downgrade log still fires. ---
+    @Test
+    void journalActivityEmitsJournalHeadersFromLogProperties() throws Exception {
+        var start = new Date(1490725800000L); // 2017-03-28T19:30:00Z
+        var end = new Date(1490727600000L); // 2017-03-28T20:00:00Z
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Call with Bob")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("IPM.Activity")
+                .textBody("Discussed the quarterly plan.")
+                .namedLogType("Phone call")
+                .namedLogStartEnd(start, end)
+                .namedLogDuration(30)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("X-Journal-Type: Phone call\r\n"), "PidLidLogType must become X-Journal-Type: " + eml);
+        assertTrue(
+                eml.contains("X-Journal-Start: " + EmlSerializer.formatRfc2822Date(start) + "\r\n"),
+                "PidLidLogStart must become an RFC 5322 X-Journal-Start: " + eml);
+        assertTrue(
+                eml.contains("X-Journal-End: " + EmlSerializer.formatRfc2822Date(end) + "\r\n"),
+                "PidLidLogEnd must become an RFC 5322 X-Journal-End: " + eml);
+        assertTrue(
+                eml.contains("X-Journal-Duration: 30\r\n"), "PidLidLogDuration must become X-Journal-Duration: " + eml);
+    }
+
+    @Test
+    void journalActivityFallsBackToLogTypeDescriptionForJournalType() throws Exception {
+        // PidLidLogTypeDesc (0x8712) supplies X-Journal-Type when PidLidLogType (0x8700) is absent.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Document edit")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("IPM.Activity")
+                .namedLogTypeDescription("Microsoft Word")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(
+                eml.contains("X-Journal-Type: Microsoft Word\r\n"),
+                "PidLidLogTypeDesc must supply X-Journal-Type when PidLidLogType is absent: " + eml);
+    }
+
+    @Test
+    void journalActivityWithoutLogPropertiesEmitsNoJournalHeadersButStillLogsDowngrade() throws Exception {
+        // Caveat: a journal item that carries no PSETID_Log props must stay byte-identical (no X-Journal-*
+        // headers) AND still trigger the "No specialized handler" downgrade log.
+        var loggedMessages = new ArrayList<String>();
+        var log = new ConversionLog() {
+            @Override
+            public void info(String message) {
+                loggedMessages.add(message);
+            }
+
+            @Override
+            public void error(String message) {}
+        };
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Empty journal")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageClass("IPM.Activity")
+                .textBody("body")
+                .toBytes();
+        var out = new java.io.ByteArrayOutputStream();
+        MsgToEmlConverter.convert(new ByteArrayInputStream(bytes), out, log);
+        var eml = out.toString(java.nio.charset.StandardCharsets.US_ASCII);
+
+        assertFalse(
+                eml.contains("X-Journal-"),
+                "A journal item without PSETID_Log props must emit no X-Journal-* headers: " + eml);
+        assertTrue(
+                loggedMessages.stream().anyMatch(message -> message.contains("IPM.Activity")),
+                "IPM.Activity must stay out of hasSpecializedHandler so the downgrade log still fires: "
+                        + loggedMessages);
     }
 
     // --- finding 1: DSN Status must be a d.d.d code (rfc3464 §2.3.4), not the free-form
@@ -2283,6 +2452,45 @@ class MsgToEmlConverterTest {
                 "PidLidVerbResponse must produce X-MS-Exchange-Vote-Response: " + eml);
     }
 
+    // Fix DSC-2 — X-MS-Exchange-Vote-Options: a sent poll's PidLidVerbStream (0x8520, PSETID_Common,
+    // PT_BINARY, [MS-OXOMSG] §2.2.1.74) carries the offered voting buttons; their Unicode labels must be
+    // preserved instead of dropped, joined into one X-MS-Exchange-Vote-Options header.
+
+    @Test
+    void verbStreamEmitsXmsExchangeVoteOptionsHeader() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Approve this?")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .namedVerbStream(MsgFixtureBuilder.verbStreamBytes("Approve", "Reject"))
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(
+                eml.contains("X-MS-Exchange-Vote-Options: Approve, Reject\r\n"),
+                "PidLidVerbStream must produce X-MS-Exchange-Vote-Options: " + eml);
+    }
+
+    @Test
+    void malformedVerbStreamEmitsNoVoteOptionsHeaderAndDoesNotThrow() throws Exception {
+        // A VerbStream truncated mid-record (only Version + Count claiming two options) must be rejected
+        // whole — no partial header, no exception aborting the conversion.
+        var truncated = new byte[] {0x02, 0x01, 0x02, 0x00, 0x00, 0x00, 0x04, 0x00};
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Broken poll")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .namedVerbStream(truncated)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(
+                eml.contains("X-MS-Exchange-Vote-Options"),
+                "A malformed PidLidVerbStream must emit no X-MS-Exchange-Vote-Options: " + eml);
+    }
+
     // -----------------------------------------------------------------------
     // Round-22 audit tests
     // -----------------------------------------------------------------------
@@ -2332,5 +2540,146 @@ class MsgToEmlConverterTest {
         assertTrue(
                 dateLine.contains("2023"),
                 "Date must derive from PR_CREATION_TIME when submit/delivery absent: " + dateLine);
+    }
+
+    // -----------------------------------------------------------------------
+    // Round-23 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix IH-1 — X-Unsent: PR_MESSAGE_FLAGS MSGFLAG_UNSENT (0x8) marks a draft ([MS-OXCMSG] §2.2.1.6);
+    // the converter exports the canonical X-Unsent: 1 marker only while that bit is set.
+
+    @Test
+    void messageFlagsUnsentBitEmitsXUnsentHeader() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Draft message")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageFlags(0x8) // MSGFLAG_UNSENT
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(eml.contains("X-Unsent: 1\r\n"), "MSGFLAG_UNSENT (0x8) must produce the X-Unsent: 1 marker: " + eml);
+    }
+
+    @Test
+    void messageFlagsWithoutUnsentBitSuppressesXUnsentHeader() throws Exception {
+        // MSGFLAG_READ (0x1) | MSGFLAG_HASATTACH (0x10) but NOT MSGFLAG_UNSENT (0x8) — a sent/received
+        // message must not gain the draft marker.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .subject("Sent message")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .messageFlags(0x1 | 0x10)
+                .textBody("body")
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(eml.contains("X-Unsent"), "Absent MSGFLAG_UNSENT (0x8) must not emit X-Unsent: " + eml);
+    }
+
+    // Fix A-VCARD-1 — a contact's PidLidEmail1EmailAddress ([MS-OXOCNTC] §2.2.1.2.3) can hold an X.500
+    // DN when PidLidEmail1AddressType is "EX". The vCard EMAIL used to emit that DN raw, producing an
+    // unparseable "EMAIL;TYPE=internet:/o=.../cn=..." value; it must now be IMCEA-encapsulated (as every
+    // other address-bearing path already is) into a synthesized addr-spec.
+
+    @Test
+    void contactExchangeEmailIsImceaEncapsulated() throws Exception {
+        var exchangeDn = "/o=First/cn=Recipients/cn=jdoe";
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Contact")
+                .displayName("John Doe")
+                .contactEmail1("EX", exchangeDn)
+                .toBytes();
+
+        var eml = convertString(bytes);
+        var card = new String(decodeAttachmentBytes(eml, "contact.vcf"), StandardCharsets.UTF_8);
+        // vCard folds content lines at 75 octets (RFC 2426 §2.6), so unfold before matching the long value.
+        var unfolded = card.replace("\r\n ", "").replace("\r\n\t", "");
+
+        assertTrue(
+                unfolded.contains(
+                        "EMAIL;TYPE=internet:IMCEAEX-_o_x003D_First_cn_x003D_Recipients_cn_x003D_jdoe@invalid"),
+                "EX contact email must be IMCEA-encapsulated: " + card);
+        assertFalse(
+                unfolded.contains("EMAIL;TYPE=internet:" + exchangeDn),
+                "The raw X.500 DN must not leak into the vCard EMAIL value: " + card);
+    }
+
+    @Test
+    void contactSmtpEmailPassesThroughVerbatim() throws Exception {
+        // A SMTP-type contact email is a valid addr-spec: imceaEncapsulate no-ops, so the value stays
+        // byte-identical (guards the existing quickbrown@gmail.com contact fixture against regression).
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Contact")
+                .displayName("Jane Roe")
+                .contactEmail1("SMTP", "jane@example.com")
+                .toBytes();
+
+        var eml = convertString(bytes);
+        var card = new String(decodeAttachmentBytes(eml, "contact.vcf"), StandardCharsets.UTF_8);
+
+        assertTrue(card.contains("EMAIL;TYPE=internet:jane@example.com"), card);
+        assertFalse(card.contains("IMCEA"), "A SMTP addr-spec must not be IMCEA-encapsulated: " + card);
+    }
+
+    // Fix DSC-3 — X-Note-Color: an IPM.StickyNote's PidLidNoteColor (0x8B00, PSETID_Note, PT_LONG) is
+    // mapped to the color name per [MS-OXONOTE] §2.2.1.1 so the note's color survives; gated on the
+    // sticky-note class AND a known 0-4 value so no other item is affected.
+
+    @Test
+    void stickyNoteColorEmitsXNoteColorHeader() throws Exception {
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.StickyNote")
+                .subject("Reminder")
+                .textBody("buy milk")
+                .namedNoteColor(3) // Yellow
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertTrue(
+                eml.contains("X-Note-Color: Yellow\r\n"),
+                "PidLidNoteColor 3 must produce X-Note-Color: Yellow: " + eml);
+    }
+
+    @Test
+    void stickyNoteUnknownColorSuppressesXNoteColorHeader() throws Exception {
+        // A color value outside 0-4 has no [MS-OXONOTE] name; the converter must emit no header rather
+        // than a made-up value.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.StickyNote")
+                .subject("Reminder")
+                .textBody("buy milk")
+                .namedNoteColor(9)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(
+                eml.contains("X-Note-Color"), "An unknown PidLidNoteColor value must not emit X-Note-Color: " + eml);
+    }
+
+    @Test
+    void nonNoteClassWithNoteColorSuppressesXNoteColorHeader() throws Exception {
+        // The header is gated on the IPM.StickyNote class; a plain note carrying the property (e.g. a
+        // mislabelled item) must stay byte-identical to a note without it.
+        var bytes = MsgFixtureBuilder.topLevel()
+                .messageClass("IPM.Note")
+                .subject("Regular mail")
+                .sender("Alice", "alice@example.com")
+                .recipientTo("Bob", "bob@example.com")
+                .textBody("body")
+                .namedNoteColor(3)
+                .toBytes();
+
+        var eml = convertString(bytes);
+
+        assertFalse(
+                eml.contains("X-Note-Color"),
+                "A non-sticky-note class must not emit X-Note-Color even when the color property is set: " + eml);
     }
 }

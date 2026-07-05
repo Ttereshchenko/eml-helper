@@ -83,10 +83,13 @@ final class MsgFixtureBuilder {
     private static final int TAG_ATTACH_DATA_BINARY = (0x3701 << 16) | TYPE_BINARY;
     private static final int TAG_ATTACH_METHOD = (0x3705 << 16) | TYPE_LONG;
     private static final int TAG_ATTACH_CONTENT_ID = (0x3712 << 16) | TYPE_UNICODE;
+    private static final int TAG_ATTACH_CONTENT_LOCATION = (0x3713 << 16) | TYPE_UNICODE;
+    private static final int TAG_ATTACH_FLAGS = (0x3714 << 16) | TYPE_LONG;
 
     // Regular (non-named) property tags for expiry and flag-status.
     private static final int TAG_EXPIRY_TIME = (0x0015 << 16) | TYPE_SYSTIME;
     private static final int TAG_FLAG_STATUS = (0x1090 << 16) | TYPE_LONG;
+    private static final int TAG_MESSAGE_FLAGS = (0x0E07 << 16) | TYPE_LONG;
 
     private static final int ATTACH_METHOD_BY_VALUE = 1;
     private static final int ATTACH_METHOD_EMBEDDED_MESSAGE = 5;
@@ -99,6 +102,12 @@ final class MsgFixtureBuilder {
     private static final byte[] PSETID_MEETING_GUID = guidStreamBytes("{6ED8DA90-450B-101B-98DA-00AA003F1305}");
     /** PSETID_Common {00062008-0000-0000-C000-000000000046} — hosts reminder, flag-request and vote-response LIDs. */
     private static final byte[] PSETID_COMMON_GUID = guidStreamBytes("{00062008-0000-0000-C000-000000000046}");
+    /** PSETID_Address {00062004-0000-0000-C000-000000000046} — hosts the contact e-mail address/type LIDs. */
+    private static final byte[] PSETID_ADDRESS_GUID = guidStreamBytes("{00062004-0000-0000-C000-000000000046}");
+    /** PSETID_Note {0006200E-0000-0000-C000-000000000046} — hosts the sticky-note color LID. */
+    private static final byte[] PSETID_NOTE_GUID = guidStreamBytes("{0006200E-0000-0000-C000-000000000046}");
+    /** PSETID_Log {0006200A-0000-0000-C000-000000000046} — hosts the IPM.Activity journal LIDs. */
+    private static final byte[] PSETID_LOG_GUID = guidStreamBytes("{0006200A-0000-0000-C000-000000000046}");
 
     private static final int NAMED_BASE_TAG = 0x8000;
 
@@ -116,6 +125,7 @@ final class MsgFixtureBuilder {
     private final List<MsgFixtureBuilder> recipientsOrdered = new ArrayList<>();
     private final List<AttachmentSpec> attachments = new ArrayList<>();
     private final List<NamedNumericProperty> namedProperties = new ArrayList<>();
+    private boolean suppressNameIdMapping;
 
     private MsgFixtureBuilder() {}
 
@@ -191,7 +201,7 @@ final class MsgFixtureBuilder {
 
     /** An attachment whose PR_ATTACH_LONG_FILENAME is a PT_STRING8 (ANSI) chunk of raw codepage bytes. */
     MsgFixtureBuilder ansiFilenameAttachment(byte[] rawFilename, String mime, byte[] data) {
-        attachments.add(new AttachmentSpec(null, mime, data, null, null, null, null, rawFilename));
+        attachments.add(new AttachmentSpec(null, mime, data, null, null, null, null, rawFilename, null, null));
         return this;
     }
 
@@ -440,6 +450,16 @@ final class MsgFixtureBuilder {
         return this;
     }
 
+    /**
+     * PidTagMessageFlags (PR_MESSAGE_FLAGS, 0x0E07, PT_LONG): the message status bitmask. The
+     * MSGFLAG_UNSENT bit ({@code 0x8}) marks a composed-but-never-submitted draft ([MS-OXCMSG]
+     * §2.2.1.6); when it is set the converter exports the {@code X-Unsent: 1} marker.
+     */
+    MsgFixtureBuilder messageFlags(int value) {
+        fixedProperties.add(new FixedProperty(TAG_MESSAGE_FLAGS, longBytes(value)));
+        return this;
+    }
+
     MsgFixtureBuilder messageId(String value) {
         return setUnicode(TAG_INTERNET_MESSAGE_ID, value);
     }
@@ -505,6 +525,16 @@ final class MsgFixtureBuilder {
     }
 
     /**
+     * PidLidNoteColor (PSETID_Note {@code {0006200E-0000-0000-C000-000000000046}}, LID 0x8B00,
+     * PT_LONG): a sticky note's paper color per [MS-OXONOTE] §2.2.1.1 (0=Blue, 1=Green, 2=Pink,
+     * 3=Yellow, 4=White). Drives the converter's {@code X-Note-Color} header for an IPM.StickyNote.
+     */
+    MsgFixtureBuilder namedNoteColor(int value) {
+        namedProperties.add(new NamedNumericProperty(PSETID_NOTE_GUID, 0x8B00, TYPE_LONG, longBytes(value)));
+        return this;
+    }
+
+    /**
      * PidLidReminderSet (PSETID_Common 0x8503, PT_BOOLEAN): {@code true} when the user has set a
      * reminder. Paired with {@link #namedReminderDelta} to drive a {@code VALARM} subcomponent.
      */
@@ -541,24 +571,152 @@ final class MsgFixtureBuilder {
         return this;
     }
 
+    /**
+     * PidLidVerbStream (PSETID_Common 0x8520, PT_BINARY): a sent poll's voting-button definition
+     * ([MS-OXOMSG] §2.2.1.74). Its Unicode option labels are exported as {@code X-MS-Exchange-Vote-Options}.
+     * The raw stream is supplied verbatim so a test can drive both valid and deliberately malformed layouts.
+     */
+    MsgFixtureBuilder namedVerbStream(byte[] verbStream) {
+        namedProperties.add(new NamedNumericProperty(PSETID_COMMON_GUID, 0x8520, TYPE_BINARY, verbStream.clone()));
+        return this;
+    }
+
+    /**
+     * Builds a minimal but spec-shaped VerbStream blob ([MS-OXOMSG] §2.2.1.74) carrying the given
+     * voting-button labels: Version + Count + one VerbData per option (its ANSI label plus the 29-byte
+     * fixed tail) + Version2 + one VoteOptionExtras per option (the Unicode label the converter
+     * exports as {@code X-MS-Exchange-Vote-Options}). Pass the result to {@link #namedVerbStream}.
+     */
+    static byte[] verbStreamBytes(String... options) {
+        var out = new ByteArrayOutputStream();
+        writeLittleEndianShort(out, 0x0102); // Version
+        writeLittleEndianInt(out, options.length); // Count
+        for (var option : options) {
+            writeVerbDataRecord(out, option);
+        }
+        writeLittleEndianShort(out, 0x0102); // Version2
+        for (var option : options) {
+            writeUnicodeCountedString(out, option); // VoteOptionExtras DisplayName
+            writeUnicodeCountedString(out, option); // VoteOptionExtras DisplayNameRepeat
+        }
+        return out.toByteArray();
+    }
+
+    private static void writeVerbDataRecord(ByteArrayOutputStream out, String option) {
+        writeLittleEndianInt(out, 4); // VerbType
+        writeAnsiCountedString(out, option); // DisplayName
+        out.write(0); // MsgClsNameCount
+        out.write(0); // Internal1Count
+        writeAnsiCountedString(out, option); // DisplayNameRepeat
+        out.writeBytes(new byte[29]); // Internal2..Internal6 fixed tail
+    }
+
+    private static void writeAnsiCountedString(ByteArrayOutputStream out, String value) {
+        var bytes = value.getBytes(StandardCharsets.ISO_8859_1);
+        out.write(bytes.length);
+        out.writeBytes(bytes);
+    }
+
+    private static void writeUnicodeCountedString(ByteArrayOutputStream out, String value) {
+        out.write(value.length());
+        out.writeBytes(value.getBytes(StandardCharsets.UTF_16LE));
+    }
+
+    private static void writeLittleEndianShort(ByteArrayOutputStream out, int value) {
+        out.write(value & 0xFF);
+        out.write((value >>> 8) & 0xFF);
+    }
+
+    private static void writeLittleEndianInt(ByteArrayOutputStream out, int value) {
+        out.write(value & 0xFF);
+        out.write((value >>> 8) & 0xFF);
+        out.write((value >>> 16) & 0xFF);
+        out.write((value >>> 24) & 0xFF);
+    }
+
+    /**
+     * PidLidLogType (PSETID_Log {@code {0006200A-0000-0000-C000-000000000046}}, LID 0x8700, PT_UNICODE):
+     * the activity name of an IPM.Activity journal item ([MS-OXOJRNL] §2.2.2.1). Exported as
+     * {@code X-Journal-Type}.
+     */
+    MsgFixtureBuilder namedLogType(String value) {
+        namedProperties.add(new NamedNumericProperty(PSETID_LOG_GUID, 0x8700, TYPE_UNICODE, encodeUtf16(value)));
+        return this;
+    }
+
+    /**
+     * PidLidLogTypeDesc (PSETID_Log 0x8712, PT_UNICODE): the localized description of a journal item's
+     * activity, used as the {@code X-Journal-Type} fallback when PidLidLogType is absent.
+     */
+    MsgFixtureBuilder namedLogTypeDescription(String value) {
+        namedProperties.add(new NamedNumericProperty(PSETID_LOG_GUID, 0x8712, TYPE_UNICODE, encodeUtf16(value)));
+        return this;
+    }
+
+    /**
+     * PidLidLogStart / PidLidLogEnd (PSETID_Log 0x8706 / 0x8708, PT_SYSTIME): the start and end of the
+     * recorded activity. Exported as {@code X-Journal-Start} / {@code X-Journal-End} (RFC 5322 date-time).
+     */
+    MsgFixtureBuilder namedLogStartEnd(Date start, Date end) {
+        namedProperties.add(new NamedNumericProperty(PSETID_LOG_GUID, 0x8706, TYPE_SYSTIME, fileTime(start)));
+        if (end != null) {
+            namedProperties.add(new NamedNumericProperty(PSETID_LOG_GUID, 0x8708, TYPE_SYSTIME, fileTime(end)));
+        }
+        return this;
+    }
+
+    /**
+     * PidLidLogDuration (PSETID_Log 0x8707, PT_LONG): the recorded activity's length in minutes.
+     * Exported as {@code X-Journal-Duration}.
+     */
+    MsgFixtureBuilder namedLogDuration(int minutes) {
+        namedProperties.add(new NamedNumericProperty(PSETID_LOG_GUID, 0x8707, TYPE_LONG, longBytes(minutes)));
+        return this;
+    }
+
+    /**
+     * Stores the named-property VALUES under their transient {@code 0x80xx} tags but omits this
+     * message's own {@code __nameid_version1.0} mapping — modelling a real embedded sub-message, whose
+     * named-property map lives only in the top-level storage ([MS-OXMSG] §2.2.3). Applied to an
+     * embedded builder, its {@code getNameIdChunks()} comes back {@code null}, so the converter must
+     * resolve the named tags through the threaded top-level {@code __nameid} instead.
+     */
+    MsgFixtureBuilder withoutNameIdMapping() {
+        suppressNameIdMapping = true;
+        return this;
+    }
+
     MsgFixtureBuilder attachment(String filename, String mime, byte[] data) {
-        attachments.add(new AttachmentSpec(filename, mime, data, null, null, null, null, null));
+        attachments.add(new AttachmentSpec(filename, mime, data, null, null, null, null, null, null, null));
         return this;
     }
 
     MsgFixtureBuilder attachment(String filename, String mime, byte[] data, String contentId) {
-        attachments.add(new AttachmentSpec(filename, mime, data, null, contentId, null, null, null));
+        attachments.add(new AttachmentSpec(filename, mime, data, null, contentId, null, null, null, null, null));
+        return this;
+    }
+
+    /**
+     * An inline attachment carrying a PR_ATTACH_CONTENT_LOCATION (0x3713, the RFC 2557 URL the HTML
+     * body cites) and PR_ATTACH_FLAGS (0x3714) but NO Content-ID — the shape of an MHTML inline image.
+     * With {@code attachFlags} set to ATT_MHTML_REF (0x4) the converter must serialize the part as
+     * {@code Content-Disposition: inline}, matching the PST driver.
+     */
+    MsgFixtureBuilder contentLocationAttachment(
+            String filename, String mime, byte[] data, String contentLocation, int attachFlags) {
+        attachments.add(
+                new AttachmentSpec(filename, mime, data, null, null, null, null, null, contentLocation, attachFlags));
         return this;
     }
 
     MsgFixtureBuilder embeddedAttachment(String filename, MsgFixtureBuilder embedded) {
-        attachments.add(new AttachmentSpec(filename, null, null, embedded, null, null, null, null));
+        attachments.add(new AttachmentSpec(filename, null, null, embedded, null, null, null, null, null, null));
         return this;
     }
 
     /** An embedded message with NO stored filename property, so its part name falls back to the inner subject. */
     MsgFixtureBuilder embeddedAttachment(MsgFixtureBuilder embedded) {
-        attachments.add(new AttachmentSpec(null, null, null, embedded, null, null, null, null));
+        attachments.add(new AttachmentSpec(null, null, null, embedded, null, null, null, null, null, null));
         return this;
     }
 
@@ -568,7 +726,28 @@ final class MsgFixtureBuilder {
      * embedded message.
      */
     MsgFixtureBuilder oleAttachment(String displayName, byte[] contents) {
-        attachments.add(new AttachmentSpec(null, null, null, null, null, displayName, contents, null));
+        attachments.add(new AttachmentSpec(null, null, null, null, null, displayName, contents, null, null, null));
+        return this;
+    }
+
+    /** PR_DISPLAY_NAME (0x3001, PT_UNICODE) on the main message store — a contact's full name / vCard FN. */
+    MsgFixtureBuilder displayName(String value) {
+        return setUnicode((0x3001 << 16) | TYPE_UNICODE, value);
+    }
+
+    /**
+     * PidLidEmail1AddressType / PidLidEmail1EmailAddress (PSETID_Address 0x8082 / 0x8083, PT_UNICODE;
+     * [MS-OXOCNTC] §2.2.1.2.3) — a contact's first e-mail slot. An {@code "EX"} address type stores an
+     * X.500 DN in the address slot, which the converter IMCEA-encapsulates into a parseable rfc822 value;
+     * an {@code "SMTP"} type (or a bare addr-spec) passes through verbatim. A {@code null} type writes only
+     * the address slot, modelling a contact whose PidLidEmail1AddressType is absent.
+     */
+    MsgFixtureBuilder contactEmail1(String addressType, String address) {
+        if (addressType != null) {
+            namedProperties.add(
+                    new NamedNumericProperty(PSETID_ADDRESS_GUID, 0x8082, TYPE_UNICODE, encodeUtf16(addressType)));
+        }
+        namedProperties.add(new NamedNumericProperty(PSETID_ADDRESS_GUID, 0x8083, TYPE_UNICODE, encodeUtf16(address)));
         return this;
     }
 
@@ -661,7 +840,7 @@ final class MsgFixtureBuilder {
             attachments.get(index).populate(directory);
         }
 
-        if (!namedProperties.isEmpty()) {
+        if (!namedProperties.isEmpty() && !suppressNameIdMapping) {
             writeNameIdMapping(root);
         }
     }
@@ -797,7 +976,9 @@ final class MsgFixtureBuilder {
             String contentId,
             String displayName,
             byte[] oleContents,
-            byte[] ansiFilename) {
+            byte[] ansiFilename,
+            String contentLocation,
+            Integer attachFlags) {
 
         void populate(DirectoryEntry directory) throws IOException {
             var stream = new ByteArrayOutputStream();
@@ -808,6 +989,9 @@ final class MsgFixtureBuilder {
                     ? ATTACH_METHOD_EMBEDDED_MESSAGE
                     : oleContents != null ? ATTACH_METHOD_OLE : ATTACH_METHOD_BY_VALUE;
             writeFixedEntry(stream, new FixedProperty(TAG_ATTACH_METHOD, longBytes(method)));
+            if (attachFlags != null) {
+                writeFixedEntry(stream, new FixedProperty(TAG_ATTACH_FLAGS, longBytes(attachFlags)));
+            }
 
             var varProps = new ArrayList<VarProperty>();
             if (filename != null) {
@@ -824,6 +1008,9 @@ final class MsgFixtureBuilder {
             }
             if (contentId != null) {
                 varProps.add(new VarProperty(TAG_ATTACH_CONTENT_ID, encodeUtf16(contentId)));
+            }
+            if (contentLocation != null) {
+                varProps.add(new VarProperty(TAG_ATTACH_CONTENT_LOCATION, encodeUtf16(contentLocation)));
             }
             if (data != null) {
                 varProps.add(new VarProperty(TAG_ATTACH_DATA_BINARY, data));

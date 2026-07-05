@@ -149,4 +149,54 @@ class VCardGeneratorTest {
 
         assertFalse(card.contains("IMPP:"), "no IM address must not emit IMPP: " + card);
     }
+
+    // -----------------------------------------------------------------------
+    // Round-23 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix A-VCARD-2 — IMPP is URI-valued (RFC 4770); a URI's own ';'/',' must not be TEXT-escaped.
+
+    @Test
+    void imppUriKeepsSemicolonParametersUnescaped() {
+        var card =
+                VCardGenerator.generate(new VCardGenerator.Contact().imAddress("sip:jane@corp.example;transport=tls"));
+
+        assertTrue(
+                card.contains("IMPP:sip:jane@corp.example;transport=tls"),
+                "IMPP URI parameters must survive unescaped: " + card);
+        assertFalse(card.contains("\\;"), "an IMPP URI's ';' must not be TEXT-escaped: " + card);
+    }
+
+    @Test
+    void imppUriKeepsCommaUnescaped() {
+        var card = VCardGenerator.generate(
+                new VCardGenerator.Contact().imAddress("xmpp:jane@corp.example?message;subject=one,two"));
+
+        assertTrue(
+                card.contains("IMPP:xmpp:jane@corp.example?message;subject=one,two"),
+                "IMPP URI ',' must survive unescaped: " + card);
+        assertFalse(card.contains("\\,"), "an IMPP URI's ',' must not be TEXT-escaped: " + card);
+    }
+
+    @Test
+    void imppUriStripsControlCharactersToPreventInjection() {
+        var card = VCardGenerator.generate(
+                new VCardGenerator.Contact().imAddress("xmpp:jane@corp\r\nEND:VCARD\r\nBEGIN:VCARD"));
+
+        assertTrue(
+                card.contains("IMPP:xmpp:jane@corpEND:VCARDBEGIN:VCARD"),
+                "CR/LF inside an IMPP URI must be stripped: " + card);
+        assertFalse(
+                card.contains("IMPP:xmpp:jane@corp\r\n"),
+                "a stripped IMPP URI must not forge a folded/new content line: " + card);
+    }
+
+    @Test
+    void imppUriDoublesBackslashForSafety() {
+        var card = VCardGenerator.generate(new VCardGenerator.Contact().imAddress("aim:goim?screenname=jane\\smith"));
+
+        assertTrue(
+                card.contains("IMPP:aim:goim?screenname=jane\\\\smith"),
+                "an IMPP URI's backslash must be doubled to keep vCard escaping unambiguous: " + card);
+    }
 }

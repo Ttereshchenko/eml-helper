@@ -72,6 +72,36 @@ class ICalendarGeneratorTest {
         assertTrue(updated.contains("SEQUENCE:3\r\n"), "the stored sequence must be emitted: " + updated);
     }
 
+    // RFC 5546 §3.2.5: a cancelled meeting must carry STATUS:CANCELLED in the VEVENT so a non-iTIP
+    // consumer that imports the .ics as a plain file (ignoring the scheduling METHOD) still sees the
+    // cancellation. It is gated on an effective CANCEL, so a REQUEST/REPLY/PUBLISH invite never gains it.
+    @Test
+    void cancelCarriesCancelledStatusButOtherMethodsDoNot() {
+        var cancelled = ICalendarGenerator.generate(new ICalendarGenerator.EventDetails(
+                "CANCEL",
+                START,
+                END,
+                null,
+                "Subject",
+                "Org",
+                "org@example.com",
+                null,
+                List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")),
+                false,
+                null,
+                null,
+                3));
+        assertTrue(cancelled.contains("METHOD:CANCEL\r\n"), cancelled);
+        assertTrue(
+                cancelled.contains("STATUS:CANCELLED\r\n"),
+                "a CANCEL VEVENT must carry STATUS:CANCELLED (RFC 5546 §3.2.5): " + cancelled);
+
+        var request = generate("REQUEST", List.of(new ICalendarGenerator.Attendee("Bob", "bob@example.com")));
+        assertTrue(request.contains("METHOD:REQUEST\r\n"), request);
+        assertFalse(
+                request.contains("STATUS:CANCELLED"), "a non-cancel invite must not gain STATUS:CANCELLED: " + request);
+    }
+
     // RFC 5546 §3.2: a scheduling method requires a DTSTART. With no start time the object is
     // downgraded to PUBLISH rather than emitting an invalid METHOD:REQUEST without a DTSTART.
     @Test

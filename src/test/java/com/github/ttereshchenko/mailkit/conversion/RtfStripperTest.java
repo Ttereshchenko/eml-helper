@@ -418,4 +418,32 @@ class RtfStripperTest {
         assertFalse(qmspace.contains("AB"), "\\qmspace must not weld words: '" + qmspace + "'");
         assertTrue(qmspace.contains(" "), "\\qmspace must emit U+2005 FOUR-PER-EM SPACE: '" + qmspace + "'");
     }
+
+    // -----------------------------------------------------------------------
+    // Round-23 audit tests
+    // -----------------------------------------------------------------------
+
+    // Fix RTFCELL-1 — \cell/\row table separators. Before the fix strip() had no controlReplacement
+    // arm for them, so they hit `default -> null`, emitted nothing, and the following delimiter space
+    // was also swallowed, welding adjacent cells and rows into one run ("NameJohn SmithEmailx@y.com").
+    // A cell terminator must emit a tab and a row terminator a newline, mirroring the \tab/\par arms.
+    @Test
+    void cellAndRowSeparatorsBecomeTabsAndNewlines() {
+        var rtf = "{\\rtf1\\ansi Name\\cell John Smith\\cell\\row Email\\cell x@y.com\\cell\\row}";
+        var text = RtfStripper.strip(rtf);
+        // strip() trims trailing whitespace, so the final row's separators do not survive at end-of-text.
+        assertEquals(
+                "Name\tJohn Smith\t\nEmail\tx@y.com",
+                text,
+                "cells must be tab-separated and rows newline-separated: '" + text + "'");
+        assertFalse(text.contains("NameJohn"), "\\cell must not weld a cell onto the next: '" + text + "'");
+        assertFalse(text.contains("SmithEmail"), "\\row must not weld a row onto the next: '" + text + "'");
+    }
+
+    // Fix RTFCELL-1 — the nested-table variants \nestcell/\nestrow map the same way as \cell/\row.
+    @Test
+    void nestedCellAndRowSeparatorsBecomeTabsAndNewlines() {
+        var text = RtfStripper.strip("{\\rtf1\\ansi A\\nestcell B\\nestrow C\\nestcell D\\nestrow}");
+        assertEquals("A\tB\nC\tD", text, "\\nestcell -> tab and \\nestrow -> newline: '" + text + "'");
+    }
 }

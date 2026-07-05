@@ -57,6 +57,13 @@ public final class MapiProperties {
     public static final int PR_FLAG_STATUS = 0x1090;
 
     /**
+     * The message status flags (PT_LONG). The MSGFLAG_UNSENT bit ({@code 0x8}) marks a composed-but-never-
+     * submitted message — a draft ([MS-OXCMSG] §2.2.1.6).
+     * EML alternative: the "X-Unsent: 1" marker Outlook exports for such drafts.
+     */
+    public static final int PR_MESSAGE_FLAGS = 0x0E07;
+
+    /**
      * The internet message ID.
      * EML alternative: The "Message-ID:" header.
      */

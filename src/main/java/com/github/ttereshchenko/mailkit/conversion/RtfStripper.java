@@ -661,6 +661,13 @@ public final class RtfStripper {
             // \pard is deliberately absent: it resets paragraph *formatting* and produces no break.
             case "par", "line" -> "\n";
             case "tab" -> "\t";
+            // Table separators (RTF spec §Table Definitions): \cell/\nestcell end a cell and \row/\nestrow
+            // end a table row. Without these arms they hit `default -> null`, emit nothing, and strip() also
+            // swallows the trailing delimiter space, welding adjacent cells ("Name\cell John" -> "NameJohn").
+            // Emit a tab between cells and a newline between rows, mirroring the \tab/\par arms. This feeds
+            // only the plain-text strip() path (never deEncapsulateHtml), so it affects no HTML output.
+            case "cell", "nestcell" -> "\t";
+            case "row", "nestrow" -> "\n";
             case "lquote", "rquote" -> "'";
             case "ldblquote", "rdblquote" -> "\"";
             case "emdash" -> "—";
