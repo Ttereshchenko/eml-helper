@@ -114,7 +114,7 @@ dependencies {
     implementation project(':smtp-client')
     implementation project(':pst-parser')
 
-    testImplementation platform('org.junit:junit-bom:6.1.0')
+    testImplementation platform('org.junit:junit-bom:6.1.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'junit:junit:4.13.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
